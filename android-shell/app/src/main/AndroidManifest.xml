@@ -108,5 +108,14 @@
             android:name=".WakeWordService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- ShizukuProvider：提供 shell 权限（UID 2000），执行 ADB 命令 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>
