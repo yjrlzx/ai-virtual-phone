@@ -4040,12 +4040,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     }
     if (activeApp === "realitybridge") {
       return <RealityBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
+    }
     if (activeApp === "huaweibridge") {
       return <HuaweiBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
     }
     if (activeApp === "huaweipeek") {
       return <HuaweiPeekApp onClose={() => setActiveApp(null)} />;
-    }
     }
     if (activeApp === "qa") {
       return (
