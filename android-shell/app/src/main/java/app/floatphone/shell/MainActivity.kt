@@ -911,7 +911,7 @@ class MainActivity : AppCompatActivity() {
             val engine = cfg.optString("engine", "mlkit")
             val url = cfg.optString("url", "")
             val key = cfg.optString("key", "")
-            android.media.MediaProjectionCapture.capture(this@MainActivity) { bitmap ->
+            MediaProjectionCapture.capture(this@MainActivity) { bitmap ->
                 if (bitmap == null) {
                     deliverOcrToWeb("""{"ok":false,"engine":"$engine","error":"截屏失败或未授权"}""")
                     return@capture
@@ -934,9 +934,17 @@ class MainActivity : AppCompatActivity() {
             val granted = { perm: String ->
                 androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
             }
-            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-            val listeners = nm.enabledNotificationListeners ?: emptyArray()
-            val notifListener = listeners.any { it.contains(packageName) }
+            val enabledListenerPackages =
+                Settings.Secure.getString(
+                    contentResolver,
+                    Settings.Secure.ENABLED_NOTIFICATION_LISTENERS,
+                )
+                    ?.split(':')
+                    ?.mapNotNull { android.content.ComponentName.unflattenFromString(it) }
+                    ?.map { it.packageName }
+                    ?.toSet()
+                    ?: emptySet()
+            val notifListener = packageName in enabledListenerPackages
             val overlay = android.provider.Settings.canDrawOverlays(this@MainActivity)
             val writeSettings = android.provider.Settings.System.canWrite(this@MainActivity)
             val storage = if (android.os.Build.VERSION.SDK_INT >= 30) android.os.Environment.isExternalStorageManager()
