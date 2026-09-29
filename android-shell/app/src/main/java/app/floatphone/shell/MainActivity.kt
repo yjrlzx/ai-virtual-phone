@@ -937,7 +937,7 @@ class MainActivity : AppCompatActivity() {
             val enabledListenerPackages =
                 Settings.Secure.getString(
                     contentResolver,
-                    Settings.Secure.ENABLED_NOTIFICATION_LISTENERS,
+                    "enabled_notification_listeners",
                 )
                     ?.split(':')
                     ?.mapNotNull { android.content.ComponentName.unflattenFromString(it) }
