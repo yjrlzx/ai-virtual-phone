@@ -922,7 +922,7 @@ class MainActivity : AppCompatActivity() {
             val writeSettings = android.provider.Settings.System.canWrite(this)
             val storage = if (android.os.Build.VERSION.SDK_INT >= 30) android.os.Environment.isExternalStorageManager()
                 else granted(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-            val suCmd = String(customSuCommand ?: "").trim().ifEmpty { "su" }
+            val suCmd = (customSuCommand ?: "").trim().ifEmpty { "su" }
             val rootAvailable = runCatching {
                 val proc = Runtime.getRuntime().exec(arrayOf(suCmd, "-c", "id"))
                 val out = proc.inputStream.bufferedReader().readText()

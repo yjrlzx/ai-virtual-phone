@@ -12,7 +12,7 @@ object ShellHealth {
 
     /** 读取 Gadgetbridge 导出库快照。仅支持 SQLite 库；JSON 快照由网页侧 readFile 读取解析。 */
     fun readSnapshot(exportPath: String): String {
-        val path = String(exportPath ?: "").trim()
+        val path = exportPath.trim()
         if (path.isEmpty()) return """{"ok":false,"status":"disabled","message":"未配置手环导出路径"}"""
         if (!android.os.Environment.getExternalStorageDirectory().exists() && !java.io.File(path).exists()) {
             return """{"ok":false,"status":"missing","message":"未找到导出文件：$path"}"""
