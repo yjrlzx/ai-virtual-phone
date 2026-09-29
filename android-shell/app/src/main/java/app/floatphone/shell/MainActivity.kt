@@ -628,8 +628,12 @@ class MainActivity : AppCompatActivity() {
             val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
             val mem = android.app.ActivityManager.MemoryInfo()
             am.getMemoryInfo(mem)
-            val bm = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
-            val tempTenths = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_TEMPERATURE)
+            val batteryIntent = this@MainActivity.registerReceiver(
+                null,
+                android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED),
+            )
+            val tempTenths = batteryIntent?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+            val batteryTempC: Any? = if (tempTenths == null || tempTenths == Int.MIN_VALUE) null else tempTenths / 10.0
             org.json.JSONObject()
                 .put("ok", true)
                 .put("storageTotal", stat.totalBytes)
@@ -640,7 +644,7 @@ class MainActivity : AppCompatActivity() {
                 .put("brand", Build.BRAND)
                 .put("androidVersion", Build.VERSION.RELEASE)
                 .put("sdkInt", Build.VERSION.SDK_INT)
-                .put("batteryTempC", tempTenths / 10.0)
+                .put("batteryTempC", batteryTempC)
                 .put("uptimeMs", android.os.SystemClock.uptimeMillis())
                 .toString()
         }.getOrElse { errJson(it.message) }
@@ -808,7 +812,7 @@ class MainActivity : AppCompatActivity() {
         /** 开始语音转文字。configJson: {mode:"system"|"online", url, key, model}；识别结果异步回传 window.__floatBridgeOnSpeechText。 */
         @JavascriptInterface
         fun startListening(configJson: String): String {
-            ShellStt.start(this, configJson) { json -> deliverSpeechToWeb(json) }
+            ShellStt.start(this@MainActivity, configJson) { json -> deliverSpeechToWeb(json) }
             return """{"ok":true,"started":true}"""
         }
 
@@ -823,7 +827,7 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun ring(timeoutSec: Int): String {
             val sec = if (timeoutSec in 5..120) timeoutSec else 30
-            RingingAlert.start(this, sec * 1000L)
+            RingingAlert.start(this@MainActivity, sec * 1000L)
             return """{"ok":true}"""
         }
 
@@ -838,19 +842,19 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun startWakeWord(configJson: String): String {
             val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.RECORD_AUDIO,
+                this@MainActivity, android.Manifest.permission.RECORD_AUDIO,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 return """{"ok":false,"error":"缺少麦克风权限，请先在系统设置中授权"}"""
             }
-            WakeWordService.start(this, configJson)
+            WakeWordService.start(this@MainActivity, configJson)
             return """{"ok":true,"started":true}"""
         }
 
         /** 关闭常驻语音唤醒。 */
         @JavascriptInterface
         fun stopWakeWord(): String {
-            WakeWordService.stop(this)
+            WakeWordService.stop(this@MainActivity)
             return """{"ok":true}"""
         }
 
@@ -858,7 +862,7 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun enrollWakeWord(): String = runCatching {
             val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.RECORD_AUDIO,
+                this@MainActivity, android.Manifest.permission.RECORD_AUDIO,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             if (!granted) return """{"ok":false,"error":"缺少麦克风权限"}"""
             val sampleRate = 16000
@@ -888,15 +892,15 @@ class MainActivity : AppCompatActivity() {
             runCatching { record.release() }
             if (read < sampleRate / 2) return """{"ok":false,"error":"录音太短，请完整说出唤醒词"}"""
             val effective = if (read < total) pcm.copyOf(read) else pcm
-            val detector = WakeWordDetector(this) {}
+            val detector = WakeWordDetector(this@MainActivity) {}
             val feats = detector.extractFeatures(effective)
             if (feats.isEmpty() || feats.size % WakeWordDetector.FEATURE_DIM != 0) {
                 return """{"ok":false,"error":"未能提取语音特征，请再录一次"}"""
             }
-            val templates = WakeWordDetector.loadTemplates(this).toMutableList()
+            val templates = WakeWordDetector.loadTemplates(this@MainActivity).toMutableList()
             if (templates.size >= 3) templates.removeAt(0)
             templates.add(feats)
-            WakeWordDetector.saveTemplates(this, templates)
+            WakeWordDetector.saveTemplates(this@MainActivity, templates)
             org.json.JSONObject().put("ok", true).put("templates", templates.size).toString()
         }.getOrElse { errJson(it.message) }
 
@@ -907,13 +911,13 @@ class MainActivity : AppCompatActivity() {
             val engine = cfg.optString("engine", "mlkit")
             val url = cfg.optString("url", "")
             val key = cfg.optString("key", "")
-            android.media.MediaProjectionCapture.capture(this) { bitmap ->
+            android.media.MediaProjectionCapture.capture(this@MainActivity) { bitmap ->
                 if (bitmap == null) {
                     deliverOcrToWeb("""{"ok":false,"engine":"$engine","error":"截屏失败或未授权"}""")
                     return@capture
                 }
                 val scaled = scaleBitmapForOcr(bitmap)
-                ShellOcr.recognize(this, scaled, engine, url, key) { json -> deliverOcrToWeb(json) }
+                ShellOcr.recognize(this@MainActivity, scaled, engine, url, key) { json -> deliverOcrToWeb(json) }
             }
             return """{"ok":true,"capturing":true}"""
         }
@@ -928,13 +932,13 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun getPermissionStatus(customSuCommand: String? = null): String = runCatching {
             val granted = { perm: String ->
-                androidx.core.content.ContextCompat.checkSelfPermission(this, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
             }
             val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
             val listeners = nm.enabledNotificationListeners ?: emptyArray()
             val notifListener = listeners.any { it.contains(packageName) }
-            val overlay = android.provider.Settings.canDrawOverlays(this)
-            val writeSettings = android.provider.Settings.System.canWrite(this)
+            val overlay = android.provider.Settings.canDrawOverlays(this@MainActivity)
+            val writeSettings = android.provider.Settings.System.canWrite(this@MainActivity)
             val storage = if (android.os.Build.VERSION.SDK_INT >= 30) android.os.Environment.isExternalStorageManager()
                 else granted(android.Manifest.permission.READ_EXTERNAL_STORAGE)
             val suCmd = (customSuCommand ?: "").trim().ifEmpty { "su" }
