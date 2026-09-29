@@ -30,7 +30,7 @@ object ShizukuAuthorizer {
             true
         } catch (e: PackageManager.NameNotFoundException) {
             // 没装 Shizuku 应用，但可能有 Sui 后端
-            pingBinder()
+            try { Shizuku.pingBinder() } catch (e: Exception) { false }
         }
     }
 
