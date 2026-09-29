@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Life Ledger · 记账</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background: #F0F8FF;
+    color: #44546A;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    padding-bottom: 84px;
+  }
+  /* ---------- header ---------- */
+  .app-header {
+    padding: 18px 20px 10px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .app-title { font-size: 20px; font-weight: 700; color: #44546A; letter-spacing: 0.5px; }
+  .app-title span { color: #7FB8E0; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(184,224,247,0.4);
+    border-radius: 999px; padding: 4px 12px; font-size: 12px; color: #8899AA;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #B8E0F7; }
+  .status-dot.ok { background: #7FD8A4; }
+  .status-dot.warn { background: #F5C97B; }
+
+  /* ---------- layout ---------- */
+  .container { padding: 8px 16px 20px; }
+  .card {
+    background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(184,224,247,0.4);
+    border-radius: 24px;
+    box-shadow: 0 8px 24px rgba(184,224,247,0.25);
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+  .card h3 { font-size: 15px; color: #44546A; margin-bottom: 10px; font-weight: 700; }
+  .card .sub { font-size: 12px; color: #8899AA; }
+
+  /* ---------- summary ---------- */
+  .summary-row { display: flex; gap: 12px; }
+  .summary-box { flex: 1; text-align: center; }
+  .summary-box .num { font-size: 22px; font-weight: 700; }
+  .summary-box .num.exp { color: #E8927C; }
+  .summary-box .num.inc { color: #7FD8A4; }
+  .summary-box .lbl { font-size: 12px; color: #8899AA; margin-top: 2px; }
+
+  /* ---------- filter chips ---------- */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chip {
+    padding: 6px 14px; border-radius: 999px; font-size: 13px;
+    background: rgba(255,255,255,0.7); border: 1px solid rgba(184,224,247,0.5);
+    color: #8899AA; cursor: pointer; user-select: none;
+  }
+  .chip.active { background: #B8E0F7; color: #44546A; border-color: #B8E0F7; font-weight: 600; }
+
+  /* ---------- record list ---------- */
+  .rec {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 0; border-bottom: 1px dashed rgba(184,224,247,0.4);
+  }
+  .rec:last-child { border-bottom: none; }
+  .rec-badge {
+    width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: #44546A;
+    background: #D6EDF9;
+  }
+  .rec-badge.wechat { background: #CDE8F7; }
+  .rec-badge.alipay { background: #D6E9FB; }
+  .rec-badge.cash { background: #F5E6C8; }
+  .rec-badge.manual { background: #E3E8EF; }
+  .rec-body { flex: 1; min-width: 0; }
+  .rec-cat { font-size: 14px; font-weight: 600; color: #44546A; }
+  .rec-note { font-size: 12px; color: #8899AA; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rec-amt { font-size: 15px; font-weight: 700; }
+  .rec-amt.exp { color: #E8927C; }
+  .rec-amt.inc { color: #7FD8A4; }
+  .auto-tag { font-size: 10px; background: #B8E0F7; color: #44546A; border-radius: 6px; padding: 1px 5px; margin-left: 4px; }
+  .rec-del {
+    background: none; border: none; color: #E8927C; font-size: 12px;
+    cursor: pointer; padding: 4px 6px; flex-shrink: 0;
+  }
+
+  .day-group-title { font-size: 13px; color: #8899AA; margin: 14px 0 4px; font-weight: 600; }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    display: block; width: 100%; padding: 13px; border-radius: 16px;
+    border: none; font-size: 15px; font-weight: 600; cursor: pointer;
+    background: #B8E0F7; color: #44546A; margin-top: 8px;
+  }
+  .btn:active { opacity: 0.8; }
+  .btn.secondary { background: #D6EDF9; }
+  .btn.danger { background: #F8D7D0; color: #B5564A; }
+  .btn.ghost { background: rgba(255,255,255,0.5); border: 1px solid rgba(184,224,247,0.5); }
+
+  .fab {
+    position: fixed; right: 20px; bottom: 96px;
+    width: 56px; height: 56px; border-radius: 50%;
+    background: #B8E0F7; color: #44546A; font-size: 26px; font-weight: 700;
+    border: 2px solid #fff; box-shadow: 0 6px 18px rgba(127,184,224,0.5);
+    cursor: pointer; z-index: 50;
+  }
+
+  /* ---------- tabbar ---------- */
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-top: 1px solid rgba(184,224,247,0.4);
+    display: flex; padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+    z-index: 40;
+  }
+  .tab {
+    flex: 1; text-align: center; cursor: pointer; padding: 4px 0;
+    color: #8899AA; font-size: 11px; user-select: none;
+  }
+  .tab .ic { font-size: 20px; display: block; margin-bottom: 2px; }
+  .tab.active { color: #44546A; font-weight: 700; }
+
+  /* ---------- forms ---------- */
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: #8899AA; margin-bottom: 4px; }
+  .field input, .field select {
+    width: 100%; padding: 11px 12px; border-radius: 14px;
+    border: 1px solid rgba(184,224,247,0.6); background: #FAFDFF;
+    font-size: 15px; color: #44546A; outline: none;
+  }
+  .seg { display: flex; gap: 8px; margin-bottom: 12px; }
+  .seg button {
+    flex: 1; padding: 10px; border-radius: 14px; border: 1px solid rgba(184,224,247,0.6);
+    background: #FAFDFF; color: #8899AA; font-size: 14px; cursor: pointer;
+  }
+  .seg button.on.exp { background: #F8D7D0; color: #B5564A; border-color: #F8D7D0; font-weight: 700; }
+  .seg button.on.inc { background: #CDEED8; color: #3E8E5C; border-color: #CDEED8; font-weight: 700; }
+
+  /* ---------- modal ---------- */
+  .modal-mask {
+    position: fixed; inset: 0; background: rgba(184,224,247,0.35);
+    backdrop-filter: blur(4px); z-index: 100;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .modal {
+    background: #fff; width: 100%; max-width: 480px;
+    border-radius: 24px 24px 0 0; padding: 20px;
+    max-height: 85vh; overflow-y: auto;
+  }
+  .modal h3 { font-size: 17px; margin-bottom: 14px; color: #44546A; }
+
+  /* ---------- stats bars ---------- */
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+  .bar-row .lbl { width: 44px; color: #8899AA; flex-shrink: 0; }
+  .bar-track { flex: 1; background: #EAF4FB; border-radius: 8px; height: 14px; overflow: hidden; }
+  .bar-fill { background: #B8E0F7; height: 100%; border-radius: 8px; }
+  .bar-row .val { width: 70px; text-align: right; color: #44546A; font-weight: 600; flex-shrink: 0; }
+
+  /* ---------- config table rows ---------- */
+  .cfg-row { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; }
+  .cfg-row input {
+    flex: 1; padding: 8px 10px; border-radius: 10px; font-size: 13px;
+    border: 1px solid rgba(184,224,247,0.6); background: #FAFDFF; color: #44546A;
+  }
+  .cfg-row button {
+    background: #F8D7D0; color: #B5564A; border: none; border-radius: 10px;
+    padding: 8px 10px; font-size: 12px; cursor: pointer; flex-shrink: 0;
+  }
+
+  .toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; }
+  .toggle .sw { width: 46px; height: 26px; border-radius: 999px; background: #D6EDF9; position: relative; cursor: pointer; transition: background 0.2s; }
+  .toggle .sw::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; transition: left 0.2s; }
+  .toggle .sw.on { background: #7FD8A4; }
+  .toggle .sw.on::after { left: 23px; }
+
+  .toast {
+    position: fixed; left: 50%; top: 60px; transform: translateX(-50%);
+    background: rgba(68,84,106,0.92); color: #fff; padding: 10px 18px;
+    border-radius: 999px; font-size: 13px; z-index: 200;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.15); max-width: 80%;
+  }
+  .empty { text-align: center; color: #8899AA; padding: 30px 0; font-size: 13px; }
+  .warn-box { background: #FFF4DC; border: 1px solid #F5D98B; color: #9A6B1E; border-radius: 14px; padding: 12px; font-size: 13px; margin-bottom: 12px; }
+  .pull-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px dashed rgba(184,224,247,0.4); }
+  .pull-item.over { background: #FFF4DC; border-radius: 8px; padding: 10px; }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-title">Life <span>Ledger</span> · 记账</div>
+  <div class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status-label">本地</span></div>
+</header>
+
+<main class="container" id="view"></main>
+
+<button class="fab" id="fab-add" title="记一笔" style="display:none">+</button>
+
+<nav class="tabbar">
+  <div class="tab active" data-view="today"><span class="ic">📅</span>今日</div>
+  <div class="tab" data-view="flow"><span class="ic">🧾</span>流水</div>
+  <div class="tab" data-view="stats"><span class="ic">📊</span>统计</div>
+  <div class="tab" data-view="config"><span class="ic">⚙️</span>配置</div>
+  <div class="tab" data-view="migrate"><span class="ic">📦</span>迁移</div>
+</nav>
+
+<div id="modal-root"></div>
+<input type="file" id="file-input" accept="application/json,.json" style="display:none">
+
+<script src="ledger-storage.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ================= constants ================= */
+  var CATEGORIES = ['餐饮', '交通', '购物', '学习', '医疗', '其他'];
+  var SOURCES = [
+    { key: 'wechat', label: '微信' },
+    { key: 'alipay', label: '支付宝' },
+    { key: 'cash', label: '现金' },
+    { key: 'manual', label: '手动' }
+  ];
+
+  function defaultConfig() {
+    return {
+      pkgMap: [
+        { pkg: 'com.tencent.mm', source: 'wechat' },
+        { pkg: 'com.eg.android.AlipayGphone', source: 'alipay' },
+        { pkg: 'com.tencent.qq', source: 'manual' }
+      ],
+      minAmount: 0,
+      maxAmount: 10000,
+      autoConfirm: true,
+      categoryRules: [
+        { kw: '食', category: '餐饮' }, { kw: '餐', category: '餐饮' }, { kw: '饭', category: '餐饮' },
+        { kw: '奶茶', category: '餐饮' }, { kw: '咖啡', category: '餐饮' },
+        { kw: '行', category: '交通' }, { kw: '车', category: '交通' }, { kw: '地铁', category: '交通' }, { kw: '加油', category: '交通' },
+        { kw: '淘', category: '购物' }, { kw: '京东', category: '购物' }, { kw: '拼', category: '购物' },
+        { kw: '学', category: '学习' }, { kw: '书', category: '学习' }, { kw: '课', category: '学习' }, { kw: '文具', category: '学习' },
+        { kw: '药', category: '医疗' }, { kw: '医院', category: '医疗' }, { kw: '诊', category: '医疗' }
+      ],
+      toastEnabled: true,
+      budgetThreshold: 0,
+      autoFetchOnStart: false,
+      pending: [],
+      initial: { wechat: 0, alipay: 0, cash: 0 }
+    };
+  }
+
+  /* ================= state ================= */
+  var view = 'today';
+  var filter = 'all';
+  var pulled = []; // pulled payment candidates
+  var config = null;
+
+  /* ================= utils ================= */
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function toDateStr(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function todayStr() { return toDateStr(new Date()); }
+  function uid() { return 'r_' + Date.now() + '_' + Math.floor(Math.random() * 1e6); }
+  function fmt(n) { return (Number(n) || 0).toFixed(2); }
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function $(sel) { return document.querySelector(sel); }
+  function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+
+  function sourceLabel(key) {
+    for (var i = 0; i < SOURCES.length; i++) if (SOURCES[i].key === key) return SOURCES[i].label;
+    return '手动';
+  }
+  function pkgToSource(pkg) {
+    if (!config || !config.pkgMap) return 'manual';
+    for (var i = 0; i < config.pkgMap.length; i++) {
+      if (config.pkgMap[i].pkg === pkg) return config.pkgMap[i].source || 'manual';
+    }
+    return 'manual';
+  }
+  function merchantToCategory(merchant) {
+    var m = merchant || '';
+    if (config && config.categoryRules) {
+      for (var i = 0; i < config.categoryRules.length; i++) {
+        var r = config.categoryRules[i];
+        if (r.kw && m.indexOf(r.kw) >= 0) return r.category;
+      }
+    }
+    return '其他';
+  }
+
+  function showToast(msg) {
+    var t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 2200);
+  }
+
+  function openModal(html) {
+    var root = $('#modal-root');
+    root.innerHTML = '<div class="modal-mask"><div class="modal">' + html + '</div></div>';
+    root.querySelector('.modal-mask').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeModal();
+    });
+  }
+  function closeModal() { $('#modal-root').innerHTML = ''; }
+
+  function getRecords() { return LedgerStorage.getRecords() || []; }
+
+  /* ================= filtering ================= */
+  function applyFilter(list) {
+    if (filter === 'all') return list;
+    return list.filter(function (r) { return r.source === filter; });
+  }
+
+  /* ================= view renderers ================= */
+  function render() {
+    // tabbar active
+    $all('.tab').forEach(function (t) {
+      t.classList.toggle('active', t.getAttribute('data-view') === view);
+    });
+    $('#fab-add').style.display = (view === 'today') ? 'block' : 'none';
+
+    if (view === 'today') renderToday();
+    else if (view === 'flow') renderFlow();
+    else if (view === 'stats') renderStats();
+    else if (view === 'config') renderConfig();
+    else if (view === 'migrate') renderMigrate();
+  }
+
+  function filterChipsHTML() {
+    var opts = [
+      { k: 'all', l: '全部' }, { k: 'wechat', l: '微信' }, { k: 'alipay', l: '支付宝' },
+      { k: 'cash', l: '现金' }, { k: 'manual', l: '手动' }
+    ];
+    var h = '<div class="chips">';
+    opts.forEach(function (o) {
+      h += '<div class="chip' + (filter === o.k ? ' active' : '') + '" data-filter="' + o.k + '">' + o.l + '</div>';
+    });
+    h += '</div>';
+    return h;
+  }
+
+  function recHTML(r) {
+    var cls = r.type === 'expense' ? 'exp' : 'inc';
+    var sign = r.type === 'expense' ? '-' : '+';
+    return '<div class="rec">' +
+      '<div class="rec-badge ' + (r.source || 'manual') + '">' + esc(sourceLabel(r.source)) + '</div>' +
+      '<div class="rec-body">' +
+        '<div class="rec-cat">' + esc(r.category) +
+          (r.auto ? '<span class="auto-tag">自动</span>' : '') +
+        '</div>' +
+        '<div class="rec-note">' + esc(r.merchant || r.note || '') + '</div>' +
+      '</div>' +
+      '<div class="rec-amt ' + cls + '">' + sign + fmt(r.amount) + '</div>' +
+    '</div>';
+  }
+
+  function renderToday() {
+    var today = todayStr();
+    var all = getRecords();
+    var todays = all.filter(function (r) { return r.date === today; });
+    var todaysF = applyFilter(todays);
+
+    var exp = 0, inc = 0;
+    todaysF.forEach(function (r) { if (r.type === 'expense') exp += Number(r.amount); else inc += Number(r.amount); });
+
+    var h = '';
+    h += '<div class="card"><h3>今日 ' + today + '</h3>' +
+      '<div class="summary-row">' +
+        '<div class="summary-box"><div class="num exp">-' + fmt(exp) + '</div><div class="lbl">支出</div></div>' +
+        '<div class="summary-box"><div class="num inc">+' + fmt(inc) + '</div><div class="lbl">收入</div></div>' +
+        '<div class="summary-box"><div class="num">' + fmt(inc - exp) + '</div><div class="lbl">净额</div></div>' +
+      '</div></div>';
+
+    h += filterChipsHTML();
+
+    h += '<div class="card"><h3>今日记录</h3>';
+    if (todaysF.length === 0) h += '<div class="empty">今天还没有记录，点右下角 + 记一笔</div>';
+    else todaysF.forEach(function (r) { h += recHTML(r); });
+    h += '</div>';
+
+    h += '<button class="btn secondary" id="btn-pull">📥 拉取支付通知自动入账</button>';
+    if (config && config.pending && config.pending.length > 0) {
+      h += '<div class="warn-box" style="margin-top:10px">有 ' + config.pending.length + ' 条自动记账待确认，请到「配置」或此处处理。</div>';
+    }
+
+    $('#view').innerHTML = h;
+
+    // bind chips
+    $all('.chip').forEach(function (c) {
+      c.onclick = function () { filter = c.getAttribute('data-filter'); render(); };
+    });
+    $('#btn-pull').onclick = pullPayments;
+  }
+
+  function renderFlow() {
+    var all = getRecords().slice();
+    var list = applyFilter(all);
+    // sort by date desc, then createdAt desc
+    list.sort(function (a, b) {
+      if (a.date === b.date) return (b.id > a.id ? 1 : -1);
+      return a.date < b.date ? 1 : -1;
+    });
+
+    var h = '<h3 style="padding:0 4px 8px">流水</h3>';
+    h += filterChipsHTML();
+
+    if (list.length === 0) {
+      h += '<div class="card"><div class="empty">暂无流水</div></div>';
+    } else {
+      // group by date
+      var lastDate = null;
+      var groups = {};
+      var order = [];
+      list.forEach(function (r) {
+        if (!groups[r.date]) { groups[r.date] = []; order.push(r.date); }
+        groups[r.date].push(r);
+      });
+      h += '<div class="card">';
+      order.forEach(function (d) {
+        h += '<div class="day-group-title">' + d + '</div>';
+        groups[d].forEach(function (r) {
+          h += recHTML(r) +
+            '<div style="text-align:right"><button class="rec-del" data-del="' + r.id + '">删除</button></div>';
+        });
+      });
+      h += '</div>';
+    }
+    $('#view').innerHTML = h;
+
+    $all('.chip').forEach(function (c) {
+      c.onclick = function () { filter = c.getAttribute('data-filter'); render(); };
+    });
+    $all('[data-del]').forEach(function (b) {
+      b.onclick = function () { confirmDelete(b.getAttribute('data-del')); };
+    });
+  }
+
+  function confirmDelete(id) {
+    openModal('<h3>删除这条记录？</h3>' +
+      '<button class="btn danger" id="cf-del">确认删除</button>' +
+      '<button class="btn ghost" id="cf-cancel">取消</button>');
+    $('#cf-cancel').onclick = closeModal;
+    $('#cf-del').onclick = function () {
+      var recs = getRecords().filter(function (r) { return r.id !== id; });
+      LedgerStorage.setRecords(recs).then(function () {
+        closeModal();
+        showToast('已删除');
+        render();
+      });
+    };
+  }
+
+  function renderStats() {
+    var now = new Date();
+    var ym = now.getFullYear() + '-' + pad(now.getMonth() + 1);
+    var all = getRecords();
+    var month = all.filter(function (r) { return r.date.indexOf(ym) === 0; });
+    var mExp = 0, mInc = 0;
+    var byCat = {};
+    var bySource = { wechat: { exp: 0, inc: 0 }, alipay: { exp: 0, inc: 0 }, cash: { exp: 0, inc: 0 }, manual: { exp: 0, inc: 0 } };
+    month.forEach(function (r) {
+      var amt = Number(r.amount) || 0;
+      var s = bySource[r.source] || (bySource[r.source] = { exp: 0, inc: 0 });
+      if (r.type === 'expense') {
+        mExp += amt; s.exp += amt;
+        byCat[r.category] = (byCat[r.category] || 0) + amt;
+      } else { mInc += amt; s.inc += amt; }
+    });
+
+    var h = '<h3 style="padding:0 4px 8px">统计 · ' + ym + '</h3>';
+    h += '<div class="card"><h3>本月概览</h3>' +
+      '<div class="summary-row">' +
+        '<div class="summary-box"><div class="num exp">-' + fmt(mExp) + '</div><div class="lbl">支出</div></div>' +
+        '<div class="summary-box"><div class="num inc">+' + fmt(mInc) + '</div><div class="lbl">收入</div></div>' +
+        '<div class="summary-box"><div class="num">' + fmt(mInc - mExp) + '</div><div class="lbl">净额</div></div>' +
+      '</div></div>';
+
+    // budget
+    if (config && Number(config.budgetThreshold) > 0) {
+      var over = mExp > Number(config.budgetThreshold);
+      h += '<div class="' + (over ? 'warn-box' : 'card') + '" style="margin-bottom:14px">' +
+        '本月预算：' + fmt(config.budgetThreshold) + '，已支出 ' + fmt(mExp) +
+        (over ? ' ⚠️ 已超预算' : '，剩余 ' + fmt(Number(config.budgetThreshold) - mExp)) +
+      '</div>';
+    }
+
+    // category bars
+    h += '<div class="card"><h3>支出分类占比</h3>';
+    var cats = Object.keys(byCat);
+    if (cats.length === 0) h += '<div class="empty">本月暂无支出</div>';
+    else {
+      cats.sort(function (a, b) { return byCat[b] - byCat[a]; });
+      cats.forEach(function (c) {
+        var pct = mExp > 0 ? (byCat[c] / mExp * 100) : 0;
+        h += '<div class="bar-row"><div class="lbl">' + esc(c) + '</div>' +
+          '<div class="bar-track"><div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+          '<div class="val">' + fmt(byCat[c]) + '</div></div>';
+      });
+    }
+    h += '</div>';
+
+    // by source
+    h += '<div class="card"><h3>各来源本月小计</h3>';
+    SOURCES.forEach(function (s) {
+      var d = bySource[s.key] || { exp: 0, inc: 0 };
+      h += '<div class="bar-row"><div class="lbl">' + s.label + '</div>' +
+        '<div style="flex:1;font-size:13px">支出 -' + fmt(d.exp) + '　收入 +' + fmt(d.inc) + '</div></div>';
+    });
+    h += '</div>';
+
+    // initial balances
+    var ini = (config && config.initial) || { wechat: 0, alipay: 0, cash: 0 };
+    h += '<div class="card"><h3>期初余额</h3>' +
+      '<div class="bar-row"><div class="lbl">微信</div><div style="flex:1">' + fmt(ini.wechat) + '</div></div>' +
+      '<div class="bar-row"><div class="lbl">支付宝</div><div style="flex:1">' + fmt(ini.alipay) + '</div></div>' +
+      '<div class="bar-row"><div class="lbl">现金</div><div style="flex:1">' + fmt(ini.cash) + '</div></div>' +
+      '<div class="sub" style="margin-top:6px">余额可在「配置」页修改</div></div>';
+
+    $('#view').innerHTML = h;
+  }
+
+  /* ================= config view ================= */
+  function renderConfig() {
+    if (!config) config = defaultConfig();
+    var c = config;
+    var h = '<h3 style="padding:0 4px 8px">自动化配置</h3>';
+
+    // 1. pkg map
+    h += '<div class="card"><h3>① 支付来源映射（包名 → 来源）</h3>';
+    h += '<div class="sub" style="margin-bottom:8px">微信 com.tencent.mm / 支付宝 com.eg.android.AlipayGphone</div>';
+    c.pkgMap.forEach(function (row, i) {
+      h += '<div class="cfg-row" data-pkg-row="' + i + '">' +
+        '<input class="pkg-pkg" value="' + esc(row.pkg) + '" placeholder="包名">' +
+        '<select class="pkg-src" style="flex:0 0 90px;padding:8px;border-radius:10px;border:1px solid rgba(184,224,247,0.6);background:#FAFDFF">' +
+          SOURCES.map(function (s) {
+            return '<option value="' + s.key + '"' + (row.source === s.key ? ' selected' : '') + '>' + s.label + '</option>';
+          }).join('') +
+        '</select>' +
+        '<button data-del-pkg="' + i + '">删</button>' +
+      '</div>';
+    });
+    h += '<button class="btn secondary" id="add-pkg">+ 添加一行</button></div>';
+
+    // 2. amount match
+    h += '<div class="card"><h3>② 金额匹配范围</h3>' +
+      '<div class="field"><label>最小金额（元）</label><input type="number" step="0.01" id="cfg-min" value="' + c.minAmount + '"></div>' +
+      '<div class="field"><label>最大金额（元）</label><input type="number" step="0.01" id="cfg-max" value="' + c.maxAmount + '"></div>' +
+      '<div class="toggle"><div><div style="font-size:14px">自动确认入账</div><div class="sub">关闭后自动记账进入待确认列表</div></div>' +
+        '<div class="sw' + (c.autoConfirm ? ' on' : '') + '" id="sw-autoconfirm"></div></div>' +
+      '<div class="toggle"><div style="font-size:14px">启动时自动拉取支付</div>' +
+        '<div class="sw' + (c.autoFetchOnStart ? ' on' : '') + '" id="sw-autofetch"></div></div>' +
+    '</div>';
+
+    // 3. category rules
+    h += '<div class="card"><h3>③ 商户关键词 → 分类</h3>';
+    c.categoryRules.forEach(function (row, i) {
+      h += '<div class="cfg-row">' +
+        '<input class="rule-kw" value="' + esc(row.kw) + '" placeholder="关键词">' +
+        '<select class="rule-cat" style="flex:0 0 90px;padding:8px;border-radius:10px;border:1px solid rgba(184,224,247,0.6);background:#FAFDFF">' +
+          CATEGORIES.map(function (cat) {
+            return '<option' + (row.category === cat ? ' selected' : '') + '>' + cat + '</option>';
+          }).join('') +
+        '</select>' +
+        '<button data-del-rule="' + i + '">删</button>' +
+      '</div>';
+    });
+    h += '<button class="btn secondary" id="add-rule">+ 添加规则</button></div>';
+
+    // 4. push rules
+    h += '<div class="card"><h3>④ 推送 / 提醒规则</h3>' +
+      '<div class="toggle"><div style="font-size:14px">入账后弹提示</div>' +
+        '<div class="sw' + (c.toastEnabled ? ' on' : '') + '" id="sw-toast"></div></div>' +
+      '<div class="field" style="margin-top:12px"><label>每月预算提醒阈值（元，0=关闭）</label>' +
+        '<input type="number" step="0.01" id="cfg-budget" value="' + c.budgetThreshold + '"></div>' +
+    '</div>';
+
+    // initial balances edit
+    h += '<div class="card"><h3>⑤ 各来源期初余额</h3>' +
+      '<div class="field"><label>微信</label><input type="number" step="0.01" id="ini-wechat" value="' + (c.initial.wechat || 0) + '"></div>' +
+      '<div class="field"><label>支付宝</label><input type="number" step="0.01" id="ini-alipay" value="' + (c.initial.alipay || 0) + '"></div>' +
+      '<div class="field"><label>现金</label><input type="number" step="0.01" id="ini-cash" value="' + (c.initial.cash || 0) + '"></div>' +
+    '</div>';
+
+    // pending list
+    if (c.pending && c.pending.length > 0) {
+      h += '<div class="card"><h3>待确认自动记账（' + c.pending.length + '）</h3>';
+      c.pending.forEach(function (p, i) {
+        h += '<div class="pull-item">' +
+          '<div class="rec-body"><div class="rec-cat">' + esc(p.merchant || '') + '</div>' +
+          '<div class="rec-note">' + sourceLabel(p.source) + ' · ' + fmt(p.amount) + '</div></div>' +
+          '<button class="btn secondary" style="width:auto;padding:6px 12px;margin:0" data-acc="' + i + '">入账</button>' +
+          '<button class="btn ghost" style="width:auto;padding:6px 12px;margin:0" data-rej="' + i + '">忽略</button>' +
+        '</div>';
+      });
+      h += '</div>';
+    }
+
+    h += '<button class="btn" id="btn-save-cfg">💾 保存配置</button>';
+    $('#view').innerHTML = h;
+
+    // bind
+    $('#add-pkg').onclick = function () {
+      config.pkgMap.push({ pkg: '', source: 'manual' });
+      renderConfig();
+    };
+    $('#add-rule').onclick = function () {
+      config.categoryRules.push({ kw: '', category: '其他' });
+      renderConfig();
+    };
+    $all('[data-del-pkg]').forEach(function (b) {
+      b.onclick = function () {
+        config.pkgMap.splice(Number(b.getAttribute('data-del-pkg')), 1);
+        renderConfig();
+      };
+    });
+    $all('[data-del-rule]').forEach(function (b) {
+      b.onclick = function () {
+        config.categoryRules.splice(Number(b.getAttribute('data-del-rule')), 1);
+        renderConfig();
+      };
+    });
+    $all('#sw-autoconfirm,#sw-autofetch,#sw-toast').forEach(function (sw) {
+      sw.onclick = function () { sw.classList.toggle('on'); };
+    });
+    $all('[data-acc]').forEach(function (b) {
+      b.onclick = function () { acceptPending(Number(b.getAttribute('data-acc')), true); };
+    });
+    $all('[data-rej]').forEach(function (b) {
+      b.onclick = function () { acceptPending(Number(b.getAttribute('data-rej')), false); };
+    });
+
+    $('#btn-save-cfg').onclick = function () {
+      // read back rows
+      var pkgRows = [];
+      $all('[data-pkg-row]').forEach(function (row) {
+        var pkg = row.querySelector('.pkg-pkg').value.trim();
+        var src = row.querySelector('.pkg-src').value;
+        if (pkg) pkgRows.push({ pkg: pkg, source: src });
+      });
+      var ruleRows = [];
+      $all('.rule-kw').forEach(function (kwInput, i) {
+        var kw = kwInput.value.trim();
+        var cat = $all('.rule-cat')[i].value;
+        if (kw) ruleRows.push({ kw: kw, category: cat });
+      });
+      config.pkgMap = pkgRows;
+      config.categoryRules = ruleRows;
+      config.minAmount = Number($('#cfg-min').value) || 0;
+      config.maxAmount = Number($('#cfg-max').value) || 0;
+      config.autoConfirm = $('#sw-autoconfirm').classList.contains('on');
+      config.autoFetchOnStart = $('#sw-autofetch').classList.contains('on');
+      config.toastEnabled = $('#sw-toast').classList.contains('on');
+      config.budgetThreshold = Number($('#cfg-budget').value) || 0;
+      config.initial = {
+        wechat: Number($('#ini-wechat').value) || 0,
+        alipay: Number($('#ini-alipay').value) || 0,
+        cash: Number($('#ini-cash').value) || 0
+      };
+      LedgerStorage.setConfig(config).then(function () {
+        showToast('配置已保存');
+      });
+    };
+  }
+
+  function acceptPending(idx, accept) {
+    var p = config.pending[idx];
+    if (!p) return;
+    config.pending.splice(idx, 1);
+    if (accept) {
+      var recs = getRecords();
+      recs.push({
+        id: uid(), date: p.date || todayStr(), type: 'expense',
+        amount: Number(p.amount) || 0, category: p.category || '其他',
+        note: p.merchant || '', merchant: p.merchant || '',
+        source: p.source || 'manual', auto: true
+      });
+      LedgerStorage.setRecords(recs);
+    }
+    LedgerStorage.setConfig(config).then(function () {
+      showToast(accept ? '已入账' : '已忽略');
+      renderConfig();
+    });
+  }
+
+  /* ================= migrate view ================= */
+  function renderMigrate() {
+    var h = '<h3 style="padding:0 4px 8px">数据迁移</h3>';
+    h += '<div class="card"><h3>从 lifeline 迁移旧账</h3>' +
+      '<div class="sub" style="margin-bottom:10px">首次使用可从云端 lifeline state 恢复，或导入导出的备份 JSON。</div>' +
+      '<button class="btn" id="mg-cloud">☁️ 从云端恢复（Supabase）</button>' +
+      '<button class="btn secondary" id="mg-file">📂 导入备份文件</button>' +
+      '<button class="btn ghost" id="mg-skip">跳过，从空账本开始</button>' +
+    '</div>';
+    h += '<div class="card"><h3>当前账本状态</h3>' +
+      '<div class="sub">已有记录：' + getRecords().length + ' 条</div>' +
+      '<div class="sub" style="margin-top:4px">存储：' + (LedgerStorage.isFloat() ? 'float 宿主 IndexedDB' : '浏览器 localStorage（预览模式）') + '</div>' +
+      '<div class="sub" style="margin-top:4px">壳支付解析：' + (LedgerStorage.hasReality() ? '已接入' : '未接入') + '</div>' +
+    '</div>';
+    $('#view').innerHTML = h;
+
+    $('#mg-cloud').onclick = migrateFromCloud;
+    $('#mg-file').onclick = function () { $('#file-input').click(); };
+    $('#mg-skip').onclick = function () {
+      if (!config) config = defaultConfig();
+      LedgerStorage.setConfig(config).then(function () {
+        showToast('已就绪');
+        view = 'today'; render();
+      });
+    };
+  }
+
+  function importFinances(fin) {
+    fin = fin || {};
+    var oldRecords = fin.records || [];
+    var mapped = oldRecords.map(function (r) {
+      var src = r.method;
+      if (src !== 'wechat' && src !== 'alipay' && src !== 'cash') src = 'manual';
+      return {
+        id: r.id || uid(),
+        date: r.date || todayStr(),
+        type: r.type === 'income' ? 'income' : 'expense',
+        amount: Number(r.amount) || 0,
+        category: r.category || '其他',
+        note: r.note || '',
+        source: src,
+        merchant: r.merchant || '',
+        auto: false
+      };
+    });
+    if (!config) config = defaultConfig();
+    if (fin.initial) {
+      config.initial = {
+        wechat: Number(fin.initial.wechat) || 0,
+        alipay: Number(fin.initial.alipay) || 0,
+        cash: Number(fin.initial.cash) || 0
+      };
+    }
+    return LedgerStorage.setConfig(config).then(function () {
+      return LedgerStorage.setRecords(mapped);
+    }).then(function () {
+      showToast('已导入 ' + mapped.length + ' 条旧账');
+      view = 'today'; filter = 'all'; render();
+    });
+  }
+
+  function migrateFromCloud() {
+    var url = 'https://hfdggpgvfwsblyftarzm.supabase.co/rest/v1/lifelinestate?deviceid=eq.main';
+    var key = 'sb_publishable_Osc_G8_edmeMUDQnK_sj3w_aD7iwkMa';
+    openModal('<h3>正在从云端拉取…</h3><div class="sub">请稍候</div>');
+    LedgerStorage.fetch({
+      url: url, method: 'GET',
+      headers: { 'apikey': key, 'Authorization': 'Bearer ' + key }
+    }).then(function (res) {
+      var j = res.json;
+      if (!j || !j[0] || !j[0].statedata) throw new Error('云端返回格式异常');
+      closeModal();
+      importFinances(j[0].statedata.finances || {});
+    }).catch(function (e) {
+      closeModal();
+      showToast('云端拉取失败：' + (e && e.message || e));
+    });
+  }
+
+  function handleFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        var fin = null;
+        if (data.finances) fin = data.finances;
+        else if (data.statedata && data.statedata.finances) fin = data.statedata.finances;
+        else if (data.records) fin = data; // bare records array wrapper
+        if (!fin) throw new Error('未在文件中找到 finances 字段');
+        closeModal();
+        importFinances(fin);
+      } catch (e) {
+        showToast('文件解析失败：' + e.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  /* ================= pull payments ================= */
+  function pullPayments() {
+    if (!LedgerStorage.hasReality()) {
+      showToast('华为壳支付解析未接入，请手动记账');
+      return;
+    }
+    LedgerStorage.getPayments(50).then(function (list) {
+      pulled = (list || []).map(function (p) {
+        p._checked = true;
+        p._source = pkgToSource(p.pkg);
+        p._cat = merchantToCategory(p.merchant || '');
+        p._over = (Number(p.amount) < Number(config.minAmount || 0)) || (Number(p.amount) > Number(config.maxAmount || 1e9));
+        return p;
+      });
+      renderPullList();
+    }).catch(function () {
+      showToast('华为壳支付解析未接入，请手动记账');
+    });
+  }
+
+  function renderPullList() {
+    if (pulled.length === 0) {
+      showToast('没有新的支付通知');
+      return;
+    }
+    var h = '<h3>拉取到 ' + pulled.length + ' 条支付通知</h3>';
+    h += '<div class="sub" style="margin-bottom:10px">勾选要入账的记录，超出金额范围的会被跳过。</div>';
+    pulled.forEach(function (p, i) {
+      var d = new Date(Number(p.ts));
+      var ds = toDateStr(d);
+      h += '<div class="pull-item' + (p._over ? ' over' : '') + '">' +
+        '<input type="checkbox" data-pull-ck="' + i + '"' + (p._checked ? ' checked' : '') + ' style="width:18px;height:18px">' +
+        '<div class="rec-body">' +
+          '<div class="rec-cat">' + esc(p.merchant || '(无商户名)') + (p._over ? ' ⚠️ 超出范围' : '') + '</div>' +
+          '<div class="rec-note">' + sourceLabel(p._source) + ' · ' + esc(p.title || '') + ' · ' + ds + '</div>' +
+        '</div>' +
+        '<div class="rec-amt exp">-' + fmt(p.amount) + '</div>' +
+      '</div>';
+    });
+    h += '<button class="btn" id="pull-confirm">确认入账所选</button>' +
+         '<button class="btn ghost" id="pull-cancel">取消</button>';
+    openModal(h);
+
+    $all('[data-pull-ck]').forEach(function (ck) {
+      ck.onchange = function () {
+        pulled[Number(ck.getAttribute('data-pull-ck'))]._checked = ck.checked;
+      };
+    });
+    $('#pull-cancel').onclick = closeModal;
+    $('#pull-confirm').onclick = confirmPulled;
+  }
+
+  function confirmPulled() {
+    var recs = getRecords();
+    var skipped = 0, added = 0, queued = 0;
+    var toQueue = [];
+    pulled.forEach(function (p) {
+      if (!p._checked) return;
+      var amt = Number(p.amount) || 0;
+      if (amt < Number(config.minAmount || 0) || amt > Number(config.maxAmount || 1e9)) { skipped++; return; }
+      var d = new Date(Number(p.ts));
+      var dateStr = toDateStr(d);
+      var rec = {
+        id: uid(), date: dateStr, type: 'expense', amount: amt,
+        category: p._cat || '其他', note: p.merchant || '',
+        merchant: p.merchant || '', source: p._source || 'manual', auto: true
+      };
+      if (config.autoConfirm) {
+        recs.push(rec); added++;
+      } else {
+        toQueue.push({ date: dateStr, amount: amt, category: rec.category, merchant: p.merchant || '', source: rec.source });
+        queued++;
+      }
+    });
+    var tasks = [];
+    if (added > 0) tasks.push(LedgerStorage.setRecords(recs));
+    if (queued > 0) {
+      config.pending = (config.pending || []).concat(toQueue);
+      tasks.push(LedgerStorage.setConfig(config));
+    }
+    Promise.all(tasks).then(function () {
+      closeModal();
+      var msg = '已入账 ' + added + ' 条';
+      if (queued > 0) msg += '，' + queued + ' 条待确认';
+      if (skipped > 0) msg += '，跳过 ' + skipped + ' 条（超范围）';
+      if (config.toastEnabled !== false) showToast(msg);
+      pulled = [];
+      render();
+    });
+  }
+
+  /* ================= manual add modal ================= */
+  function openAddModal() {
+    var today = todayStr();
+    var h = '<h3>记一笔</h3>' +
+      '<div class="seg">' +
+        '<button class="on exp" data-seg="expense">支出</button>' +
+        '<button data-seg="income">收入</button>' +
+      '</div>' +
+      '<div class="field"><label>金额（元）</label><input type="number" step="0.01" id="m-amt" placeholder="0.00"></div>' +
+      '<div class="field"><label>日期</label><input type="date" id="m-date" value="' + today + '"></div>' +
+      '<div class="field"><label>分类</label><select id="m-cat">' +
+        CATEGORIES.map(function (c) { return '<option>' + c + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="field"><label>来源</label><select id="m-src">' +
+        SOURCES.map(function (s) { return '<option value="' + s.key + '">' + s.label + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="field"><label>备注</label><input id="m-note" placeholder="选填"></div>' +
+      '<button class="btn" id="m-save">保存</button>' +
+      '<button class="btn ghost" id="m-cancel">取消</button>';
+    openModal(h);
+
+    var segType = 'expense';
+    $all('[data-seg]').forEach(function (b) {
+      b.onclick = function () {
+        segType = b.getAttribute('data-seg');
+        $all('[data-seg]').forEach(function (x) { x.className = x.getAttribute('data-seg') === segType ? 'on ' + (segType === 'expense' ? 'exp' : 'inc') : ''; });
+      };
+    });
+    $('#m-cancel').onclick = closeModal;
+    $('#m-save').onclick = function () {
+      var amt = Number($('#m-amt').value);
+      if (!amt || amt <= 0) { showToast('请输入有效金额'); return; }
+      var rec = {
+        id: uid(),
+        date: $('#m-date').value || todayStr(),
+        type: segType,
+        amount: amt,
+        category: $('#m-cat').value,
+        note: $('#m-note').value || '',
+        source: $('#m-src').value,
+        merchant: '',
+        auto: false
+      };
+      var recs = getRecords();
+      recs.push(rec);
+      LedgerStorage.setRecords(recs).then(function () {
+        closeModal();
+        showToast('已保存');
+        render();
+      });
+    };
+  }
+
+  /* ================= boot ================= */
+  function updateStatus() {
+    var dot = $('#status-dot'), lbl = $('#status-label');
+    if (!LedgerStorage.isFloat()) {
+      dot.className = 'status-dot warn'; lbl.textContent = '本地预览';
+    } else if (LedgerStorage.hasReality()) {
+      dot.className = 'status-dot ok'; lbl.textContent = '壳支付已接入';
+    } else if (LedgerStorage.hasNetwork()) {
+      dot.className = 'status-dot'; lbl.textContent = 'float 本地';
+    } else {
+      dot.className = 'status-dot'; lbl.textContent = '本地';
+    }
+  }
+
+  function boot() {
+    LedgerStorage.init().then(function (state) {
+      config = state.config || defaultConfig();
+      updateStatus();
+
+      // tabbar binding
+      $all('.tab').forEach(function (t) {
+        t.onclick = function () {
+          view = t.getAttribute('data-view');
+          render();
+        };
+      });
+      $('#fab-add').onclick = openAddModal;
+
+      // file input
+      $('#file-input').onchange = function () {
+        if (this.files && this.files[0]) handleFile(this.files[0]);
+        this.value = '';
+      };
+
+      // first run → migration wizard
+      if (LedgerStorage.isFirstRun()) {
+        view = 'migrate';
+        render();
+        openModal('<h3>👋 欢迎使用 Life Ledger</h3>' +
+          '<div class="sub" style="margin-bottom:12px">首次使用，请选择旧账迁移方式。</div>' +
+          '<button class="btn" id="fw-cloud">☁️ 从云端 lifeline 恢复</button>' +
+          '<button class="btn secondary" id="fw-file">📂 导入备份 JSON</button>' +
+          '<button class="btn ghost" id="fw-skip">暂不迁移，空账本开始</button>');
+        $('#fw-cloud').onclick = function () { closeModal(); migrateFromCloud(); };
+        $('#fw-file').onclick = function () { closeModal(); $('#file-input').click(); };
+        $('#fw-skip').onclick = function () {
+          closeModal();
+          if (!config) config = defaultConfig();
+          LedgerStorage.setConfig(config).then(function () { view = 'today'; render(); });
+        };
+      } else {
+        render();
+        if (config.autoFetchOnStart && LedgerStorage.hasReality()) {
+          setTimeout(pullPayments, 600);
+        }
+      }
+    });
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

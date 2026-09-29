@@ -1,0 +1,522 @@
+/* ── 华为壳设置页：Y2K 冰蓝千禧复古风格 ──
+   冰蓝 + 白、浅波点、磨砂玻璃、圆角、老式 Mac 窗口控件（三色点）。
+   仅作用于 .hw-shell 内的新增 UI，不改任何既有页面样式。 */
+
+.hw-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 4px 2px 24px;
+    font-family: inherit;
+    color: #14406b;
+}
+
+/* 磨砂玻璃卡片 + 老式 Mac 三色点窗口 */
+.hw-shell-card {
+    position: relative;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(212, 240, 255, 0.78));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(126, 200, 235, 0.55);
+    border-radius: 22px;
+    padding: 16px 16px 18px;
+    box-shadow: 0 6px 20px rgba(90, 165, 215, 0.18);
+    overflow: hidden;
+}
+
+/* 波点：状态卡上的浅波点底纹 */
+.hw-shell-hero {
+    background:
+        radial-gradient(rgba(140, 195, 235, 0.28) 1.5px, transparent 1.5px) 0 0 / 18px 18px,
+        linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(206, 238, 255, 0.85));
+}
+
+.hw-win-dots {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.hw-win-dots i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: block;
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5), 0 1px 2px rgba(40, 90, 130, 0.25);
+}
+
+.hw-win-dots i:nth-child(1) { background: #ff6b6b; }
+.hw-win-dots i:nth-child(2) { background: #ffd93d; }
+.hw-win-dots i:nth-child(3) { background: #57d97b; }
+
+/* 状态卡头部 */
+.hw-hero-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.hw-hero-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #7ec8e3, #a5e0fa);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(90, 165, 215, 0.4);
+    flex-shrink: 0;
+}
+
+.hw-hero-copy {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.hw-hero-title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: #123a63;
+}
+
+.hw-hero-desc {
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #3d6d97;
+}
+
+.hw-status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.7);
+}
+
+.hw-status-on { background: #4ade80; }
+.hw-status-off { background: #f87171; }
+
+/* 能力开关行 */
+.hw-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(126, 200, 235, 0.45);
+    border-radius: 14px;
+    padding: 10px 12px;
+}
+
+.hw-toggle-copy {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.hw-toggle-title { font-size: 12.5px; font-weight: 600; color: #123a63; }
+.hw-toggle-desc { font-size: 11px; color: #4a7ba6; line-height: 1.45; }
+
+.hw-switch {
+    width: 44px;
+    height: 24px;
+    border-radius: 999px;
+    background: #c8dcec;
+    border: 1px solid rgba(120, 180, 225, 0.5);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+    padding: 0;
+}
+
+.hw-switch-on { background: linear-gradient(135deg, #5fbde8, #8fd6f7); }
+
+.hw-switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 2px 4px rgba(40, 90, 130, 0.3);
+    transition: transform 0.2s ease;
+}
+
+.hw-switch-on .hw-switch-knob { transform: translateX(20px); }
+
+/* 卡片标题 */
+.hw-card-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #123a63;
+    margin-bottom: 12px;
+    letter-spacing: 0.3px;
+}
+
+.hw-card-title svg { color: #4b9fd4; }
+
+/* 权限网格 */
+.hw-perm-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+@media (max-width: 420px) {
+    .hw-perm-grid { grid-template-columns: 1fr; }
+}
+
+.hw-perm-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(126, 200, 235, 0.4);
+    border-radius: 14px;
+    padding: 10px;
+    min-width: 0;
+}
+
+.hw-perm-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 9px;
+    background: rgba(150, 210, 245, 0.35);
+    color: #2c6e9e;
+    flex-shrink: 0;
+}
+
+.hw-perm-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #1b4e7a;
+    flex: 1;
+    min-width: 0;
+}
+
+.hw-perm-hint {
+    font-size: 10.5px;
+    color: #5a86ad;
+    line-height: 1.4;
+    width: 100%;
+}
+
+.hw-chip {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.hw-chip-on { background: rgba(74, 222, 128, 0.18); color: #1c8a4d; border: 1px solid rgba(74, 222, 128, 0.4); }
+.hw-chip-off { background: rgba(248, 113, 113, 0.16); color: #c0392b; border: 1px solid rgba(248, 113, 113, 0.4); }
+.hw-chip-unknown { background: rgba(140, 200, 240, 0.2); color: #3a76a5; border: 1px solid rgba(140, 200, 240, 0.45); }
+
+/* 表单字段 */
+.hw-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 10px;
+    flex: 1;
+    min-width: 0;
+}
+
+.hw-field:last-child { margin-bottom: 0; }
+
+.hw-field-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #24547f;
+}
+
+.hw-field-hint {
+    font-size: 10.5px;
+    color: #5a86ad;
+    line-height: 1.45;
+}
+
+.hw-input,
+.hw-select {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(120, 190, 230, 0.55);
+    border-radius: 12px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: #14406b;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    box-sizing: border-box;
+}
+
+.hw-input:focus,
+.hw-select:focus {
+    border-color: #4b9fd4;
+    box-shadow: 0 0 0 3px rgba(95, 189, 232, 0.25);
+}
+
+.hw-input::placeholder { color: #8fb3d0; }
+
+.hw-input-num { max-width: 130px; }
+
+.hw-field-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.hw-field-row-gap { gap: 12px; align-items: flex-start; }
+
+/* 按钮 */
+.hw-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #1b4e7a;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(120, 190, 230, 0.55);
+    border-radius: 12px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease;
+    box-shadow: 0 2px 6px rgba(90, 165, 215, 0.15);
+}
+
+.hw-btn:hover:not(:disabled) { background: #fff; box-shadow: 0 4px 12px rgba(90, 165, 215, 0.3); transform: translateY(-1px); }
+.hw-btn:active:not(:disabled) { transform: translateY(0); }
+.hw-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.hw-btn-primary {
+    background: linear-gradient(135deg, #5fbde8, #8fd6f7);
+    color: #fff;
+    border-color: rgba(80, 170, 220, 0.7);
+    box-shadow: 0 3px 10px rgba(95, 189, 232, 0.4);
+}
+
+.hw-btn-primary:hover:not(:disabled) { background: linear-gradient(135deg, #55b3e0, #82cdf2); color: #fff; }
+
+.hw-btn-ghost {
+    background: rgba(230, 246, 255, 0.55);
+    border-style: dashed;
+}
+
+.hw-btn-danger {
+    background: rgba(255, 107, 107, 0.14);
+    color: #c0392b;
+    border-color: rgba(255, 107, 107, 0.5);
+}
+
+.hw-btn-mini {
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 999px;
+    background: rgba(230, 246, 255, 0.6);
+}
+
+.hw-spin { animation: hw-spin 0.8s linear infinite; }
+
+@keyframes hw-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* 门禁锁列表 */
+.hw-lock-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0;
+}
+
+.hw-lock-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #14406b;
+    background: rgba(230, 246, 255, 0.7);
+    border: 1px solid rgba(120, 190, 230, 0.55);
+    border-radius: 999px;
+    padding: 4px 10px;
+}
+
+.hw-lock-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 107, 107, 0.25);
+    color: #c0392b;
+    cursor: pointer;
+    padding: 0;
+}
+
+/* 账本卡 */
+.hw-ledger-card {
+    background:
+        radial-gradient(rgba(140, 195, 235, 0.24) 1.5px, transparent 1.5px) 0 0 / 22px 22px,
+        linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(214, 240, 255, 0.88));
+}
+
+.hw-ledger-stats {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.hw-ledger-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    flex: 1;
+    min-width: 64px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(126, 200, 235, 0.45);
+    border-radius: 14px;
+    padding: 10px 4px;
+}
+
+.hw-ledger-num {
+    font-size: 17px;
+    font-weight: 800;
+    color: #1b6ba8;
+    font-variant-numeric: tabular-nums;
+}
+
+.hw-ledger-name { font-size: 10.5px; font-weight: 600; color: #4a7ba6; }
+
+/* 快速测试 */
+.hw-btn-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+@media (max-width: 420px) {
+    .hw-btn-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.hw-test-output {
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+.hw-test-ok { background: rgba(74, 222, 128, 0.12); border: 1px solid rgba(74, 222, 128, 0.4); }
+.hw-test-err { background: rgba(248, 113, 113, 0.12); border: 1px solid rgba(248, 113, 113, 0.4); }
+
+.hw-test-label { font-weight: 700; color: #1b4e7a; margin-bottom: 4px; }
+.hw-test-err .hw-test-label { color: #c0392b; }
+
+.hw-test-text {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    color: #24547f;
+}
+
+.hw-shell-foot { display: flex; }
+/* ---------- 自定义快捷动作 / 联动规则列表 ---------- */
+.hw-action-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    margin-top: 10px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(140, 200, 240, 0.35);
+    box-shadow: 0 1px 4px rgba(120, 190, 230, 0.12);
+}
+.hw-action-copy { flex: 1; min-width: 0; }
+.hw-action-name { font-size: 14px; font-weight: 700; color: #1e5f8e; word-break: break-all; }
+.hw-action-sub { font-size: 12px; color: #6d93b4; margin-top: 2px; word-break: break-all; }
+.hw-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.hw-chip-row .hw-chip { cursor: pointer; user-select: none; transition: all 0.15s ease; }
+.hw-chip-row .hw-chip:hover { transform: translateY(-1px); }
+.hw-switch-sm { width: 34px; height: 20px; flex: 0 0 auto; }
+.hw-switch-sm .hw-switch-knob { width: 14px; height: 14px; }
+.hw-switch-sm.hw-switch-on .hw-switch-knob { transform: translateX(14px); }
+
+/* 权限中心 / 通用小控件（Y2K 冰蓝千禧风格延续） */
+.hw-perm-pre {
+    max-height: 220px;
+    overflow: auto;
+    margin: 8px 0;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #3b6ea5;
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(120, 175, 235, 0.35);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.hw-toggle-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    margin: 6px 0;
+}
+.hw-check {
+    width: 16px;
+    height: 16px;
+    accent-color: #7ab8ec;
+    cursor: pointer;
+}
+.hw-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 8px;
+}
+.hw-chip-x {
+    margin-left: 4px;
+    border: none;
+    background: transparent;
+    color: #3b6ea5;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+}
+.hw-chip-x:hover {
+    color: #d3487a;
+}

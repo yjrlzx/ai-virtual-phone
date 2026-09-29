@@ -1459,7 +1459,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     useEffect(() => {
         const onStarted = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 console.log("[ChatRoom] followup-started received, setting isGenerating=true");
                 setIsGenerating(true);
             }
@@ -1475,7 +1475,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         };
         const onFired = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 console.log("[ChatRoom] followup-fired received, reloading messages, setting isGenerating=false");
                 // Reload messages from storage (the service already saved them)
                 syncMessagesFromStorage();
@@ -1501,7 +1501,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     useEffect(() => {
         const onCSSUpdate = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 setLiveCSS(detail.css || "");
             }
         };
@@ -1513,13 +1513,13 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     useEffect(() => {
         const onWeixinUpdate = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 syncMessagesFromStorage();
             }
         };
         const onWeixinGenerating = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 setIsGenerating(Boolean(detail.generating));
                 isGeneratingRef.current = Boolean(detail.generating);
             }
@@ -1536,7 +1536,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     useEffect(() => {
         const onExternalMessageUpdate = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 syncMessagesFromStorage();
             }
         };
@@ -1548,7 +1548,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     useEffect(() => {
         const handler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 syncMessagesFromStorage();
                 isGeneratingRef.current = false;
                 setIsGenerating(false);
@@ -2085,7 +2085,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     useEffect(() => {
         const handler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail?.sessionId === session.id) {
+            if (detail?.sessionId === session.id || !detail?.sessionId) {
                 // Only handle call if this ChatRoom is currently visible
                 if (!isChatRoomElementVisible(wrapperRef.current)) return;
                 setCallInitiator("character");
@@ -4005,6 +4005,24 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         }
         return true;
     };
+
+    // 华为壳原生语音识别 / OCR 识别结果（非通话场景）→ 以用户消息发送并触发回复
+    const huaweiInjectSendRef = useRef(handleSendText);
+    useEffect(() => { huaweiInjectSendRef.current = handleSendText; });
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            const text = typeof detail?.text === "string" ? detail.text.trim() : "";
+            if (!text) return;
+            huaweiInjectSendRef.current(text);
+        };
+        window.addEventListener("huawei-voice-input", handler);
+        window.addEventListener("huawei-ocr-result", handler);
+        return () => {
+            window.removeEventListener("huawei-voice-input", handler);
+            window.removeEventListener("huawei-ocr-result", handler);
+        };
+    }, [session.id]);
 
     // 线下 XML 构造与提示词查看器共用 lib/offline-prompt-builder（社区 #108），
     // 保证「预览 = 真实发出的提示词」；此处仅包一层稳定引用。

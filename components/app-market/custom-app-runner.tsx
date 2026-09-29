@@ -42,6 +42,7 @@ import {
   generateCustomAppText,
   isCustomAppGroupGenerateRecord,
   getCustomAppBadge,
+  getCustomAppPayments,
   getWalletSnapshot,
   incrementCustomAppBadge,
   loadCustomAppNotifications,
@@ -490,6 +491,9 @@ html, body { min-height: 100%; }
     bridge: {
       send: function(payload){ return request('bridge.send', payload || {}); },
       readState: function(payload){ return request('bridge.readState', payload || {}); }
+    },
+    reality: {
+      getPayments: function(payload){ return request('reality.getPayments', payload || {}); }
     },
     room: {
       create: function(payload){ return request('room.create', payload || {}); },
@@ -1837,6 +1841,10 @@ export function CustomAppRunner({
     if (action === "bridge.readState") {
       requirePermission("bridge.read");
       return readCustomAppBridgeState(record);
+    }
+    if (action === "reality.getPayments") {
+      requirePermission("bridge.send");
+      return getCustomAppPayments(record);
     }
 
     if (action === "wallet.get") {

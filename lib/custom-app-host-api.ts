@@ -2331,6 +2331,29 @@ export async function readCustomAppBridgeState(record: Record<string, unknown>):
   return readAllBridgeStateSnapshots(config, limit);
 }
 
+/** 沙盒 iframe 经宿主转发读取华为壳支付通知记录（window.AndroidShell.getPayments），用于自动记账 */
+export async function getCustomAppPayments(
+  record: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const limit = Math.max(1, Math.min(200, Number(record.limit) || 50));
+  if (typeof window === "undefined") {
+    return { ok: false, reason: "shell_unavailable" };
+  }
+  const shell = (window as unknown as {
+    AndroidShell?: { getPayments?: (limit: number) => string };
+  }).AndroidShell;
+  if (!shell || typeof shell.getPayments !== "function") {
+    return { ok: false, reason: "shell_unavailable" };
+  }
+  try {
+    const result = shell.getPayments(limit);
+    return { ok: true, payments: JSON.parse(result) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: "parse_error", error: message };
+  }
+}
+
 export async function executeCustomAppHostAction(
   app: InstalledCustomApp,
   rawAction: CustomAppHostAction,

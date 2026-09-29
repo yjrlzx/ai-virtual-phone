@@ -23,8 +23,12 @@ import {
 } from "./tool-storage";
 import { executeCustomAppToolCall } from "./custom-app-tool-runtime";
 import { characterWorkspace, agentComputerRequest, isAgentComputerConfigured } from "./agent-computer";
-import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
+import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, HUAWEI_SHELL_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
 import { bridgeConnection, loadBridgeDataItems, loadBridgeShortcutActions, readAllBridgeStateSnapshots, readBridgeStateSnapshot } from "./reality-bridge/storage";
+import { fetchHuaweiCurrentWeather, getAndroidShell, invokeShellJson, loadHuaweiCustomActions, loadHuaweiFootprint, loadHuaweiHealthSnapshot, loadHuaweiShellSettings, readHuaweiLedger, syncHuaweiLedgerFromShell } from "./huawei-shell/storage";
+import type { HuaweiLedgerRecord } from "./huawei-shell/storage";
+import type { HuaweiCustomAction } from "./huawei-shell/types";
+import { ALIPAY_PACKAGE, WECHAT_PACKAGE, type PaymentSource } from "./huawei-shell/types";
 import { createShortcutCommand, deliverShortcutCommand, waitForShortcutCommand } from "./shortcut-command-client";
 import { loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
 import type { MemoryEntry } from "./memory-types";
@@ -791,6 +795,7 @@ async function executeInternalTool(call: ToolCall, context?: ToolExecutionContex
     if (call.name === "发送文件") return executeSendFileTool(call);
     if (call.name === "角色电脑") return executeAgentComputerTool(call, context);
     if (isRealityBridgeToolName(call.name)) return executeRealityBridgeTool(call, context);
+    if (isHuaweiShellToolName(call.name)) return executeHuaweiShellTool(call);
     if (call.name === "稍后主动联系" || call.name === "设置定时醒来") return executeTimedWakeTool(call, context);
 
     if (call.name !== "写入记忆") return null;
@@ -1005,6 +1010,607 @@ async function executeRealityBridgeTool(call: ToolCall, context?: ToolExecutionC
         return { name: call.name, success: false, error: err instanceof Error ? err.message : String(err) };
     }
 }
+
+function isHuaweiShellToolName(name: string): boolean {
+    return name === "查看手机状态"
+        || name === "实时天气"
+        || name === "查询位置"
+        || name === "查看当前应用"
+        || name === "查看通知"
+        || name === "查看记账"
+        || name === "打开应用"
+        || name === "点击文字"
+        || name === "输入文字"
+        || name === "滑动屏幕"
+        || name === "按键操作"
+        || name === "专注模式"
+        || name === "定时息屏"
+        || name === "发送提醒"
+        || name === "读取微信消息"
+        || name === "查看设备详情"
+        || name === "调节音量"
+        || name === "调节亮度"
+        || name === "读取剪贴板"
+        || name === "写入剪贴板"
+        || name === "打开网页"
+        || name === "读取文件"
+        || name === "语音转文字"
+        || name === "发起语音通话"
+        || name === "识别屏幕交易"
+        || name === "查询行踪足迹"
+        || name === "查看健康数据"
+        || loadHuaweiCustomActions().some(action => action.enabled && action.name === name);
+}
+
+function huaweiToolOk(name: string, data: string): ToolResult {
+    return { name, success: true, data, userNotice: `${name}完成` };
+}
+
+function huaweiToolFail(name: string, error: string): ToolResult {
+    return { name, success: false, error };
+}
+
+function huaweiAppLabel(pkg: string): string {
+    const labels: Record<string, string> = {
+        "com.tencent.mm": "微信",
+        "com.eg.android.AlipayGphone": "支付宝",
+        "com.unionpay": "云闪付",
+        "com.taobao.taobao": "淘宝",
+        "com.jingdong.app.mall": "京东",
+        "com.tencent.mobileqq": "QQ",
+        "com.sina.weibo": "微博",
+        "com.ss.android.ugc.aweme": "抖音",
+        "com.xingin.xhs": "小红书",
+        "com.zhihu.android": "知乎",
+        "com.netease.cloudmusic": "网易云音乐",
+        "com.tencent.qqlive": "腾讯视频",
+        "com.youku.phone": "优酷",
+        "com.huawei.himovie": "华为视频",
+        "com.huawei.camera": "相机",
+        "com.huawei.photos": "图库",
+        "com.huawei.browser": "华为浏览器",
+        "com.android.browser": "浏览器",
+        "com.android.settings": "设置",
+        "com.android.contacts": "联系人",
+        "com.android.mms": "信息",
+        "com.android.phone": "电话",
+    };
+    return labels[pkg] || pkg || "未知应用";
+}
+
+function huaweiTimeLabel(ts: unknown): string {
+    if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) return "";
+    const diff = Date.now() - ts;
+    if (diff < 60_000) return "（刚刚）";
+    const min = Math.floor(diff / 60_000);
+    if (min < 60) return `（${min} 分钟前）`;
+    const hour = Math.floor(min / 60);
+    if (hour < 24) return `（${hour} 小时前）`;
+    return `（${Math.floor(hour / 24)} 天前）`;
+}
+
+function huaweiStatusTool(): ToolResult {
+    const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getStatus ? shell.getStatus() : null));
+    if (!result.ok) return huaweiToolFail("查看手机状态", result.error);
+    const r = result.data;
+    const parts: string[] = [];
+    if (typeof r.battery === "number") parts.push(`电量 ${r.battery}%`);
+    if (typeof r.volume === "number") parts.push(`媒体音量 ${r.volume}`);
+    parts.push(r.network ? "网络已连接" : "网络未连接");
+    parts.push(r.accessibility ? "无障碍已开启" : "无障碍未开启");
+    parts.push(r.floating ? "悬浮球已开启" : "悬浮球未开启");
+    if (typeof r.lockedApps === "number") parts.push(`门禁锁 ${r.lockedApps} 个 App`);
+    return huaweiToolOk("查看手机状态", parts.length > 0 ? parts.join("，") : "未获取到状态信息");
+}
+
+async function huaweiWeatherTool(): Promise<ToolResult> {
+    const result = await fetchHuaweiCurrentWeather();
+    return result.ok
+        ? huaweiToolOk("实时天气", result.data || "")
+        : huaweiToolFail("实时天气", result.error || "天气获取失败");
+}
+
+function huaweiLocationTool(): ToolResult {
+    const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getLocation ? shell.getLocation() : null));
+    if (!result.ok) return huaweiToolFail("查询位置", result.error);
+    const lat = Number(result.data.lat);
+    const lng = Number(result.data.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return huaweiToolFail("查询位置", "定位结果缺少经纬度");
+    return huaweiToolOk("查询位置", `纬度 ${lat.toFixed(5)}，经度 ${lng.toFixed(5)}`);
+}
+
+function huaweiCurrentAppTool(): ToolResult {
+    const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getCurrentApp ? shell.getCurrentApp() : null));
+    if (!result.ok) return huaweiToolFail("查看当前应用", result.error);
+    const pkg = String(result.data.currentApp ?? "");
+    if (!pkg) return huaweiToolOk("查看当前应用", "当前没有前台应用（或无障碍服务未开启）");
+    return huaweiToolOk("查看当前应用", `${huaweiAppLabel(pkg)}（${pkg}）`);
+}
+
+function huaweiNotificationsTool(args: Record<string, unknown>): ToolResult {
+    const settings = loadHuaweiShellSettings();
+    const limit = clampToolInteger(args.limit, 1, 50, settings.notificationDefaultLimit);
+    const result = invokeShellJson<Array<Record<string, unknown>>>(shell => (shell.getNotifications ? shell.getNotifications(limit) : null));
+    if (!result.ok) return huaweiToolFail("查看通知", result.error);
+    const list = Array.isArray(result.data) ? result.data : [];
+    if (list.length === 0) return huaweiToolOk("查看通知", "暂无通知（需要在 系统设置 → 通知使用权 开启）");
+    const lines = list.map((item, index) => {
+        const app = huaweiAppLabel(String(item.pkg ?? ""));
+        const title = item.title ? ` ${String(item.title)}` : "";
+        const text = item.text ? ` ${String(item.text)}` : "";
+        return `${index + 1}. [${app}]${title}${text}${huaweiTimeLabel(item.ts)}`;
+    });
+    return huaweiToolOk("查看通知", truncate(lines.join("\n")));
+}
+
+function huaweiPaymentsTool(args: Record<string, unknown>): ToolResult {
+    const settings = loadHuaweiShellSettings();
+    const limit = clampToolInteger(args.limit, 1, 100, settings.paymentDefaultLimit);
+    let source: PaymentSource = settings.paymentDefaultSource;
+    if (args.source === "wechat" || args.source === "alipay") source = args.source;
+    else if (args.source === "all") source = "all";
+    // 单一数据源：自动记账先拉壳里最新支付通知、去重写入记账应用同一存储，再统一从账本读
+    const sync = syncHuaweiLedgerFromShell(Math.max(limit, 30));
+    const entries = readHuaweiLedger(limit, source);
+    if (!sync.ok && entries.length === 0) {
+        return huaweiToolFail("查看记账", sync.error ?? "同步失败");
+    }
+    if (entries.length === 0) {
+        if (source === "all") return huaweiToolOk("查看记账", "账本暂无记录（需在 系统设置 → 通知使用权 开启，且发生过支付通知）");
+        return huaweiToolOk("查看记账", `账本里还没有${source === "wechat" ? "微信" : "支付宝"}的支付记录`);
+    }
+    const sourceLabel = (s: string): string => s === "wechat" ? "微信" : s === "alipay" ? "支付宝" : "其他";
+    const timeText = (r: HuaweiLedgerRecord): string => r.ts ? huaweiTimeLabel(r.ts) : r.date ? `（${r.date}）` : "";
+    const formatGroup = (label: string, items: HuaweiLedgerRecord[]): string => {
+        if (items.length === 0) return "";
+        const rows = items.map(item => {
+            const merchant = item.merchant ? `，收款方 ${item.merchant}` : "";
+            const note = item.note ? `，备注 ${item.note}` : "";
+            return `- ¥${item.amount.toFixed(2)}${merchant}${note}${timeText(item)}`;
+        });
+        return `【${label}】\n${rows.join("\n")}`;
+    };
+    const wechat = entries.filter(e => e.source === "wechat");
+    const alipay = entries.filter(e => e.source === "alipay");
+    const other = entries.filter(e => e.source !== "wechat" && e.source !== "alipay");
+    const groups = [formatGroup("微信", wechat), formatGroup("支付宝", alipay), formatGroup("其他", other)].filter(Boolean);
+    return huaweiToolOk("查看记账", `${truncate(groups.join("\n\n"))}\n\n共 ${entries.length} 笔（自动记账已落账，微信/支付宝分账）`);
+}
+function huaweiOpenAppTool(args: Record<string, unknown>): ToolResult {
+    const pkg = requiredStringArg(args, "packageName");
+    if (!pkg) return huaweiToolFail("打开应用", "缺少 packageName 参数（应用包名）");
+    const result = invokeShellJson(shell => (shell.openApp ? shell.openApp(pkg) : null));
+    if (!result.ok) return huaweiToolFail("打开应用", result.error);
+    return huaweiToolOk("打开应用", `已打开 ${huaweiAppLabel(pkg)}（${pkg}）`);
+}
+
+function huaweiClickTextTool(args: Record<string, unknown>): ToolResult {
+    const text = requiredStringArg(args, "text");
+    if (!text) return huaweiToolFail("点击文字", "缺少 text 参数（要点击的文字）");
+    const result = invokeShellJson(shell => (shell.clickText ? shell.clickText(text) : null));
+    if (!result.ok) return huaweiToolFail("点击文字", result.error);
+    return huaweiToolOk("点击文字", `已点击“${text}”`);
+}
+
+function huaweiInputTextTool(args: Record<string, unknown>): ToolResult {
+    const text = requiredStringArg(args, "text");
+    if (!text) return huaweiToolFail("输入文字", "缺少 text 参数（要输入的内容）");
+    const result = invokeShellJson(shell => (shell.inputText ? shell.inputText(text) : null));
+    if (!result.ok) return huaweiToolFail("输入文字", result.error);
+    return huaweiToolOk("输入文字", `已向输入框写入“${text}”`);
+}
+
+function huaweiSwipeTool(args: Record<string, unknown>): ToolResult {
+    const x1 = clampToolInteger(args.x1, 0, 1000, 500);
+    const y1 = clampToolInteger(args.y1, 0, 1000, 500);
+    const x2 = clampToolInteger(args.x2, 0, 1000, 500);
+    const y2 = clampToolInteger(args.y2, 0, 1000, 500);
+    const result = invokeShellJson(shell => (shell.swipe ? shell.swipe(x1, y1, x2, y2) : null));
+    if (!result.ok) return huaweiToolFail("滑动屏幕", result.error);
+    return huaweiToolOk("滑动屏幕", `已在屏幕上从 (${x1},${y1}) 滑到 (${x2},${y2})`);
+}
+
+const HUAWEI_PRESS_KEY_LABELS: Record<string, string> = {
+    home: "回到桌面",
+    back: "返回",
+    recents: "最近任务",
+    notifications: "下拉通知栏",
+    quick_settings: "快捷开关",
+    lock_screen: "锁屏",
+};
+
+function huaweiPressKeyTool(args: Record<string, unknown>): ToolResult {
+    const key = requiredStringArg(args, "key");
+    if (!key) return huaweiToolFail("按键操作", "缺少 key 参数（home/back/recents/notifications/quick_settings/lock_screen）");
+    const result = invokeShellJson(shell => (shell.pressKey ? shell.pressKey(key) : null));
+    if (!result.ok) return huaweiToolFail("按键操作", result.error);
+    return huaweiToolOk("按键操作", `已执行「${HUAWEI_PRESS_KEY_LABELS[key] || key}」`);
+}
+
+function huaweiFocusTool(args: Record<string, unknown>): ToolResult {
+    const settings = loadHuaweiShellSettings();
+    const minutes = clampToolInteger(args.durationMin, 1, 240, settings.focusDefaultMinutes);
+    const result = invokeShellJson(shell => (shell.focusMode ? shell.focusMode(minutes) : null));
+    if (!result.ok) return huaweiToolFail("专注模式", result.error);
+    return huaweiToolOk("专注模式", `已开启专注模式 ${minutes} 分钟：全机锁定，只有小手机可用`);
+}
+
+function huaweiScreenBreakTool(args: Record<string, unknown>): ToolResult {
+    const settings = loadHuaweiShellSettings();
+    const seconds = clampToolInteger(args.seconds, 5, 3600, settings.screenBreakDefaultSeconds);
+    const result = invokeShellJson(shell => (shell.screenBreak ? shell.screenBreak(seconds) : null));
+    if (!result.ok) return huaweiToolFail("定时息屏", result.error);
+    return huaweiToolOk("定时息屏", `屏幕将在 ${seconds} 秒后自动熄灭`);
+}
+
+function huaweiWeChatMessagesTool(args: Record<string, unknown>): ToolResult {
+    const settings = loadHuaweiShellSettings();
+    const limit = clampToolInteger(args.limit, 1, 50, settings.notificationDefaultLimit);
+    const result = invokeShellJson<Array<Record<string, unknown>>>(shell => (shell.getNotifications ? shell.getNotifications(limit) : null));
+    if (!result.ok) return huaweiToolFail("读取微信消息", result.error);
+    const list = Array.isArray(result.data) ? result.data : [];
+    const wechat = list.filter(item => item.pkg === WECHAT_PACKAGE);
+    if (wechat.length === 0) {
+        return huaweiToolOk("读取微信消息", "最近的通知里没有微信消息（需要通知使用权，且微信通知未关闭）");
+    }
+    const lines = wechat.map((item, index) => {
+        const sender = String(item.title ?? "");
+        const text = String(item.text ?? "");
+        const body = sender && text ? `${sender}：${text}` : (sender || text);
+        return `${index + 1}. ${body}${huaweiTimeLabel(item.ts)}`;
+    });
+    return huaweiToolOk("读取微信消息", `微信最近 ${wechat.length} 条消息：\n${truncate(lines.join("\n"))}`);
+}
+
+function huaweiSendReminderTool(args: Record<string, unknown>): ToolResult {
+    const title = requiredStringArg(args, "title");
+    const content = requiredStringArg(args, "content");
+    if (!title || !content) return huaweiToolFail("发送提醒", "缺少 title 或 content 参数");
+    const openApp = typeof args.openApp === "string" && args.openApp.trim() ? args.openApp.trim() : "";
+    const result = invokeShellJson(shell => (shell.sendNotification ? shell.sendNotification(title, content, openApp) : null));
+    if (!result.ok) return huaweiToolFail("发送提醒", result.error);
+    const openHint = openApp ? `，点击将打开 ${huaweiAppLabel(openApp)}` : "";
+    return huaweiToolOk("发送提醒", `已推送提醒「${title}」：${content}${openHint}`);
+}
+
+function huaweiDeviceInfoTool(): ToolResult {
+    const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getDeviceInfo ? shell.getDeviceInfo() : null));
+    if (!result.ok) return huaweiToolFail("查看设备详情", result.error);
+    const r = result.data;
+    const gb = (v: unknown): string => {
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? `${(n / 1024 / 1024 / 1024).toFixed(1)} GB` : "未知";
+    };
+    const parts: string[] = [];
+    if (typeof r.model === "string" && r.model) parts.push(`机型 ${r.model}`);
+    if (typeof r.androidVersion === "string" && r.androidVersion) parts.push(`系统 Android ${r.androidVersion}`);
+    parts.push(`存储 ${gb(r.storageFree)} 可用 / 共 ${gb(r.storageTotal)}`);
+    parts.push(`内存 ${gb(r.ramFree)} 可用 / 共 ${gb(r.ramTotal)}`);
+    if (typeof r.batteryTempC === "number") parts.push(`电池温度 ${r.batteryTempC.toFixed(1)}℃`);
+    if (typeof r.uptimeMs === "number") {
+        const upMin = Math.floor(Number(r.uptimeMs) / 60000);
+        parts.push(upMin < 60 ? `已运行 ${upMin} 分钟` : `已运行 ${Math.floor(upMin / 60)} 小时 ${upMin % 60} 分`);
+    }
+    return huaweiToolOk("查看设备详情", parts.length > 0 ? parts.join("，") : "未获取到设备信息");
+}
+
+function huaweiVolumeTool(args: Record<string, unknown>): ToolResult {
+    const stream = args.stream === "alarm" ? "alarm" : args.stream === "ring" ? "ring" : "media";
+    const value = clampToolInteger(args.value, 0, 100, 50);
+    const result = invokeShellJson(shell => (shell.setVolume ? shell.setVolume(stream, value) : null));
+    if (!result.ok) return huaweiToolFail("调节音量", result.error);
+    const streamLabel = stream === "media" ? "媒体" : stream === "alarm" ? "闹钟" : "铃声";
+    return huaweiToolOk("调节音量", `已将${streamLabel}音量调到 ${value}`);
+}
+
+function huaweiBrightnessTool(args: Record<string, unknown>): ToolResult {
+    const value = clampToolInteger(args.value, 0, 100, 50);
+    const result = invokeShellJson(shell => (shell.setBrightness ? shell.setBrightness(value) : null));
+    if (!result.ok) return huaweiToolFail("调节亮度", result.error);
+    return huaweiToolOk("调节亮度", `已将屏幕亮度调到 ${value}%`);
+}
+
+function huaweiClipboardReadTool(): ToolResult {
+    const result = invokeShellJson<Record<string, unknown>>(shell => (shell.readClipboard ? shell.readClipboard() : null));
+    if (!result.ok) return huaweiToolFail("读取剪贴板", result.error);
+    const text = String(result.data.text ?? "");
+    if (!text) return huaweiToolOk("读取剪贴板", "剪贴板是空的");
+    return huaweiToolOk("读取剪贴板", `剪贴板内容：${truncate(text)}`);
+}
+
+function huaweiClipboardWriteTool(args: Record<string, unknown>): ToolResult {
+    const text = requiredStringArg(args, "text");
+    if (!text) return huaweiToolFail("写入剪贴板", "缺少 text 参数（要写入的内容）");
+    const result = invokeShellJson(shell => (shell.writeClipboard ? shell.writeClipboard(text) : null));
+    if (!result.ok) return huaweiToolFail("写入剪贴板", result.error);
+    return huaweiToolOk("写入剪贴板", `已写入剪贴板：${truncate(text)}`);
+}
+
+function huaweiOpenUrlTool(args: Record<string, unknown>): ToolResult {
+    const url = requiredStringArg(args, "url");
+    if (!url) return huaweiToolFail("打开网页", "缺少 url 参数（网页链接）");
+    const result = invokeShellJson(shell => (shell.openUrl ? shell.openUrl(url) : null));
+    if (!result.ok) return huaweiToolFail("打开网页", result.error);
+    return huaweiToolOk("打开网页", `已在{{user}}手机浏览器打开 ${url}`);
+}
+
+function huaweiReadFileTool(args: Record<string, unknown>): ToolResult {
+    const path = typeof args.path === "string" ? args.path.trim() : "";
+    const result = invokeShellJson<Record<string, unknown>>(shell => (shell.readFile ? shell.readFile(path) : null));
+    if (!result.ok) return huaweiToolFail("读取文件", result.error);
+    const kind = String(result.data.kind ?? "");
+    if (kind === "dir") {
+        const files = Array.isArray(result.data.files) ? result.data.files as Array<Record<string, unknown>> : [];
+        if (files.length === 0) return huaweiToolOk("读取文件", `目录 ${String(result.data.path ?? "")} 是空的`);
+        const lines = files.map((f, i) => {
+            const size = typeof f.size === "number" ? `（${(f.size / 1024).toFixed(1)} KB）` : "";
+            return `${i + 1}. ${f.isDir ? "📁" : "📄"} ${f.name}${size}`;
+        });
+        return huaweiToolOk("读取文件", `目录 ${String(result.data.path ?? "")}：\n${truncate(lines.join("\n"))}`);
+    }
+    if (kind === "image") {
+        const size = typeof result.data.size === "number" ? `${(Number(result.data.size) / 1024).toFixed(1)} KB` : "未知";
+        const dims = typeof result.data.width === "number" && typeof result.data.height === "number"
+            ? `，${result.data.width}×${result.data.height}` : "";
+        return huaweiToolOk("读取文件", `已读取图片文件 ${String(result.data.path ?? "")}（${size}${dims}），可备份查看`);
+    }
+    const content = String(result.data.content ?? "");
+    if (!content) return huaweiToolOk("读取文件", `文件 ${String(result.data.path ?? "")} 为空`);
+    return huaweiToolOk("读取文件", `文件 ${String(result.data.path ?? "")}：\n${truncate(content)}`);
+}
+
+async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
+    const capability = getInternalCapability(HUAWEI_SHELL_CAPABILITY_ID);
+    if (!capability || !capability.enabled || capability.mode === "off") {
+        return { name: call.name, success: false, error: "「华为手机」能力未启用（工具箱 → 内置能力）" };
+    }
+    if (!getAndroidShell()) {
+        return { name: call.name, success: false, error: "华为壳未连接：请通过华为壳 App 打开本站，再在 设置 → 华为壳 检查连接状态与权限" };
+    }
+    const levelGate = huaweiPermissionGate(call.name);
+    if (levelGate) return { name: call.name, success: false, error: levelGate };
+    const args = call.args || {};
+    switch (call.name) {
+        case "查看手机状态": return huaweiStatusTool();
+        case "实时天气": return await huaweiWeatherTool();
+        case "查询位置": return huaweiLocationTool();
+        case "查看当前应用": return huaweiCurrentAppTool();
+        case "查看通知": return huaweiNotificationsTool(args);
+        case "查看记账": return huaweiPaymentsTool(args);
+        case "打开应用": return huaweiOpenAppTool(args);
+        case "点击文字": return huaweiClickTextTool(args);
+        case "输入文字": return huaweiInputTextTool(args);
+        case "滑动屏幕": return huaweiSwipeTool(args);
+        case "按键操作": return huaweiPressKeyTool(args);
+        case "专注模式": return huaweiFocusTool(args);
+        case "定时息屏": return huaweiScreenBreakTool(args);
+        case "发送提醒": return huaweiSendReminderTool(args);
+        case "读取微信消息": return huaweiWeChatMessagesTool(args);
+        case "查看设备详情": return huaweiDeviceInfoTool();
+        case "调节音量": return huaweiVolumeTool(args);
+        case "调节亮度": return huaweiBrightnessTool(args);
+        case "读取剪贴板": return huaweiClipboardReadTool();
+        case "写入剪贴板": return huaweiClipboardWriteTool(args);
+        case "打开网页": return huaweiOpenUrlTool(args);
+        case "读取文件": return huaweiReadFileTool(args);
+        case "语音转文字": return huaweiVoiceToTextTool();
+        case "发起语音通话": return huaweiStartVoiceCallTool();
+        case "识别屏幕交易": return huaweiOcrScreenTool();
+        case "查询行踪足迹": return huaweiFootprintTool(args);
+        case "查看健康数据": return huaweiHealthTool();
+        default: return executeHuaweiCustomAction(call.name, args);
+    }
+}
+
+/** 照搬 Operit 五级权限体系（STANDARD/ACCESSIBILITY/DEBUGGER/ADMIN/ROOT）的华为适配：
+ *  每个内置工具归属一个层级，用户在设置页权限中心逐级开关；关闭的层级对应工具被门拦并提示去开启。 */
+const HUAWEI_TOOL_PERMISSION_LEVEL: Record<string, "standard" | "accessibility" | "debugger" | "admin" | "root"> = {
+    "查看手机状态": "standard",
+    "实时天气": "standard",
+    "查询位置": "standard",
+    "查看当前应用": "standard",
+    "查看记账": "standard",
+    "打开应用": "standard",
+    "语音转文字": "standard",
+    "查看设备详情": "standard",
+    "调节音量": "standard",
+    "读取剪贴板": "standard",
+    "写入剪贴板": "standard",
+    "打开网页": "standard",
+    "查询行踪足迹": "standard",
+    "查看健康数据": "standard",
+    "查看通知": "accessibility",
+    "读取微信消息": "accessibility",
+    "点击文字": "accessibility",
+    "输入文字": "accessibility",
+    "滑动屏幕": "accessibility",
+    "按键操作": "accessibility",
+    "专注模式": "accessibility",
+    "发送提醒": "accessibility",
+    "读取文件": "debugger",
+    "识别屏幕交易": "admin",
+    "调节亮度": "admin",
+};
+
+const HUAWEI_CUSTOM_ACTION_LEVEL: Record<string, "standard" | "accessibility" | "debugger" | "admin" | "root"> = {
+    open_app: "standard",
+    send_notification: "accessibility",
+    read_status: "standard",
+    shell: "debugger",
+};
+
+const HUAWEI_LEVEL_LABELS: Record<string, string> = {
+    standard: "标准级",
+    accessibility: "无障碍级",
+    debugger: "调试级",
+    admin: "管理员级",
+    root: "Root 级",
+};
+
+function huaweiPermissionGate(toolName: string): string | null {
+    try {
+        const settings = loadHuaweiShellSettings();
+        const level = HUAWEI_TOOL_PERMISSION_LEVEL[toolName]
+            ?? (() => {
+                const action = loadHuaweiCustomActions().find(item => item.enabled && item.name === toolName);
+                return action ? HUAWEI_CUSTOM_ACTION_LEVEL[action.type] : null;
+            })();
+        if (!level) return null;
+        if (settings.permissionLevels[level] === false) {
+            return `该能力属于「${HUAWEI_LEVEL_LABELS[level]}」，尚未开启。请到 设置 → 华为壳 → 权限中心 开启「${HUAWEI_LEVEL_LABELS[level]}」后再试`;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function huaweiVoiceToTextTool(): ToolResult {
+    const shell = getAndroidShell();
+    if (!shell || typeof shell.startListening !== "function") return huaweiToolFail("语音转文字", "华为壳未提供语音识别能力");
+    const settings = loadHuaweiShellSettings();
+    if (!settings.voiceEnabled) return huaweiToolFail("语音转文字", "语音能力未开启：请到 设置 → 华为壳 → 语音能力 打开");
+    const mode = settings.sttMode === "cloud" ? "system" : settings.sttMode;
+    const config = JSON.stringify({
+        mode,
+        url: settings.sttOnlineUrl,
+        key: settings.sttOnlineKey,
+        model: settings.sttOnlineModel,
+    });
+    try { shell.startListening(config); } catch (err) { return huaweiToolFail("语音转文字", err instanceof Error ? err.message : String(err)); }
+    return { name: "语音转文字", success: true, data: "已开始聆听，请对手机说话。识别结果会同步进对话（需要麦克风权限，首次使用请在系统弹窗中允许）。" };
+}
+
+function huaweiStartVoiceCallTool(): ToolResult {
+    const shell = getAndroidShell();
+    if (!shell || typeof shell.ring !== "function") return huaweiToolFail("发起语音通话", "华为壳未提供来电铃声能力");
+    const settings = loadHuaweiShellSettings();
+    try {
+        if (settings.callRingEnabled) shell.ring(settings.callRingTimeoutSec);
+    } catch (err) {
+        return huaweiToolFail("发起语音通话", err instanceof Error ? err.message : String(err));
+    }
+    try {
+        if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("ai-call-trigger", { detail: { sessionId: "", type: "voice" } }));
+        }
+    } catch { /* 事件派发失败不影响响铃 */ }
+    return { name: "发起语音通话", success: true, data: "已向用户的真实手机发起语音通话（响铃+震动中）。请等待用户接听，接听后进入双向语音对话。" };
+}
+
+function huaweiOcrScreenTool(): ToolResult {
+    const shell = getAndroidShell();
+    if (!shell || typeof shell.ocrPaymentsCapture !== "function") return huaweiToolFail("识别屏幕交易", "华为壳未提供截屏识别能力");
+    const settings = loadHuaweiShellSettings();
+    const config = JSON.stringify({ engine: settings.ocrEngine, url: settings.ocrOnlineUrl, key: settings.ocrOnlineKey });
+    try { shell.ocrPaymentsCapture(config); } catch (err) { return huaweiToolFail("识别屏幕交易", err instanceof Error ? err.message : String(err)); }
+    return { name: "识别屏幕交易", success: true, data: "已开始截屏识别。识别结果会自动入账（如需人工确认会标记待确认），并同步进对话。" };
+}
+
+function huaweiFootprintTool(args: Record<string, unknown>): ToolResult {
+    const days = Number.isFinite(Number(args.days)) ? Math.round(Number(args.days)) : 3;
+    const n = Math.min(30, Math.max(1, days));
+    const cutoff = Date.now() - n * 86400000;
+    const entries = loadHuaweiFootprint().filter(e => e.ts >= cutoff).slice(0, 20);
+    if (entries.length === 0) return huaweiToolOk("查询行踪足迹", `最近 ${n} 天暂无足迹记录。可到 设置 → 华为壳 → 行踪足迹 开启记录（默认语义化，不暴露精确坐标）。`);
+    const lines = entries.map(e => {
+        const d = new Date(e.ts);
+        const pad = (x: number) => String(x).padStart(2, "0");
+        const time = `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        return `${time} ${e.semantic}`;
+    });
+    return huaweiToolOk("查询行踪足迹", `最近 ${n} 天足迹（${lines.length} 条）：\n${lines.join("\n")}`);
+}
+
+function huaweiHealthTool(): ToolResult {
+    const snapshot = loadHuaweiHealthSnapshot();
+    if (!snapshot) return huaweiToolFail("查看健康数据", "尚无健康快照。请到 设置 → 华为壳 → 穿戴健康 开启数据源（Gadgetbridge 导出库或 JSON 快照）");
+    const lines = [
+        `状态：${snapshot.status}`,
+        `今日步数：${snapshot.stepsToday ?? "—"}`,
+        `最新心率：${snapshot.latestHeartRate ?? "—"}${snapshot.latestHeartRateAt ? `（${new Date(snapshot.latestHeartRateAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}）` : ""}`,
+        `压力：${snapshot.latestStress ?? "—"}`,
+        `活动千卡：${snapshot.activeCaloriesToday ?? "—"}`,
+        `最近睡眠：${snapshot.sleepMinutes != null ? `${Math.floor(snapshot.sleepMinutes / 60)}小时${snapshot.sleepMinutes % 60}分钟` : "—"}`,
+    ];
+    return huaweiToolOk("查看健康数据", lines.join("\n"));
+}
+
+/** 用户登记的自定义快捷动作：按类型走 invokeShellJson 下发原生执行。
+ *  参数可省，缺省用设置页登记的默认值（无默认值且未传参时给出明确提示）。 */
+function executeHuaweiCustomAction(name: string, args: Record<string, unknown>): ToolResult {
+    const action = loadHuaweiCustomActions().find(item => item.enabled && item.name === name);
+    if (!action) return huaweiToolFail(name, "未识别的华为壳动作");
+    switch (action.type) {
+        case "open_app": {
+            const pkg = (typeof args.packageName === "string" && args.packageName.trim())
+                ? args.packageName.trim() : (action.packageName || "");
+            if (!pkg) return huaweiToolFail(name, "缺少应用包名（可在 设置 → 华为壳 → 自定义动作 补默认值）");
+            const result = invokeShellJson(shell => (shell.openApp ? shell.openApp(pkg) : null));
+            return result.ok ? huaweiToolOk(name, `已打开 ${huaweiAppLabel(pkg)}（${pkg}）`) : huaweiToolFail(name, result.error);
+        }
+        case "send_notification": {
+            const title = (typeof args.title === "string" && args.title.trim())
+                ? args.title.trim() : (action.title || "");
+            const content = (typeof args.content === "string" && args.content.trim())
+                ? args.content.trim() : (action.content || "");
+            if (!title || !content) return huaweiToolFail(name, "缺少标题或内容（可在 设置 → 华为壳 → 自定义动作 补默认值）");
+            const openApp = (typeof args.openApp === "string" && args.openApp.trim()) ? args.openApp.trim() : (action.openApp || "");
+            const result = invokeShellJson(shell => (shell.sendNotification ? shell.sendNotification(title, content, openApp) : null));
+            return result.ok ? huaweiToolOk(name, `已推送提醒「${title}」：${content}`) : huaweiToolFail(name, result.error);
+        }
+        case "read_status": {
+            const key = (typeof args.statusKey === "string" && args.statusKey.trim()) ? args.statusKey.trim() : (action.statusKey || "battery");
+            const value = huaweiCustomStatusValue(key);
+            if (value === null) return huaweiToolFail(name, `不认识的状态键：${key}`);
+            return huaweiToolOk(name, value);
+        }
+        case "shell": {
+            const command = (typeof args.command === "string" && args.command.trim())
+                ? args.command.trim() : (action.command || "");
+            if (!command) return huaweiToolFail(name, "缺少 shell 命令（可在 设置 → 华为壳 → 自定义动作 补默认值）");
+            const result = invokeShellJson<Record<string, unknown>>(shell => (shell.runShellCommand ? shell.runShellCommand(command) : null));
+            if (!result.ok) return huaweiToolFail(name, result.error);
+            const output = String(result.data.output ?? "");
+            const code = result.data.exitCode;
+            const codeText = typeof code === "number" ? `（退出码 ${code}）` : "";
+            return huaweiToolOk(name, output ? `命令已执行${codeText}，输出：\n${truncate(output)}` : `命令已执行${codeText}，无输出`);
+        }
+        default:
+            return huaweiToolFail(name, "未知的自定义动作类型");
+    }
+}
+
+/** read_status 自定义动作：按键读一个内置状态并格式化为文本。 */
+function huaweiCustomStatusValue(key: string): string | null {
+    if (key === "location") {
+        const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getLocation ? shell.getLocation() : null));
+        if (!result.ok) return result.error;
+        const lat = Number(result.data.lat);
+        const lng = Number(result.data.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "定位结果缺少经纬度";
+        return `纬度 ${lat.toFixed(5)}，经度 ${lng.toFixed(5)}`;
+    }
+    if (key === "current_app") {
+        const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getCurrentApp ? shell.getCurrentApp() : null));
+        if (!result.ok) return result.error;
+        const pkg = String(result.data.currentApp ?? "");
+        return pkg ? `${huaweiAppLabel(pkg)}（${pkg}）` : "当前没有前台应用（或无障碍服务未开启）";
+    }
+    const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getStatus ? shell.getStatus() : null));
+    if (!result.ok) return result.error;
+    const r = result.data;
+    switch (key) {
+        case "battery": return typeof r.battery === "number" ? `电量 ${r.battery}%` : "未获取到电量";
+        case "volume": return typeof r.volume === "number" ? `媒体音量 ${r.volume}` : "未获取到音量";
+        case "network": return r.network ? "网络已连接" : "网络未连接";
+        case "accessibility": return r.accessibility ? "无障碍已开启" : "无障碍未开启";
+        case "floating": return r.floating ? "悬浮球已开启" : "悬浮球未开启";
+        case "locked": return typeof r.lockedApps === "number" ? `门禁锁 ${r.lockedApps} 个 App` : "未获取到门禁锁数量";
+        default: return null;
+    }
+}
+
 
 function isNoteWallToolName(name: string): boolean {
     return name === "查看便签列表"

@@ -1,0 +1,45 @@
+{
+  "id": "ledger",
+  "name": "Life Ledger",
+  "short_name": "Ledger",
+  "description": "独立记账应用 · 微信/支付宝分账 · 自动记账 · Y2K 冰蓝风格",
+  "version": "1.0.0",
+  "author": "yue",
+  "icon": "assets/icon-192.png",
+  "entry": "index.html",
+  "permissions": [
+    "app.data.read",
+    "app.data.write",
+    "network.fetch",
+    "bridge.send"
+  ],
+  "network": {
+    "allowedDomains": [
+      "hfdggpgvfwsblyftarzm.supabase.co"
+    ],
+    "mode": "direct"
+  },
+  "primaryTags": [
+    "finance",
+    "life"
+  ],
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#B8E0F7",
+  "background_color": "#F0F8FF",
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -2,6 +2,8 @@ import type { InternalCapabilityConfig } from "./settings-types";
 import { isAgentComputerConfigured, isContainerComputer } from "./agent-computer";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { loadBridgeDataItems, loadBridgeShortcutActions, parseBridgeActionParameterSchema } from "./reality-bridge/storage";
+import { loadHuaweiCustomActions } from "./huawei-shell/storage";
+import type { HuaweiCustomAction } from "./huawei-shell/types";
 
 const INTERNAL_CAPABILITIES_KEY = "ai_phone_internal_capabilities_v1";
 registerKvMigration(INTERNAL_CAPABILITIES_KEY);
@@ -16,6 +18,7 @@ export const LOCAL_DATA_LIBRARY_CAPABILITY_ID = "local_data_library";
 export const TOOLBOX_MANAGEMENT_CAPABILITY_ID = "toolbox_management";
 export const TIMED_WAKE_CAPABILITY_ID = "timed_wake";
 export const REALITY_BRIDGE_CAPABILITY_ID = "reality_bridge_send";
+export const HUAWEI_SHELL_CAPABILITY_ID = "huawei_shell_control";
 
 export type InternalToolDefinition = {
     name: string;
@@ -1189,6 +1192,15 @@ const BUILTIN_INTERNAL_CAPABILITIES: InternalCapabilityConfig[] = [
         updatedAt: 0,
     },
     {
+        id: HUAWEI_SHELL_CAPABILITY_ID,
+        name: "华为手机",
+        description: "华为壳是通向{{user}}真实华为手机的桥：能看见 TA 手机的实时状态（电量、音量、天气、位置、当前应用、通知），能帮 TA 自动记账（微信/支付宝分账），也能在 TA 手机上做事（打开应用、点击、输入、滑动、按键、专注模式、定时息屏）。",
+        enabled: false,
+        mode: "auto",
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
         id: MEMORY_WRITE_CAPABILITY_ID,
         name: "写入记忆",
         description: "将明确、稳定、长期有价值的信息写入长期记忆。仅限关系里程碑、长期偏好、身份信息、重要约定；禁止写入短期情绪、普通寒暄、猜测或未确认内容。",
@@ -1293,12 +1305,18 @@ export function getInternalCapability(id: string): InternalCapabilityConfig | nu
 
 export function getEnabledInternalCapabilities(appId?: string): InternalCapabilityConfig[] {
     if (appId !== "chat" && appId !== "group_chat") return [];
-    return loadInternalCapabilities().filter(item => {
+    const enabled = loadInternalCapabilities().filter(item => {
         if (!item.enabled || item.mode === "off") return false;
         // 角色电脑是可插拔模块：没连接就不注入，模型完全看不见
         if (item.id === AGENT_COMPUTER_CAPABILITY_ID && !isAgentComputerConfigured()) return false;
         return true;
     });
+    // 华为手机桥与 iOS 现实桥都叫「通向真实手机的桥」：华为启用时排除现实桥，
+    // 避免模型同时拿到两套相似工具而分不清。仅注入层排除，能力卡片与设置页保持原样。
+    if (enabled.some(item => item.id === HUAWEI_SHELL_CAPABILITY_ID)) {
+        return enabled.filter(item => item.id !== REALITY_BRIDGE_CAPABILITY_ID);
+    }
+    return enabled;
 }
 
 export function getInternalCapabilityToolDefinition(capability: InternalCapabilityConfig): InternalToolDefinition | null {
@@ -1382,6 +1400,14 @@ export function getInternalCapabilityToolDefinition(capability: InternalCapabili
             usageGuide: buildRealityBridgeUsageGuide(),
         };
     }
+    if (capability.id === HUAWEI_SHELL_CAPABILITY_ID) {
+        return {
+            name: capability.name,
+            description: capability.description,
+            parameterSchema: "{}",
+            usageGuide: buildHuaweiShellUsageGuide(),
+        };
+    }
     return null;
 }
 
@@ -1454,6 +1480,516 @@ function buildRealityBridgeUsageGuide(): string {
     return lines.join("\n");
 }
 
+/* ---------- 华为壳套装：真实华为手机的查看 / 操控 / 专注守护 ---------- */
+
+const HUAWEI_EMPTY_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {},
+});
+
+const HUAWEI_NOTIFICATIONS_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        limit: { type: "number", description: "返回最近多少条通知，1-50，默认 10（可在 设置 → 华为壳 修改默认值）" },
+    },
+});
+
+const HUAWEI_PAYMENTS_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        limit: { type: "number", description: "返回最近多少笔，1-100，默认 20（可在 设置 → 华为壳 修改默认值）" },
+        source: { type: "string", enum: ["all", "wechat", "alipay"], description: "按来源筛选：all=全部（微信+支付宝分开展示），wechat=只看微信，alipay=只看支付宝，默认全部" },
+    },
+});
+
+const HUAWEI_OPEN_APP_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        packageName: { type: "string", description: "应用包名，例如微信 com.tencent.mm、支付宝 com.eg.android.AlipayGphone" },
+    },
+    required: ["packageName"],
+});
+
+const HUAWEI_CLICK_TEXT_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        text: { type: "string", description: "要点击的屏幕文字，必须与屏幕上显示的文字一致" },
+    },
+    required: ["text"],
+});
+
+const HUAWEI_INPUT_TEXT_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        text: { type: "string", description: "要写入当前输入框的文字" },
+    },
+    required: ["text"],
+});
+
+const HUAWEI_SWIPE_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        x1: { type: "number", description: "起点横坐标，归一化 0-1000" },
+        y1: { type: "number", description: "起点纵坐标，归一化 0-1000" },
+        x2: { type: "number", description: "终点横坐标，归一化 0-1000" },
+        y2: { type: "number", description: "终点纵坐标，归一化 0-1000" },
+    },
+    required: ["x1", "y1", "x2", "y2"],
+});
+
+const HUAWEI_PRESS_KEY_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        key: { type: "string", enum: ["home", "back", "recents", "notifications", "quick_settings", "lock_screen"], description: "home=回到桌面 / back=返回 / recents=最近任务 / notifications=下拉通知栏 / quick_settings=快捷开关 / lock_screen=锁屏" },
+    },
+    required: ["key"],
+});
+
+const HUAWEI_FOCUS_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        durationMin: { type: "number", description: "专注时长（分钟），1-240；不填用默认值（可在 设置 → 华为壳 修改）" },
+    },
+});
+
+const HUAWEI_SCREEN_BREAK_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        seconds: { type: "number", description: "多少秒后自动息屏，5-3600；不填用默认值（可在 设置 → 华为壳 修改）" },
+    },
+});
+
+const HUAWEI_SEND_REMINDER_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        title: { type: "string", description: "提醒标题，简短有力" },
+        content: { type: "string", description: "提醒正文，说清楚要提醒什么" },
+        openApp: { type: "string", description: "可选：点击通知后打开的应用包名，例如微信 com.tencent.mm；不填点击回到小手机" },
+    },
+    required: ["title", "content"],
+});
+
+const HUAWEI_WECHAT_MESSAGES_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        limit: { type: "number", description: "返回最近多少条微信消息，1-50，默认 10（可在 设置 → 华为壳 修改默认值）" },
+    },
+});
+
+const HUAWEI_VOLUME_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        stream: { type: "string", enum: ["media", "alarm", "ring"], description: "音量类型：media=媒体 / alarm=闹钟 / ring=铃声，默认 media" },
+        value: { type: "number", description: "目标音量 0-100" },
+    },
+    required: ["value"],
+});
+
+const HUAWEI_BRIGHTNESS_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        value: { type: "number", description: "屏幕亮度百分比 0-100（首次需授权修改系统设置）" },
+    },
+    required: ["value"],
+});
+
+const HUAWEI_CLIPBOARD_WRITE_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        text: { type: "string", description: "要写入手机剪贴板的文本" },
+    },
+    required: ["text"],
+});
+
+const HUAWEI_OPEN_URL_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        url: { type: "string", description: "要打开的网页链接（http/https），例如 https://www.baidu.com" },
+    },
+    required: ["url"],
+});
+
+const HUAWEI_READ_FILE_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        path: { type: "string", description: "文件路径；不填默认定位到 Download 下载目录（传目录会列出其中文件）" },
+    },
+});
+
+const HUAWEI_SHELL_SUBTOOLS: InternalToolDefinition[] = [
+    {
+        name: "查看手机状态",
+        description: "读取{{user}}华为手机实时状态：电量、音量、网络、无障碍、悬浮球、门禁锁 App 数量。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "实时天气",
+        description: "读取{{user}}当前位置的实时天气（自动定位，不写死城市）：温度、体感、湿度、降水、风力。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查询位置",
+        description: "读取{{user}}华为手机当前经纬度定位。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看当前应用",
+        description: "读取{{user}}华为手机此刻前台正在使用的应用。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看通知",
+        description: "读取{{user}}华为手机最近的通知列表（需通知使用权）。",
+        parameterSchema: HUAWEI_NOTIFICATIONS_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看记账",
+        description: "读取自动记账：{{user}}华为手机上微信/支付宝的支付记录，按来源 App 分账展示，可按来源筛选。",
+        parameterSchema: HUAWEI_PAYMENTS_PARAMETER_SCHEMA,
+    },
+    {
+        name: "读取微信消息",
+        description: "读取{{user}}微信（com.tencent.mm）最近的消息：来自通知监听缓存，需通知使用权；微信支付归微信账本。",
+        parameterSchema: HUAWEI_WECHAT_MESSAGES_PARAMETER_SCHEMA,
+    },
+    {
+        name: "打开应用",
+        description: "在{{user}}华为手机上打开指定应用（包名）。",
+        parameterSchema: HUAWEI_OPEN_APP_PARAMETER_SCHEMA,
+    },
+    {
+        name: "点击文字",
+        description: "在{{user}}华为手机当前屏幕上按文字点击（需无障碍服务）。",
+        parameterSchema: HUAWEI_CLICK_TEXT_PARAMETER_SCHEMA,
+    },
+    {
+        name: "输入文字",
+        description: "向{{user}}华为手机当前输入框写入文字（需无障碍服务）。",
+        parameterSchema: HUAWEI_INPUT_TEXT_PARAMETER_SCHEMA,
+    },
+    {
+        name: "滑动屏幕",
+        description: "在{{user}}华为手机屏幕上滑动（坐标归一化 0-1000，需无障碍服务）。",
+        parameterSchema: HUAWEI_SWIPE_PARAMETER_SCHEMA,
+    },
+    {
+        name: "按键操作",
+        description: "向{{user}}华为手机发送系统按键：home/back/recents/notifications/quick_settings/lock_screen。",
+        parameterSchema: HUAWEI_PRESS_KEY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "专注模式",
+        description: "帮{{user}}开启华为手机专注模式：锁全机（除壳外一切前台拦截回桌面）durationMin 分钟。",
+        parameterSchema: HUAWEI_FOCUS_PARAMETER_SCHEMA,
+    },
+    {
+        name: "定时息屏",
+        description: "让{{user}}华为手机在 seconds 秒后自动息屏（护眼/睡前用）。",
+        parameterSchema: HUAWEI_SCREEN_BREAK_PARAMETER_SCHEMA,
+    },
+    {
+        name: "发送提醒",
+        description: "主动在{{user}}真实手机上弹一条本地通知提醒（标题 + 内容，可选点击后打开的应用包名）。",
+        parameterSchema: HUAWEI_SEND_REMINDER_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看设备详情",
+        description: "读取{{user}}华为手机设备详情：存储总/可用、内存、机型型号、系统版本、电池温度、运行时长。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "调节音量",
+        description: "设置{{user}}华为手机媒体/闹钟/铃声音量（0-100）。",
+        parameterSchema: HUAWEI_VOLUME_PARAMETER_SCHEMA,
+    },
+    {
+        name: "调节亮度",
+        description: "设置{{user}}华为手机屏幕亮度百分比（0-100），需「修改系统设置」权限。",
+        parameterSchema: HUAWEI_BRIGHTNESS_PARAMETER_SCHEMA,
+    },
+    {
+        name: "读取剪贴板",
+        description: "读取{{user}}华为手机当前剪贴板文本。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "写入剪贴板",
+        description: "把文本写入{{user}}华为手机剪贴板。",
+        parameterSchema: HUAWEI_CLIPBOARD_WRITE_PARAMETER_SCHEMA,
+    },
+    {
+        name: "打开网页",
+        description: "在{{user}}华为手机上用系统浏览器打开指定网页链接。",
+        parameterSchema: HUAWEI_OPEN_URL_PARAMETER_SCHEMA,
+    },
+    {
+        name: "读取文件",
+        description: "读取{{user}}华为手机上的文件内容（文本/图片），默认定位到 Download 下载目录，供备份查看。",
+        parameterSchema: HUAWEI_READ_FILE_PARAMETER_SCHEMA,
+    },
+    {
+        name: "语音转文字",
+        description: "在{{user}}华为手机上开始聆听：{{user}}对着手机说话，识别文本同步进当前对话。当{{user}}说「你听我说」「我想说话」或用声音表达时优先用。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "发起语音通话",
+        description: "char 主动给{{user}}真实手机拨语音电话：手机像来电话一样响铃+震动，{{user}}在来电界面接听后进入双向语音对话（铃声开关与时长可在设置页调整）。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "识别屏幕交易",
+        description: "截取{{user}}华为手机当前屏幕并识别交易信息（金额/商家/来源，OCR 引擎可在设置页配置），识别结果自动入账并同步进对话。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查询行踪足迹",
+        description: "查询{{user}}的语义行踪足迹：最近到过家/学校/商场等地点的历史记录（位置隐私按设置页模式对外语义化）。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"days\":{\"type\":\"number\",\"description\":\"查询最近 N 天的足迹（1-30，默认 3）\",\"minimum\":1,\"maximum\":30}}}",
+    },
+    {
+        name: "查看健康数据",
+        description: "查看{{user}}穿戴设备（华为手表/手环，经 Gadgetbridge 导出）的健康快照：今日步数、最新心率、压力、活动千卡、睡眠。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+];
+
+function huaweiCustomActionTypeLabel(type: HuaweiCustomAction["type"]): string {
+    switch (type) {
+        case "open_app": return "打开指定应用";
+        case "send_notification": return "给手机发一条通知提醒";
+        case "read_status": return "读取手机内置状态";
+        case "shell": return "执行一段 shell 命令";
+        default: return "用户自定义动作";
+    }
+}
+
+/** 自定义动作的调用参数 schema：参数可省，缺省用设置页登记的默认值。 */
+function huaweiCustomActionSchema(action: HuaweiCustomAction): Record<string, unknown> {
+    switch (action.type) {
+        case "open_app": {
+            return {
+                type: "object",
+                properties: {
+                    packageName: {
+                        type: "string",
+                        description: action.packageName ? `应用包名（默认 ${action.packageName}）` : "应用包名（可在 设置 → 华为壳 → 自定义动作 补默认值）",
+                    },
+                },
+            };
+        }
+        case "send_notification": {
+            return {
+                type: "object",
+                properties: {
+                    title: {
+                        type: "string",
+                        description: action.title ? `提醒标题（默认 ${action.title}）` : "提醒标题（可在 设置 → 华为壳 → 自定义动作 补默认值）",
+                    },
+                    content: {
+                        type: "string",
+                        description: action.content ? `提醒内容（默认 ${action.content}）` : "提醒内容（可在 设置 → 华为壳 → 自定义动作 补默认值）",
+                    },
+                },
+            };
+        }
+        case "read_status": {
+            return {
+                type: "object",
+                properties: {
+                    statusKey: {
+                        type: "string",
+                        enum: ["battery", "volume", "network", "accessibility", "floating", "locked", "location", "current_app"],
+                        description: action.statusKey ? `要读取的状态（默认 ${action.statusKey}）` : "要读取的状态（可在 设置 → 华为壳 → 自定义动作 设默认值）",
+                    },
+                },
+            };
+        }
+        case "shell": {
+            return {
+                type: "object",
+                properties: {
+                    command: {
+                        type: "string",
+                        description: action.command ? `要执行的命令（默认 ${action.command}）` : "要执行的命令（可在 设置 → 华为壳 → 自定义动作 补默认值）",
+                    },
+                },
+            };
+        }
+        default:
+            return { type: "object", properties: {} };
+    }
+}
+
+/** 用户登记的已启用自定义动作 → 自动生成 char 子工具。 */
+function huaweiCustomActionTools(): InternalToolDefinition[] {
+    const actions = loadHuaweiCustomActions().filter(action => action.enabled);
+    return actions.map(action => {
+        const typeLabel = huaweiCustomActionTypeLabel(action.type);
+        return {
+            name: action.name,
+            description: `【自定义动作 · ${typeLabel}】${action.description || typeLabel}。`,
+            parameterSchema: JSON.stringify(huaweiCustomActionSchema(action)),
+        };
+    });
+}
+
+/** usage guide 里追加已登记的自定义动作清单（动态，随设置变化）。 */
+function huaweiCustomActionGuideLines(): string[] {
+    const actions = loadHuaweiCustomActions().filter(action => action.enabled);
+    if (actions.length === 0) return [];
+    const lines: string[] = ["", "【你在 设置 → 华为壳 → 自定义动作 里登记的快捷动作，按名字直接调用】"];
+    for (const action of actions) {
+        lines.push(
+            `动作：${action.name}`,
+            `说明：${action.description || huaweiCustomActionTypeLabel(action.type)}。`,
+            `示例：[执行动作:${action.name}({})]`,
+            "",
+        );
+    }
+    return lines;
+}
+
+function buildHuaweiShellUsageGuide(): string {
+    return [
+        "以下是你获取指令的返回结果：",
+        "「华为手机」是通往{{user}}真实华为手机的桥——桥那头就是 TA 手里的真机。你可以透过桥看 TA 手机的实时状态，也能在 TA 手机上做事。",
+        "",
+        "【使用时机】",
+        "- {{user}}提到自己的手机、电量、天气、位置、在用什么 App、来没来通知、花了多少钱时，直接调对应工具，不要只凭感觉接话。",
+        "- {{user}}让你帮忙操作手机（打开某个 App、点某个按钮、填字、往下滑、锁屏、专注学习、定时息屏）时，直接调对应工具。",
+        "- 平时没被问到就不要主动轮询；只有被问或场景需要才调用，别为了用而用。",
+        "",
+        "动作：查看手机状态",
+        "说明：电量、音量、网络、无障碍、悬浮球、门禁锁 App 数量。",
+        "示例：[执行动作:查看手机状态({})]",
+        "",
+        "动作：实时天气",
+        "说明：按{{user}}手机实时定位取天气（温度/体感/湿度/降水/风力），不写死城市。",
+        "示例：[执行动作:实时天气({})]",
+        "",
+        "动作：查询位置",
+        "说明：{{user}}手机当前经纬度；提到“我在哪”“发个定位”时用。",
+        "示例：[执行动作:查询位置({})]",
+        "",
+        "动作：查看当前应用",
+        "说明：{{user}}此刻正在用的前台应用；问“在看什么”时用。",
+        "示例：[执行动作:查看当前应用({})]",
+        "",
+        "动作：查看通知",
+        "说明：最近的通知列表（需要通知使用权）。",
+        "参数：limit 条数，1-50。",
+        "示例：[执行动作:查看通知({\"limit\":10})]",
+        "",
+        "动作：查看记账",
+        "说明：微信/支付宝支付记录，按来源 App 分账展示（微信、支付宝分开记），可按来源筛选。{{user}}问“花了多少钱/帮我记账/查账单”时用。",
+        "参数：limit 条数；source 来源：all 全部、wechat 微信、alipay 支付宝。",
+        "示例：[执行动作:查看记账({\"limit\":20,\"source\":\"all\"})]",
+        "",
+        "动作：读取微信消息",
+        "说明：从通知监听缓存读{{user}}微信（com.tencent.mm）最近的消息，比全量通知更聚焦；{{user}}问“看微信/TA 发我什么了”时用。",
+        "参数：limit 条数，1-50。",
+        "示例：[执行动作:读取微信消息({\"limit\":10})]",
+        "",
+        "动作：打开应用",
+        "说明：在{{user}}手机上打开应用。",
+        "参数：packageName 包名（微信 com.tencent.mm、支付宝 com.eg.android.AlipayGphone）。",
+        "示例：[执行动作:打开应用({\"packageName\":\"com.tencent.mm\"})]",
+        "",
+        "动作：点击文字",
+        "说明：按屏幕文字点击（需无障碍服务）；文字必须与屏幕显示一致。",
+        "参数：text 要点的文字。",
+        "示例：[执行动作:点击文字({\"text\":\"发送\"})]",
+        "",
+        "动作：输入文字",
+        "说明：向当前输入框写入文字（需无障碍服务）。",
+        "参数：text 要写入的内容。",
+        "示例：[执行动作:输入文字({\"text\":\"今晚吃什么\"})]",
+        "",
+        "动作：滑动屏幕",
+        "说明：屏幕滑动，坐标归一化 0-1000（需无障碍服务）。",
+        "参数：x1,y1 起点；x2,y2 终点。",
+        "示例：[执行动作:滑动屏幕({\"x1\":500,\"y1\":800,\"x2\":500,\"y2\":200})]",
+        "",
+        "动作：按键操作",
+        "说明：系统按键：home 桌面 / back 返回 / recents 最近任务 / notifications 通知栏 / quick_settings 快捷开关 / lock_screen 锁屏。",
+        "参数：key 按键名。",
+        "示例：[执行动作:按键操作({\"key\":\"home\"})]",
+        "",
+        "动作：专注模式",
+        "说明：锁全机 durationMin 分钟（除壳外一切前台拦截回桌面）；{{user}}要专注学习/工作、不想碰手机时用。",
+        "参数：durationMin 分钟，1-240，不填用默认值。",
+        "示例：[执行动作:专注模式({\"durationMin\":25})]",
+        "",
+        "动作：定时息屏",
+        "说明：seconds 秒后自动息屏；睡前/护眼时用。",
+        "参数：seconds 秒数，5-3600，不填用默认值。",
+        "示例：[执行动作:定时息屏({\"seconds\":60})]",
+        "",
+        "动作：发送提醒",
+        "说明：主动在{{user}}真实手机上弹一条本地通知提醒；{{user}}要你提醒 TA 喝水/学习/买药/到点做事时用，别只是嘴上说说。",
+        "参数：title 标题；content 内容；openApp 可选，点击通知后打开的应用包名（不填点击回到小手机）。",
+        "示例：[执行动作:发送提醒({\"title\":\"喝水时间\",\"content\":\"起来接杯水，番茄钟到了\",\"openApp\":\"com.tencent.mm\"})]",
+        "",
+        "动作：查看设备详情",
+        "说明：{{user}}手机存储总/可用、内存、机型、系统版本、电池温度、运行时长；问“手机什么配置/还剩多少空间/什么型号”时用。",
+        "示例：[执行动作:查看设备详情({})]",
+        "",
+        "动作：调节音量",
+        "说明：设置媒体/闹钟/铃声音量；{{user}}说“声音太小/调音量”时用。",
+        "参数：stream media/alarm/ring（默认 media）；value 0-100。",
+        "示例：[执行动作:调节音量({\"stream\":\"media\",\"value\":60})]",
+        "",
+        "动作：调节亮度",
+        "说明：设置屏幕亮度百分比；{{user}}说“屏幕太亮/太暗”时用（首次需授权修改系统设置）。",
+        "参数：value 0-100。",
+        "示例：[执行动作:调节亮度({\"value\":40})]",
+        "",
+        "动作：读取剪贴板",
+        "说明：读{{user}}手机剪贴板文本；问“复制了什么/剪贴板里是啥”时用。",
+        "示例：[执行动作:读取剪贴板({})]",
+        "",
+        "动作：写入剪贴板",
+        "说明：把文本写进{{user}}手机剪贴板，方便 TA 粘贴。",
+        "参数：text 要写入的内容。",
+        "示例：[执行动作:写入剪贴板({\"text\":\"考研加油\"})]",
+        "",
+        "动作：打开网页",
+        "说明：用{{user}}手机浏览器打开指定链接；{{user}}给了链接说“打开这个网页/帮我查一下”时用（打开应用是开 App，这个是开网页）。",
+        "参数：url 网页链接（http/https）。",
+        "示例：[执行动作:打开网页({\"url\":\"https://www.baidu.com\"})]",
+        "",
+        "动作：读取文件",
+        "说明：按路径读{{user}}手机文件（文本/图片），不填路径默认 Download 目录；{{user}}要你备份查看文件时用。",
+        "参数：path 文件路径，可省略。",
+        "示例：[执行动作:读取文件({\"path\":\"report.txt\"})]",
+        "",
+        "动作：语音转文字",
+        "说明：{{user}}想用声音说话时，开始聆听并把识别文本同步进对话；通话界面里用户免提/按住说话由界面直接处理，此处是角色主动发起聆听。",
+        "示例：[执行动作:语音转文字({})]",
+        "",
+        "动作：发起语音通话",
+        "说明：主动给{{user}}真实手机打电话（响铃+震动+来电界面，接听后双向语音）；{{user}}说「打电话给我」「提醒我接电话」时用。",
+        "示例：[执行动作:发起语音通话({})]",
+        "",
+        "动作：识别屏幕交易",
+        "说明：截屏识别{{user}}手机上的交易信息（金额/商家/来源）并入账；{{user}}刚付了钱问「花了多少」、或要在支付 App 里对账时用。",
+        "示例：[执行动作:识别屏幕交易({})]",
+        "",
+        "动作：查询行踪足迹",
+        "说明：{{user}}问「我最近去过哪/今天去了哪」时用；返回语义化地点足迹（家/学校/商场），不对外暴露精确坐标。",
+        "参数：days 查询最近 N 天（1-30，默认 3）。",
+        "示例：[执行动作:查询行踪足迹({\"days\":3})]",
+        "",
+        "动作：查看健康数据",
+        "说明：{{user}}问「我走了多少步/心率多少/昨晚睡得好吗」时用；数据来自穿戴设备（Gadgetbridge 导出，设置页可配数据源）。",
+        "示例：[执行动作:查看健康数据({})]",
+        "",
+        "查看类动作会返回真实结果，你可以基于结果继续聊；操控类动作会真的发生在{{user}}手机上，调用后如实描述结果，不要编造屏幕内容。",
+        ...huaweiCustomActionGuideLines(),
+    ].join("\n");
+}
+
 export function getInternalCapabilitySubToolDefinition(
     capability: InternalCapabilityConfig,
     name: string,
@@ -1475,6 +2011,11 @@ export function getInternalCapabilitySubToolDefinition(
     }
     if (capability.id === REALITY_BRIDGE_CAPABILITY_ID) {
         return realityBridgeSubTools().find(tool => tool.name === name) ?? null;
+    }
+    if (capability.id === HUAWEI_SHELL_CAPABILITY_ID) {
+        return HUAWEI_SHELL_SUBTOOLS.find(tool => tool.name === name)
+            ?? huaweiCustomActionTools().find(tool => tool.name === name)
+            ?? null;
     }
     return null;
 }
@@ -1499,6 +2040,9 @@ export function getInternalCapabilitySubToolDefinitions(
     }
     if (capability.id === REALITY_BRIDGE_CAPABILITY_ID) {
         return realityBridgeSubTools();
+    }
+    if (capability.id === HUAWEI_SHELL_CAPABILITY_ID) {
+        return [...HUAWEI_SHELL_SUBTOOLS, ...huaweiCustomActionTools()];
     }
     return [];
 }

@@ -26,6 +26,7 @@ import { downloadFile } from "@/lib/download-utils";
 import {
     CALENDAR_MANAGEMENT_CAPABILITY_ID,
     AGENT_COMPUTER_CAPABILITY_ID,
+    HUAWEI_SHELL_CAPABILITY_ID,
     LOCAL_DATA_LIBRARY_CAPABILITY_ID,
     loadInternalCapabilities,
     saveInternalCapabilities,
@@ -261,11 +262,11 @@ export function ToolboxSettings() {
     }
 
     function defaultInternalMode(id: string): InternalCapabilityConfig["mode"] {
-        return id === NOTE_WALL_CAPABILITY_ID || id === MUSIC_CONTROL_CAPABILITY_ID || id === CALENDAR_MANAGEMENT_CAPABILITY_ID || id === LOCAL_DATA_LIBRARY_CAPABILITY_ID || id === TOOLBOX_MANAGEMENT_CAPABILITY_ID ? "auto" : "confirm";
+        return id === NOTE_WALL_CAPABILITY_ID || id === MUSIC_CONTROL_CAPABILITY_ID || id === CALENDAR_MANAGEMENT_CAPABILITY_ID || id === LOCAL_DATA_LIBRARY_CAPABILITY_ID || id === TOOLBOX_MANAGEMENT_CAPABILITY_ID || id === HUAWEI_SHELL_CAPABILITY_ID ? "auto" : "confirm";
     }
 
     function isAutoOnlyInternalCapability(id: string): boolean {
-        return id === NOTE_WALL_CAPABILITY_ID || id === MUSIC_CONTROL_CAPABILITY_ID || id === CALENDAR_MANAGEMENT_CAPABILITY_ID || id === LOCAL_DATA_LIBRARY_CAPABILITY_ID || id === TOOLBOX_MANAGEMENT_CAPABILITY_ID;
+        return id === NOTE_WALL_CAPABILITY_ID || id === MUSIC_CONTROL_CAPABILITY_ID || id === CALENDAR_MANAGEMENT_CAPABILITY_ID || id === LOCAL_DATA_LIBRARY_CAPABILITY_ID || id === TOOLBOX_MANAGEMENT_CAPABILITY_ID || id === HUAWEI_SHELL_CAPABILITY_ID;
     }
 
     function getAutoOnlyCapabilityDetail(id: string): string {

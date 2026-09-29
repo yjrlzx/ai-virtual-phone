@@ -22,6 +22,11 @@ import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHi
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
+import { getAndroidShell, loadHuaweiShellSettings } from "@/lib/huawei-shell/storage";
+
+/** 华为壳原生语音识别（免云端）是否可用：window.AndroidShell.startListening 存在即视为可用。 */
+const huaweiNativeSttAvailable = typeof window !== "undefined"
+    && Boolean((window as unknown as { AndroidShell?: { startListening?: unknown } }).AndroidShell?.startListening);
 
 // ── Types ───────────────────────────────────────────
 
@@ -82,7 +87,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const [subtitles, setSubtitles] = useState<SubtitleEntry[]>([]);
     const [interimText, setInterimText] = useState("");
     const [isMuted, setIsMuted] = useState(false);
-    const [inputMode, setInputMode] = useState<"voice" | "text">(() => androidTextInputOnly ? "text" : "voice");
+    const [inputMode, setInputMode] = useState<"voice" | "text">(() => (androidTextInputOnly && !huaweiNativeSttAvailable) ? "text" : "voice");
     const [typedText, setTypedText] = useState("");
     const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
     const [showSttWarning, setShowSttWarning] = useState(false);
@@ -114,11 +119,27 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         if (window.speechSynthesis) window.speechSynthesis.cancel();
     }, [minimized]);
 
-    // 来电等待接听：循环振动（开关在聊天主页，iOS 网页不支持自动无效果）
+    // 来电等待接听：循环振动 + 华为壳来电铃声（微信式提醒；铃声开关与超时在设置页可配）
     useEffect(() => {
         if (initiator !== "character" || callState !== "CONNECTING") return;
         const stop = startIncomingCallVibration();
-        return stop;
+        let ringStopped = false;
+        let shell: { stopRing?: () => void } | null = null;
+        try {
+            if (huaweiNativeSttAvailable) {
+                const s = getAndroidShell();
+                if (s && typeof s.ring === "function") {
+                    const settings = loadHuaweiShellSettings();
+                    shell = s;
+                    if (settings.callRingEnabled) s.ring(settings.callRingTimeoutSec);
+                }
+            }
+        } catch { /* 响铃失败不影响接通流程 */ }
+        return () => {
+            stop();
+            if (!ringStopped) { ringStopped = true; }
+            try { if (shell && typeof shell.stopRing === "function") shell.stopRing(); } catch { /* 忽略 */ }
+        };
     }, [initiator, callState]);
 
     // Pause WeChat keep-alive while the call holds the mic/audio; restore on exit.
@@ -133,8 +154,10 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     // 整页音频被钉在通话模式（语音条/试听音量巨大且音量键失灵）。
     useEffect(() => {
         setCallAudioSessionActive(true);
+        (window as unknown as { __huaweiCallActive?: boolean }).__huaweiCallActive = true;
         return () => {
             stateRef.current = "ENDED";
+            delete (window as unknown as { __huaweiCallActive?: boolean }).__huaweiCallActive;
             if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
             if (audioAbortRef.current) { audioAbortRef.current(); audioAbortRef.current = null; }
             setCallAudioSessionActive(false);
@@ -143,7 +166,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     useEffect(() => { interimTextRef.current = interimText; }, [interimText]);
 
     const showSttCompatibilityWarning = useCallback(() => {
-        if (androidTextInputOnly) {
+        if (androidTextInputOnly && !huaweiNativeSttAvailable) {
             setInputMode("text");
             return;
         }
@@ -430,7 +453,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     const startListening = useCallback(() => {
         if (holdToTalk) return; // 按住说话模式不用 Web Speech 自动监听
-        if (androidTextInputOnly) {
+        if (androidTextInputOnly && !huaweiNativeSttAvailable) {
             setInputMode("text");
             return;
         }
@@ -595,10 +618,87 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         },
     });
 
+    // ── 华为原生语音：免提直说 + 按住说话（免云端，结果经 __floatBridgeOnSpeechText 回传） ──
+
+    const huaweiNativeStartTalk = useCallback(() => {
+        try {
+            const shell = getAndroidShell();
+            if (!shell || typeof shell.startListening !== "function") return;
+            const settings = loadHuaweiShellSettings();
+            const mode = settings.sttMode === "cloud" ? "system" : settings.sttMode;
+            shell.startListening(JSON.stringify({
+                mode,
+                url: settings.sttOnlineUrl,
+                key: settings.sttOnlineKey,
+                model: settings.sttOnlineModel,
+            }));
+        } catch { /* 忽略启动失败 */ }
+    }, []);
+
+    const huaweiNativeStopTalk = useCallback(() => {
+        try {
+            const shell = getAndroidShell();
+            if (shell && typeof shell.stopListening === "function") shell.stopListening();
+        } catch { /* 忽略 */ }
+    }, []);
+
+    const huaweiTalkHandlers = {
+        onPointerDown: () => {
+            if (stateRef.current !== "IDLE") return;
+            setCallState("USER_SPEAKING");
+            huaweiNativeStartTalk();
+        },
+        onPointerUp: () => {
+            if (stateRef.current !== "USER_SPEAKING" && stateRef.current !== "PROCESSING") return;
+            setCallState("PROCESSING");
+            huaweiNativeStopTalk();
+        },
+        onPointerCancel: () => {
+            if (stateRef.current !== "USER_SPEAKING" && stateRef.current !== "PROCESSING") return;
+            setCallState("PROCESSING");
+            huaweiNativeStopTalk();
+        },
+    };
+
+    // 原生识别结果回传：通话中免提直说 / 按住说话的识别文本 → 直接走对话轮（不做转文字展示）
+    useEffect(() => {
+        if (!huaweiNativeSttAvailable) return;
+        const w = window as unknown as { __floatBridgeOnSpeechText?: (json: string) => void };
+        const handler = (json: string) => {
+            let text = "";
+            try {
+                const parsed = JSON.parse(json) as { text?: string; ok?: boolean; error?: string };
+                if (parsed.ok && typeof parsed.text === "string" && parsed.text.trim()) text = parsed.text.trim();
+            } catch { /* 非法回传忽略 */ }
+            if (!text) {
+                if (stateRef.current === "PROCESSING" || stateRef.current === "USER_SPEAKING") setCallState("IDLE");
+                return;
+            }
+            if (stateRef.current === "PROCESSING" || stateRef.current === "USER_SPEAKING") setCallState("IDLE");
+            void runConversationTurn(text);
+        };
+        const prev = w.__floatBridgeOnSpeechText;
+        const ourHandler = (json: string) => {
+            handler(json);
+            if (typeof prev === "function") { try { prev(json); } catch { /* 忽略 */ } }
+        };
+        w.__floatBridgeOnSpeechText = ourHandler;
+        return () => {
+            // 仅当监听者仍是本组件安装的包装函数时才恢复原监听者，避免误删其他监听者
+            if (w.__floatBridgeOnSpeechText === ourHandler) {
+                w.__floatBridgeOnSpeechText = (typeof prev === "function" ? prev : undefined);
+            }
+        };
+    }, [runConversationTurn]);
+
     // ── Hangup ──────────────────────────────────────
 
     const handleHangup = useCallback(() => {
         setCallState("ENDED");
+        try {
+            const shell = getAndroidShell();
+            if (shell && typeof shell.stopRing === "function") shell.stopRing();
+        } catch { /* 忽略 */ }
 
         // Stop any ongoing STT
         if (sttRef.current) {
@@ -848,7 +948,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                                 }
                                 aria-label={inputMode === "text" ? "切换到语音输入" : "按住说话"}
                                 title={inputMode === "text" ? "切换到语音输入" : "按住说话"}
-                                {...(inputMode === "voice" ? holdInput.pressHandlers : { onClick: handleInputModeToggle })}
+                                {...(inputMode === "voice" ? (huaweiNativeSttAvailable ? huaweiTalkHandlers : holdInput.pressHandlers) : { onClick: handleInputModeToggle })}
                             >
                                 {inputMode === "text" ? (
                                     <span className="ui-call-input-text-icon">Aa</span>

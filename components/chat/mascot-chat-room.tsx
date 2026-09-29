@@ -521,6 +521,24 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
         return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, syncEnterToSend);
     }, []);
 
+    // 华为壳（window.AndroidShell）悬浮球双击截图 / 网页请求截图：壳里截到真实屏幕后
+    // 以 data URL 回传 window.__floatBridgeOnScreenShot，挂到发送框待发送，
+    // 与粘贴/选图同一入口，最多 4 张；壳未调用时此回调不产生任何行为。
+    useEffect(() => {
+        const receiveScreenShot = (dataUrl: string | null) => {
+            if (!dataUrl || !dataUrl.startsWith("data:image/")) return;
+            setImagePreviewCache((prev) => ({ ...prev, [dataUrl]: dataUrl }));
+            setPendingImages((prev) => (prev.includes(dataUrl) ? prev : [...prev, dataUrl].slice(0, 4)));
+        };
+        const bridge = window as unknown as { __floatBridgeOnScreenShot?: ((dataUrl: string | null) => void) | undefined };
+        bridge.__floatBridgeOnScreenShot = receiveScreenShot;
+        return () => {
+            if (bridge.__floatBridgeOnScreenShot === receiveScreenShot) {
+                bridge.__floatBridgeOnScreenShot = undefined;
+            }
+        };
+    }, []);
+
     useEffect(() => {
         void hydrateMascotChat();
     }, []);

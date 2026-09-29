@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">小手机</string>
+    <string name="accessibility_service_desc">用于现实桥的读屏、点击文字、输入文字和应用门禁能力。角色通过现实桥向你发送这些指令时才会使用，不会后台持续读取。</string>
 </resources>

@@ -1,0 +1,44 @@
+{
+  "id": "lifeline",
+  "name": "Life Line · 2027考研冲刺",
+  "short_name": "Life Line",
+  "description": "个人生活管理系统 · 人大金专",
+  "version": "1.0.0",
+  "author": "yue",
+  "icon": "assets/icon-192.png",
+  "entry": "index.html",
+  "permissions": [
+    "app.data.read",
+    "app.data.write",
+    "network.fetch"
+  ],
+  "network": {
+    "allowedDomains": [
+      "hfdggpgvfwsblyftarzm.supabase.co"
+    ],
+    "mode": "direct"
+  },
+  "primaryTags": [
+    "life",
+    "study"
+  ],
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#B8E0F7",
+  "background_color": "#F0F8FF",
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
