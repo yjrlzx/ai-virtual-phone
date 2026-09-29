@@ -3,16 +3,22 @@
 /**
  * Lifeline 每日记录的类型化读写层（主应用 / char 工具侧）。
  *
- * Lifeline（public/lifeline/index.html）以同源 iframe 挂载，与主窗口共享 localStorage。
- * 整份状态存在 localStorage 键 `lifeLineState_v2`（JSON），写回方式等价于其 saveDB()：
- * localStorage.setItem('lifeLineState_v2', JSON.stringify(state))。
- *
+ * 整份状态存在云端 KV 键 `lifeLineState_v2`（经 lib/kv-db → /api/kv/* → SQLite）。
  * 这里把所有数据整形逻辑收敛在一处：字段名严格对齐 lifeline/index.html 的真实形状
  * （defaultState / saveRecord / addDietRecord / saveBodyRecord / saveTask / saveErrFromModal），
  * 不臆造字段，不硬编码业务数据。
+ *
+ * 旧的浏览器 localStorage 副本会在 kv-db 水合时自动上传云端后清除。
  */
 
+import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+
 export const LIFE_LINE_KEY = "lifeLineState_v2";
+
+// 首次水合时把浏览器里残留的 lifeLineState_v2 上传到云端，然后删掉 localStorage 副本。
+if (typeof window !== "undefined") {
+  registerKvMigration(LIFE_LINE_KEY);
+}
 
 /* ---------- 类型（只声明我们读写的字段，其余透传） ---------- */
 
@@ -152,7 +158,7 @@ function emptyLifelineState(): LifelineState {
 export function loadLifelineState(): LifelineState {
     if (typeof window === "undefined") return emptyLifelineState();
     try {
-        const raw = localStorage.getItem(LIFE_LINE_KEY);
+        const raw = kvGet(LIFE_LINE_KEY);
         if (!raw) return emptyLifelineState();
         const parsed = JSON.parse(raw) as unknown;
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return emptyLifelineState();
@@ -162,14 +168,10 @@ export function loadLifelineState(): LifelineState {
     }
 }
 
-/** 整份写回 localStorage（等价 lifeline 的 saveDB()）。 */
+/** 整份写回云端 KV（等价 lifeline 的 saveDB()）。 */
 export function saveLifelineState(state: LifelineState): void {
     if (typeof window === "undefined") return;
-    try {
-        localStorage.setItem(LIFE_LINE_KEY, JSON.stringify(state));
-    } catch {
-        // 存储满或隐私模式：静默失败，调用方按返回值判断
-    }
+    kvSet(LIFE_LINE_KEY, JSON.stringify(state));
 }
 
 /** 读-改-写：mutator 内安全改 draft，返回是否写成功。 */
