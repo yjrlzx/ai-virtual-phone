@@ -948,7 +948,7 @@ class MainActivity : AppCompatActivity() {
                     .put("granted", rootAvailable)
                     .put("hint", if (rootAvailable) "Root 可用，已开高级能力" else "鸿蒙/EMUI 未开放 Root，此层不可用（可选层级）"))
                 .toString()
-        }.getOrElse { error -> errJson(error.message) }
+        }.getOrElse { error: Throwable -> errJson(error.message) }
 
         /** 打开指定系统权限设置页。setting: accessibility/notification/overlay/write_settings/storage/location/microphone */
         @JavascriptInterface
