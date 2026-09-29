@@ -377,8 +377,11 @@ class MainActivity : AppCompatActivity() {
         fun clickText(text: String): String =
             try {
                 val r = RealityBridgeAccessibility.current()?.clickText(text)
-                    ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-                org.json.JSONObject(r).toString()
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
             } catch (t: Throwable) {
                 errJson(t.message)
             }
@@ -387,8 +390,11 @@ class MainActivity : AppCompatActivity() {
         fun inputText(text: String): String =
             try {
                 val r = RealityBridgeAccessibility.current()?.inputText(text)
-                    ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-                org.json.JSONObject(r).toString()
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
             } catch (t: Throwable) {
                 errJson(t.message)
             }
@@ -465,8 +471,11 @@ class MainActivity : AppCompatActivity() {
         fun longPress(x: Int, y: Int): String =
             try {
                 val r = RealityBridgeAccessibility.current()?.longPressCoordinate(x, y)
-                    ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-                org.json.JSONObject(r).toString()
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
             } catch (t: Throwable) {
                 errJson(t.message)
             }
@@ -476,8 +485,11 @@ class MainActivity : AppCompatActivity() {
         fun swipe(x1: Int, y1: Int, x2: Int, y2: Int): String =
             try {
                 val r = RealityBridgeAccessibility.current()?.swipeCoordinate(x1, y1, x2, y2)
-                    ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-                org.json.JSONObject(r).toString()
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
             } catch (t: Throwable) {
                 errJson(t.message)
             }
@@ -487,8 +499,11 @@ class MainActivity : AppCompatActivity() {
         fun pressKey(key: String): String =
             try {
                 val r = RealityBridgeAccessibility.current()?.pressKey(key)
-                    ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-                org.json.JSONObject(r).toString()
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
             } catch (t: Throwable) {
                 errJson(t.message)
             }
