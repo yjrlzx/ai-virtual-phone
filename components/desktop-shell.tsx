@@ -23,6 +23,7 @@ import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
 import { RealityBridgeApp } from "@/components/reality-bridge-app";
 import { HuaweiBridgeApp } from "@/components/huawei-bridge-app";
+import { HuaweiPeekApp } from "@/components/huawei-peek-app";
 import { REALITY_BRIDGE_APP_EVENT_NAME, REALITY_BRIDGE_DATA_EVENT } from "@/lib/reality-bridge/types";
 import { DiaryApp } from "@/components/diary/diary-app";
 import { XiaohongshuApp } from "@/components/xiaohongshu/xiaohongshu-app";
@@ -4041,6 +4042,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       return <RealityBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
     if (activeApp === "huaweibridge") {
       return <HuaweiBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
+    }
+    if (activeApp === "huaweipeek") {
+      return <HuaweiPeekApp onClose={() => setActiveApp(null)} />;
     }
     }
     if (activeApp === "qa") {
