@@ -13,9 +13,7 @@
     "network.fetch"
   ],
   "network": {
-    "allowedDomains": [
-      "hfdggpgvfwsblyftarzm.supabase.co"
-    ],
+    "allowedDomains": [],
     "mode": "direct"
   },
   "primaryTags": [

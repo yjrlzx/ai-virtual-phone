@@ -72,20 +72,18 @@ export function LifelineApp({ onClose }: {
         <button
           type="button"
           onClick={onClose}
-          aria-label="关闭"
+          aria-label="返回桌面"
           style={{
             border: "none",
-            background: "rgba(140,175,215,.25)",
+            background: "transparent",
             color: "#2c4a6e",
-            borderRadius: 8,
-            width: 26,
-            height: 26,
             cursor: "pointer",
-            fontSize: 14,
+            fontSize: 20,
             lineHeight: 1,
+            padding: 4,
           }}
         >
-          ✕
+          ←
         </button>
       </div>
       <div style={LB_BODY}>

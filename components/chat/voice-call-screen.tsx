@@ -99,6 +99,11 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const pausedAtRef = useRef<number | null>(null);
     const minimizedRef = useRef(false);
     const stateRef = useRef<string>("CONNECTING");
+    const mutedRef = useRef(false);
+    // barge-in 标记：识别到人声打断 AI 朗读时置 true，TTS 收尾逻辑据此不再把状态抢回 IDLE
+    const bargeInRef = useRef(false);
+    // TTS 结束时间戳：此后 400ms 内的麦克风 interim / 原生回传文本视为扬声器回声，忽略
+    const ttsEndedAtRef = useRef(0);
     const interimTextRef = useRef<string>("");  // ref 版本，闭包安全
     const sttWarningShownRef = useRef(false);
     const subtitleScrollRef = useRef<HTMLDivElement>(null);
@@ -109,6 +114,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     // Keep refs in sync
     useEffect(() => { stateRef.current = callState; }, [callState]);
     useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
+    useEffect(() => { mutedRef.current = isMuted; }, [isMuted]);
 
     // 缩小为悬浮窗：冻结通话——停止监听、打断在播放的语音
     useEffect(() => {
@@ -160,6 +166,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             delete (window as unknown as { __huaweiCallActive?: boolean }).__huaweiCallActive;
             if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
             if (audioAbortRef.current) { audioAbortRef.current(); audioAbortRef.current = null; }
+            try { const sh = getAndroidShell(); if (sh && typeof sh.stopListening === "function") sh.stopListening(); } catch { /* 忽略 */ }
             setCallAudioSessionActive(false);
         };
     }, []);
@@ -301,11 +308,23 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             case "CONNECTING": return initiator === "character" ? "来电..." : "正在呼叫...";
             case "IDLE": return isMuted ? "已静音" : "通话中";
             case "USER_SPEAKING": return "正在聆听...";
-            case "PROCESSING": return "对方正在思考...";
+            case "PROCESSING": return "正在输入...";
             case "AI_SPEAKING": return "对方正在说话...";
             case "ENDED": return "通话已结束";
         }
     };
+
+    // Barge-in（随时打断）：立刻中止当前 TTS 播放与浏览器语音合成，
+    // 被打断的 AI 回复不再补播，后续由新的用户语音触发新回合。
+    const bargeInAbort = useCallback(() => {
+        bargeInRef.current = true;
+        ttsEndedAtRef.current = Date.now();
+        try { audioAbortRef.current?.(); } catch { /* 忽略中止异常 */ }
+        audioAbortRef.current = null;
+        if (window.speechSynthesis) {
+            try { window.speechSynthesis.cancel(); } catch { /* 忽略 */ }
+        }
+    }, []);
 
     // ── AI response processing (same logic as chat-room) ──
 
@@ -427,15 +446,19 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                         audioAbortRef.current = abort;
                         await promise;
                         audioAbortRef.current = null;
+                        // 记录播完时间，后续 400ms 内的麦克风结果按扬声器回声忽略
+                        ttsEndedAtRef.current = Date.now();
                     }
                 } catch (e) {
                     console.warn("[VoiceCall] TTS failed:", e);
                 }
             }
 
-            if (stateRef.current !== "ENDED") {
+            // 收尾：未被打断且未挂断才回 IDLE；打断后状态留在 USER_SPEAKING，不得抢回
+            if (stateRef.current !== "ENDED" && !bargeInRef.current) {
                 setCallState("IDLE");
             }
+            bargeInRef.current = false;
         } catch (error: any) {
             console.error("[VoiceCall] Error:", error);
             if (stateRef.current !== "ENDED") {
@@ -466,16 +489,24 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
         const stt = createSTTSession({
             onInterim: (text) => {
+                // TTS 刚结束 400ms 内视为扬声器回声，忽略不触发 barge-in
+                if (Date.now() - ttsEndedAtRef.current < 400) return;
                 setInterimText(text);
                 interimTextRef.current = text;
                 // 有中间结果 → 切到 USER_SPEAKING
                 if (stateRef.current === "IDLE") {
+                    setCallState("USER_SPEAKING");
+                } else if (stateRef.current === "AI_SPEAKING") {
+                    // Barge-in：AI 朗读时用户插话 → 立刻打断 TTS，进入用户说话态
+                    bargeInAbort();
                     setCallState("USER_SPEAKING");
                 }
             },
             onFinal: (text) => {
                 sttRef.current = null;
                 if (text.trim()) {
+                    // 收尾帧兜底打断一次 TTS（interim 可能已打断过，幂等）
+                    if (stateRef.current === "AI_SPEAKING") bargeInAbort();
                     runConversationTurn(text.trim());
                 } else {
                     setInterimText("");
@@ -528,7 +559,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             sttRef.current = null;
             showSttCompatibilityWarning();
         }
-    }, [androidTextInputOnly, holdToTalk, runConversationTurn, session.contactId, showSttCompatibilityWarning]);
+    }, [androidTextInputOnly, holdToTalk, runConversationTurn, session.contactId, showSttCompatibilityWarning, bargeInAbort]);
 
     // IDLE 时自动开启监听（按住说话模式无自动监听，识别只在按住期间发生）
     useEffect(() => {
@@ -538,10 +569,10 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             sttRef.current = null;
             setInterimText("");
         }
-        if (!androidTextInputOnly && inputMode === "voice" && callState === "IDLE" && !isMuted && !minimized) {
-            // 短暂延迟让 UI 过渡完成
+        if (!androidTextInputOnly && inputMode === "voice" && (callState === "IDLE" || callState === "AI_SPEAKING") && !isMuted && !minimized) {
+            // 短暂延迟让 UI 过渡完成；AI 朗读期间也保持监听热，支持 barge-in 打断
             const timer = setTimeout(() => {
-                if (stateRef.current === "IDLE" && !minimizedRef.current) {
+                if ((stateRef.current === "IDLE" || stateRef.current === "AI_SPEAKING") && !minimizedRef.current) {
                     startListening();
                 }
             }, 500);
@@ -670,11 +701,18 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 const parsed = JSON.parse(json) as { text?: string; ok?: boolean; error?: string };
                 if (parsed.ok && typeof parsed.text === "string" && parsed.text.trim()) text = parsed.text.trim();
             } catch { /* 非法回传忽略 */ }
+            // TTS 刚结束 400ms 内的回传文本视为扬声器回声，忽略
+            if (text && Date.now() - ttsEndedAtRef.current < 400) text = "";
             if (!text) {
-                if (stateRef.current === "PROCESSING" || stateRef.current === "USER_SPEAKING") setCallState("IDLE");
+                if (stateRef.current === "PROCESSING" || stateRef.current === "USER_SPEAKING" || stateRef.current === "AI_SPEAKING") setCallState("IDLE");
                 return;
             }
-            if (stateRef.current === "PROCESSING" || stateRef.current === "USER_SPEAKING") setCallState("IDLE");
+            if (stateRef.current === "AI_SPEAKING") {
+                // Barge-in：原生长连监听到人声 → 立刻停 TTS，不等待播完
+                bargeInAbort();
+                setCallState("USER_SPEAKING");
+            }
+            if (stateRef.current === "PROCESSING" || stateRef.current === "USER_SPEAKING" || stateRef.current === "AI_SPEAKING") setCallState("IDLE");
             void runConversationTurn(text);
         };
         const prev = w.__floatBridgeOnSpeechText;
@@ -689,7 +727,29 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 w.__floatBridgeOnSpeechText = (typeof prev === "function" ? prev : undefined);
             }
         };
-    }, [runConversationTurn]);
+    }, [runConversationTurn, bargeInAbort]);
+
+    // 华为壳免提直说：接通进入 IDLE 后自动开麦，说完一段由原生经
+    // __floatBridgeOnSpeechText 回传文本并自动走对话轮；静音/缩小/挂断时停麦。
+    // 不可用时此 effect 整体不生效，回落 Web Speech 自动监听 / 按住说话。
+    useEffect(() => {
+        if (!huaweiNativeSttAvailable) return;
+        if (isMuted) {
+            huaweiNativeStopTalk();
+            return;
+        }
+        if (minimized) return;
+        // 只在等 AI 网络回复（PROCESSING）时不重开监听；IDLE / AI_SPEAKING 都保持长连监听，
+        // AI 朗读时麦克风保持热，随时可 barge-in 打断。
+        // TODO: 若原生桥实测不支持边播边录，此处需回落到 Web Speech / MediaRecorder 做 VAD 打断检测。
+        if (callState === "PROCESSING") return;
+        const t = setTimeout(() => {
+            if ((stateRef.current === "IDLE" || stateRef.current === "AI_SPEAKING") && !minimizedRef.current && !mutedRef.current) {
+                huaweiNativeStartTalk();
+            }
+        }, 500);
+        return () => clearTimeout(t);
+    }, [callState, minimized, isMuted, huaweiNativeStartTalk, huaweiNativeStopTalk]);
 
     // ── Hangup ──────────────────────────────────────
 
@@ -698,6 +758,10 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         try {
             const shell = getAndroidShell();
             if (shell && typeof shell.stopRing === "function") shell.stopRing();
+        } catch { /* 忽略 */ }
+        try {
+            const shell = getAndroidShell();
+            if (shell && typeof shell.stopListening === "function") shell.stopListening();
         } catch { /* 忽略 */ }
 
         // Stop any ongoing STT
@@ -749,21 +813,23 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     return (
         <div
-            className="absolute inset-0 z-[100] flex flex-col text-white overflow-hidden call-bg-default call-keyboard-shift"
-            style={bgImageResolved ? { ...keyboardOffsetStyle, background: `url(${bgImageResolved}) center/cover no-repeat` } : keyboardOffsetStyle}
+            className="vcsx-root call-keyboard-shift"
+            style={keyboardOffsetStyle}
         >
-            {/* Dark overlay for readability */}
-            <div
-                className="call-overlay absolute inset-0 z-0"
-                {...(bgImageResolved ? { "data-has-image": "" } : {})}
-            />
+            <style>{VCSX_STYLE}</style>
+            {/* 朦胧光斑 + 自定义通话背景 */}
+            <div className="vcsx-glow vcsx-glow-a" />
+            <div className="vcsx-glow vcsx-glow-b" />
+            {bgImageResolved && (
+                <div className="vcsx-bgimg" style={{ backgroundImage: "url(" + bgImageResolved + ")" }} />
+            )}
 
             <CallVolumeControl />
 
             {onMinimize && callState !== "ENDED" && (
                 <button
                     type="button"
-                    className="call-back-btn"
+                    className="vcsx-min-btn"
                     onClick={onMinimize}
                     aria-label="缩小通话"
                     title="缩小通话"
@@ -774,329 +840,294 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 </button>
             )}
 
-            {/* Content wrapper — force white text so themes don't override call UI */}
-            <div className="voicecall-controls gcall-body">
-                {/* Top: Duration + Status */}
-                <div className="gcall-topbar">
-                    <div className="gcall-topbar-title">
-                        {character.name}
-                    </div>
-                    <div
-                        className="gcall-topbar-sub"
-                        {...(callState === "CONNECTING" || callState === "PROCESSING" ? { "data-anim": "" } : {})}
-                    >
-                        {callState !== "CONNECTING" && callState !== "ENDED" ? `${formatTime(callDuration)} · ` : ""}
-                        {stateLabel()}
-                    </div>
-                </div>
+            {/* 自动监听路径下：右上角小切钮切文字输入 */}
+            {!androidTextInputOnly && !holdToTalk && callState !== "CONNECTING" && callState !== "ENDED" && inputMode === "voice" && (
+                <button type="button" className="vcsx-text-toggle" onClick={handleInputModeToggle}>
+                    文字
+                </button>
+            )}
 
-                {/* Center: Avatar + connecting ring */}
-                <div className="flex-none flex justify-center items-center pt-[30px] pb-5">
-                    <div className="relative flex items-center justify-center">
-                        <div
-                            className="voicecall-avatar"
-                            {...(callState === "AI_SPEAKING" ? { "data-speaking": "" } : {})}
-                        >
-                            {character.avatar ? (
-                                <img
-                                    src={character.avatar}
-                                    alt={character.name}
-                                    className="w-full h-full object-cover"
-                                />
-                            ) : (
-                                <span className="ts-48 text-[var(--c-icon)]">
-                                    {character.name?.[0] || "?"}
-                                </span>
-                            )}
+            {/* 顶部居中：来电铃声滚动 / 通话计时 */}
+            <div className="vcsx-topline">
+                {callState === "CONNECTING" && initiator === "character" ? (
+                    <div className="vcsx-ringnow">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="#a8d8ff">
+                            <path d="M9 18.5a3 3 0 1 1-2-2.83V5.5l11-2v10.17a3 3 0 1 1-2-2.83V7.5L9 9.17v9.33z" />
+                        </svg>
+                        <div className="vcsx-ringmarquee">
+                            <div className="vcsx-ringtrack">
+                                <span className="vcsx-ringitem">叮铃铃 — {character.name}找你有事 — </span>
+                                <span className="vcsx-ringitem" aria-hidden="true">叮铃铃 — {character.name}找你有事 — </span>
+                            </div>
                         </div>
-                        {callState === "CONNECTING" && (
-                            <>
-                                <div
-                                    className="absolute w-[160px] h-[160px] rounded-full pointer-events-none"
-                                    style={{
-                                        border: "2px solid rgba(255,255,255,0.2)",
-                                        animation: "voicecall-ring 1.5s ease-out infinite",
-                                    }}
-                                />
-                                <div
-                                    className="absolute w-[160px] h-[160px] rounded-full pointer-events-none"
-                                    style={{
-                                        border: "2px solid rgba(255,255,255,0.2)",
-                                        animation: "voicecall-ring 1.5s ease-out infinite 0.5s",
-                                    }}
-                                />
-                            </>
+                    </div>
+                ) : (
+                    <div className="vcsx-timer">
+                        {callState !== "CONNECTING" && callState !== "ENDED" ? formatTime(callDuration) : ""}
+                    </div>
+                )}
+            </div>
+
+            {/* 中部：头像 + 名字 + 状态 + 气泡 */}
+            <div className="vcsx-main">
+                <div className="vcsx-avatar-wrap">
+                    <div className="vcsx-avatar">
+                        {character.avatar ? (
+                            <img src={character.avatar} alt={character.name} />
+                        ) : (
+                            <span className="vcsx-avatar-fallback">{character.name?.[0] || "?"}</span>
                         )}
                     </div>
+                    {callState === "CONNECTING" && (
+                        <>
+                            <span className="vcsx-ring-pulse" />
+                            <span className="vcsx-ring-pulse vcsx-ring-pulse-delay" />
+                        </>
+                    )}
+                    {callState === "AI_SPEAKING" && <span className="vcsx-speaking-ring" />}
                 </div>
 
-                <div className="text-center ts-18 font-semibold mb-2">
-                    {character.name}
+                <div className="vcsx-name">{character.name}</div>
+
+                <div className="vcsx-status">
+                    <span>
+                        {stateLabel()}
+                        {callState !== "CONNECTING" && callState !== "ENDED" ? " · " + formatTime(callDuration) : ""}
+                    </span>
+                    {callState === "AI_SPEAKING" && (
+                        <span className="vcsx-wave" aria-hidden="true">
+                            <i /><i /><i /><i /><i />
+                        </span>
+                    )}
                 </div>
 
-                {/* Subtitle area — top fade via mask */}
-                <div
-                    ref={subtitleScrollRef}
-                    className="voicecall-subtitle-mask flex-1 min-h-0 overflow-auto px-5 py-[10px] flex flex-col gap-2 relative"
-                    {...(inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" ? { "data-text-input": "" } : {})}
-                >
+                {/* 字幕气泡区：用户靠右、AI 靠左，最新一条高亮 */}
+                <div ref={subtitleScrollRef} className="vcsx-bubbles">
                     {subtitles.map((sub) => (
                         <div
                             key={sub.id}
-                            className="call-subtitle"
-                            data-role={sub.role}
+                            className={
+                                "vcsx-bubble " +
+                                (sub.role === "user" ? "vcsx-bubble-user" : "vcsx-bubble-ai") +
+                                (sub.id === subtitles[subtitles.length - 1]?.id ? " vcsx-bubble-latest" : "")
+                            }
                         >
-                            <BilingualTextBlock text={sub.text} mode="plain" className="call-subtitle-bilingual" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
+                            <BilingualTextBlock
+                                text={sub.text}
+                                mode="plain"
+                                className="vcsx-bubble-text"
+                                defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                            />
                         </div>
                     ))}
-
-                    {/* Interim STT text */}
                     {interimText && callState === "USER_SPEAKING" && (
-                        <div className="call-subtitle" data-interim="">
-                            {interimText}
-                        </div>
+                        <div className="vcsx-bubble vcsx-bubble-user vcsx-bubble-interim">{interimText}</div>
                     )}
                 </div>
+            </div>
 
-                {inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" && (
-                    <form
-                        className="call-text-input-panel voicecall-text-input-panel call-text-input-row"
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                            handleTextSubmit();
-                        }}
+            {/* 文字输入面板（回落） */}
+            {inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" && (
+                <form
+                    className="call-text-input-panel voicecall-text-input-panel call-text-input-row"
+                    onSubmit={(e) => { e.preventDefault(); handleTextSubmit(); }}
+                >
+                    <button
+                        type="button"
+                        onClick={handleRegenerate}
+                        className="call-regenerate-btn"
+                        disabled={callState !== "IDLE"}
+                        aria-label="让对方重新回复"
+                        title="让对方重新回复"
                     >
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M23 4v6h-6" />
+                            <path d="M1 20v-6h6" />
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                        </svg>
+                    </button>
+                    <div className="call-text-input-shell">
+                        <input
+                            value={typedText}
+                            onChange={(e) => setTypedText(e.target.value)}
+                            className="call-text-input"
+                            placeholder={callState === "IDLE" ? "输入你想说的话..." : "稍等对方说完..."}
+                            disabled={callState !== "IDLE"}
+                        />
+                        <button
+                            type="submit"
+                            className="call-text-send-btn"
+                            disabled={!typedText.trim() || callState !== "IDLE"}
+                            aria-label="发送"
+                        >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 19V5" />
+                                <path d="M5 12l7-7 7 7" />
+                            </svg>
+                        </button>
+                    </div>
+                </form>
+            )}
+
+            {/* 按住说话提示（回落） */}
+            {holdToTalk && inputMode === "voice" && callState !== "CONNECTING" && callState !== "ENDED" && (
+                <div className="vcsx-hold-hint">
+                    {holdInput.recState === "recording" ? "松开发送"
+                        : holdInput.recState === "transcribing" ? "识别中…"
+                        : holdInput.error || "按住下方麦克风说话"}
+                </div>
+            )}
+
+            {/* 底部控制栏 */}
+            <div className="vcsx-controls" style={{ paddingBottom: "max(28px, env(safe-area-inset-bottom))" }}>
+                {callState === "ENDED" ? (
+                    <div className="vcsx-ended">通话已结束</div>
+                ) : callState === "CONNECTING" && initiator === "character" ? (
+                    <>
                         <button
                             type="button"
-                            onClick={handleRegenerate}
-                            className="call-regenerate-btn"
-                            disabled={callState !== "IDLE"}
-                            aria-label="让对方重新回复"
-                            title="让对方重新回复"
+                            className="vcsx-fab"
+                            onClick={() => {
+                                pushChatMessage({ sessionId: session.id, role: "user", content: "[我拒绝了语音通话]" });
+                                onEnd();
+                            }}
                         >
-                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M23 4v6h-6" />
-                                <path d="M1 20v-6h6" />
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                            </svg>
+                            <span className="vcsx-fab-circle vcsx-fab-hang-circle">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                </svg>
+                            </span>
+                            <span className="vcsx-fab-label">拒绝</span>
                         </button>
-                        <div className="call-text-input-shell">
-                            <input
-                                value={typedText}
-                                onChange={e => setTypedText(e.target.value)}
-                                className="call-text-input"
-                                placeholder={callState === "IDLE" ? "输入你想说的话..." : "稍等对方说完..."}
-                                disabled={callState !== "IDLE"}
-                            />
-                            <button
-                                type="submit"
-                                className="call-text-send-btn"
-                                disabled={!typedText.trim() || callState !== "IDLE"}
-                                aria-label="发送"
-                            >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 19V5" />
-                                    <path d="M5 12l7-7 7 7" />
-                                </svg>
-                            </button>
-                        </div>
-                    </form>
-                )}
-
-                {/* 按住说话提示/错误行 */}
-                {holdToTalk && inputMode === "voice" && callState !== "CONNECTING" && callState !== "ENDED" && (
-                    <div className="text-center ts-12 opacity-80 px-5">
-                        {holdInput.recState === "recording" ? "松开发送"
-                            : holdInput.recState === "transcribing" ? "识别中…"
-                            : holdInput.error || "按住下方麦克风说话"}
-                    </div>
-                )}
-
-                {/* Bottom controls */}
-                <div
-                    className="flex justify-center items-center gap-[40px] p-5"
-                    style={{ paddingBottom: "max(30px, env(safe-area-inset-bottom))" }}
-                >
-                    {callState !== "ENDED" && callState !== "CONNECTING" ? holdToTalk ? (
-                        <>
-                            {/* 输入方式切换（按住说话模式不需要持续开麦，静音位改放 Aa 切换） */}
-                            <button
-                                onClick={handleInputModeToggle}
-                                className="ui-call-btn ui-call-btn-muted"
-                                aria-label={inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
-                            >
-                                {inputMode === "voice" ? (
-                                    <span className="ui-call-input-text-icon">Aa</span>
-                                ) : (
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                        <line x1="12" y1="19" x2="12" y2="22" />
-                                    </svg>
-                                )}
-                            </button>
-
-                            {/* 按住说话主按钮（文字模式下点按切回语音） */}
-                            <button
-                                className="ui-call-mic ui-call-mic-lg"
-                                style={{ touchAction: "none" }}
-                                data-state={
-                                    inputMode === "text" ? "text"
-                                        : holdInput.recState === "recording" ? "speaking"
-                                        : callState === "IDLE" ? "idle"
-                                        : "busy"
-                                }
-                                aria-label={inputMode === "text" ? "切换到语音输入" : "按住说话"}
-                                title={inputMode === "text" ? "切换到语音输入" : "按住说话"}
-                                {...(inputMode === "voice" ? (huaweiNativeSttAvailable ? huaweiTalkHandlers : holdInput.pressHandlers) : { onClick: handleInputModeToggle })}
-                            >
-                                {inputMode === "text" ? (
-                                    <span className="ui-call-input-text-icon">Aa</span>
-                                ) : (
-                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                        <line x1="12" y1="19" x2="12" y2="22" />
-                                    </svg>
-                                )}
-                            </button>
-
-                            {/* Hangup */}
-                            <button
-                                onClick={handleHangup}
-                                className="ui-call-btn ui-call-btn-danger"
-                                aria-label="挂断"
-                            >
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                    <line x1="23" y1="1" x2="1" y2="23" />
-                                </svg>
-                            </button>
-                        </>
-                    ) : androidTextInputOnly ? (
                         <button
-                            onClick={handleHangup}
-                            className="ui-call-btn ui-call-btn-danger"
-                            aria-label="挂断"
+                            type="button"
+                            className="vcsx-fab"
+                            onClick={() => setCallState("IDLE")}
                         >
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                <line x1="23" y1="1" x2="1" y2="23" />
-                            </svg>
+                            <span className="vcsx-fab-circle vcsx-fab-accept-circle">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                                </svg>
+                            </span>
+                            <span className="vcsx-fab-label">接听</span>
                         </button>
-                    ) : (
-                        <>
-                            {/* Mute button */}
-                            <button
-                                onClick={() => setIsMuted(!isMuted)}
-                                className="ui-call-btn ui-call-btn-muted"
-                                {...(isMuted ? { "data-checked": "" } : {})}
-                            >
-                                {isMuted ? (
-                                    /* Muted: mic with diagonal */
+                    </>
+                ) : callState === "CONNECTING" ? (
+                    <button
+                        type="button"
+                        className="vcsx-fab"
+                        onClick={() => {
+                            pushChatMessage({ sessionId: session.id, role: "user", content: "[我取消了语音通话]" });
+                            onEnd();
+                        }}
+                    >
+                        <span className="vcsx-fab-circle vcsx-fab-hang-circle">
+                            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                            </svg>
+                        </span>
+                        <span className="vcsx-fab-label">取消</span>
+                    </button>
+                ) : holdToTalk ? (
+                    <>
+                        <button
+                            type="button"
+                            className="vcsx-fab"
+                            onClick={handleInputModeToggle}
+                            aria-label={inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
+                        >
+                            <span className="vcsx-fab-circle vcsx-fab-default-circle">
+                                {inputMode === "voice" ? (
                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                        <line x1="12" y1="19" x2="12" y2="22" />
+                                    </svg>
+                                ) : (
+                                    <span className="vcsx-fab-text-icon">Aa</span>
+                                )}
+                            </span>
+                            <span className="vcsx-fab-label">{inputMode === "voice" ? "文字" : "语音"}</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="vcsx-fab"
+                            style={{ touchAction: "none" }}
+                            aria-label={inputMode === "text" ? "切换到语音输入" : "按住说话"}
+                            {...(inputMode === "voice" ? (huaweiNativeSttAvailable ? huaweiTalkHandlers : holdInput.pressHandlers) : { onClick: handleInputModeToggle })}
+                        >
+                            <span className="vcsx-fab-circle vcsx-fab-mic-circle">
+                                {inputMode === "text" ? (
+                                    <span className="vcsx-fab-text-icon">Aa</span>
+                                ) : (
+                                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                        <line x1="12" y1="19" x2="12" y2="22" />
+                                    </svg>
+                                )}
+                            </span>
+                            <span className="vcsx-fab-label">{inputMode === "text" ? "语音" : "按住说话"}</span>
+                        </button>
+                        <button type="button" className="vcsx-fab" onClick={handleHangup} aria-label="挂断">
+                            <span className="vcsx-fab-circle vcsx-fab-hang-circle">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                </svg>
+                            </span>
+                            <span className="vcsx-fab-label">挂断</span>
+                        </button>
+                    </>
+                ) : androidTextInputOnly ? (
+                    <button type="button" className="vcsx-fab" onClick={handleHangup} aria-label="挂断">
+                        <span className="vcsx-fab-circle vcsx-fab-hang-circle">
+                            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                            </svg>
+                        </span>
+                        <span className="vcsx-fab-label">挂断</span>
+                    </button>
+                ) : (
+                    <>
+                        <button
+                            type="button"
+                            className="vcsx-fab"
+                            onClick={() => setIsMuted(!isMuted)}
+                            aria-label={isMuted ? "取消静音" : "静音"}
+                        >
+                            <span className={"vcsx-fab-circle " + (isMuted ? "vcsx-fab-muted-on-circle" : "vcsx-fab-default-circle")}>
+                                {isMuted ? (
+                                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                                         <line x1="1" y1="1" x2="23" y2="23" />
                                         <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
                                         <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.48-.35 2.15" />
-                                        <line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" />
+                                        <line x1="12" y1="19" x2="12" y2="23" />
                                     </svg>
                                 ) : (
-                                    /* Active mic */
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                                         <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
                                         <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                                         <line x1="12" y1="19" x2="12" y2="22" />
                                     </svg>
                                 )}
-                            </button>
-
-                            {/* Mic button — input mode toggle with voice-state indicator */}
-                            <button
-                                onClick={handleInputModeToggle}
-                                className="ui-call-mic ui-call-mic-lg"
-                                data-state={
-                                    inputMode === "text" ? "text"
-                                        : callState === "USER_SPEAKING" ? "speaking"
-                                        : callState === "IDLE" ? (isMuted ? "idle-muted" : "idle")
-                                        : "busy"
-                                }
-                                aria-label={androidTextInputOnly ? "文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
-                                title={androidTextInputOnly ? "安卓浏览器使用文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
-                            >
-                                {inputMode === "text" ? (
-                                    <span className="ui-call-input-text-icon">Aa</span>
-                                ) : (
-                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                        <line x1="12" y1="19" x2="12" y2="22" />
-                                    </svg>
-                                )}
-                            </button>
-
-                            {/* Hangup button */}
-                            <button
-                                onClick={handleHangup}
-                                className="ui-call-btn ui-call-btn-danger"
-                            >
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                    <line x1="23" y1="1" x2="1" y2="23" />
-                                </svg>
-                            </button>
-                        </>
-                    ) : callState === "CONNECTING" && initiator === "character" ? (
-                        /* Incoming call: accept + decline */
-                        <>
-                            <button
-                                onClick={() => {
-                                    pushChatMessage({
-                                        sessionId: session.id,
-                                        role: "user",
-                                        content: `[我拒绝了语音通话]`,
-                                    });
-                                    onEnd();
-                                }}
-                                className="ui-call-btn ui-call-btn-danger"
-                            >
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                    <line x1="23" y1="1" x2="1" y2="23" />
-                                </svg>
-                            </button>
-                            <button
-                                onClick={() => setCallState("IDLE")}
-                                className="ui-call-btn ui-call-btn-success"
-                            >
-                                {/* Phone pick-up icon */}
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-                                </svg>
-                            </button>
-                        </>
-                    ) : callState === "CONNECTING" ? (
-                        /* User-initiated: show cancel only */
-                        <button
-                            onClick={() => {
-                                pushChatMessage({
-                                    sessionId: session.id,
-                                    role: "user",
-                                    content: `[我取消了语音通话]`,
-                                });
-                                onEnd();
-                            }}
-                            className="ui-call-btn ui-call-btn-danger"
-                        >
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                <line x1="23" y1="1" x2="1" y2="23" />
-                            </svg>
+                            </span>
+                            <span className="vcsx-fab-label">{isMuted ? "取消静音" : "静音"}</span>
                         </button>
-                    ) : (
-                        /* ENDED state: show nothing, will auto-close */
-                        <div className="ts-14 opacity-70">通话已结束</div>
-                    )}
-                </div>
+                        <button type="button" className="vcsx-fab" onClick={handleHangup} aria-label="挂断">
+                            <span className="vcsx-fab-circle vcsx-fab-hang-circle">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                </svg>
+                            </span>
+                            <span className="vcsx-fab-label">挂断</span>
+                        </button>
+                    </>
+                )}
             </div>
 
             {!androidTextInputOnly && showSttWarning && (
@@ -1105,7 +1136,107 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     onNeverShow={handleNeverShowSttWarning}
                 />
             )}
-
         </div>
     );
 }
+
+const VCSX_STYLE = `
+.vcsx-root {
+    position: absolute; inset: 0; z-index: 100; overflow: hidden;
+    display: flex; flex-direction: column; color: #fff;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    background: radial-gradient(120% 80% at 50% 0%, #1a2f4e 0%, #0a1628 55%, #060d1a 100%);
+}
+.vcsx-glow { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .5; pointer-events: none; z-index: 0; }
+.vcsx-glow-a { width: 320px; height: 320px; top: -80px; left: -60px; background: radial-gradient(circle, rgba(126,200,255,.35), transparent 70%); animation: vcsxDrift 9s ease-in-out infinite alternate; }
+.vcsx-glow-b { width: 360px; height: 360px; bottom: -100px; right: -80px; background: radial-gradient(circle, rgba(168,216,255,.22), transparent 70%); animation: vcsxDrift 11s ease-in-out infinite alternate-reverse; }
+@keyframes vcsxDrift { from { transform: translate(0,0) scale(1); } to { transform: translate(30px,20px) scale(1.12); } }
+.vcsx-bgimg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .32; filter: blur(2px); z-index: 0; }
+.vcsx-min-btn {
+    position: absolute; top: max(14px, env(safe-area-inset-top)); left: 14px; z-index: 5;
+    width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.1); color: #fff;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+}
+.vcsx-text-toggle {
+    position: absolute; top: max(16px, env(safe-area-inset-top)); right: 16px; z-index: 5;
+    padding: 7px 14px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    border: 1px solid rgba(168,216,255,.35); background: rgba(126,200,255,.14); color: #cfe9ff;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+}
+.vcsx-topline {
+    position: relative; z-index: 2; height: 56px;
+    padding-top: max(16px, env(safe-area-inset-top));
+    display: flex; align-items: center; justify-content: center;
+}
+.vcsx-timer { font-size: 15px; letter-spacing: 2px; color: rgba(255,255,255,.85); font-variant-numeric: tabular-nums; min-height: 20px; }
+.vcsx-ringnow {
+    display: flex; align-items: center; gap: 6px; max-width: 80%;
+    background: rgba(10,22,40,.55); border: 1px solid rgba(168,216,255,.25);
+    border-radius: 999px; padding: 6px 14px;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+}
+.vcsx-ringmarquee { overflow: hidden; width: 190px; }
+.vcsx-ringtrack { display: flex; width: max-content; animation: vcsxMarquee 9s linear infinite; }
+.vcsx-ringitem { white-space: nowrap; font-size: 12px; color: #a8d8ff; padding-right: 40px; }
+@keyframes vcsxMarquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.vcsx-main { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; padding: 6px 20px 0; }
+.vcsx-avatar-wrap { position: relative; margin-top: 14px; }
+.vcsx-avatar {
+    position: relative; width: 112px; height: 112px; border-radius: 50%; overflow: hidden;
+    background: linear-gradient(135deg, #7ec8ff, #a8d8ff);
+    box-shadow: 0 12px 40px rgba(126,200,255,.25), 0 0 0 3px rgba(255,255,255,.12);
+    display: flex; align-items: center; justify-content: center;
+}
+.vcsx-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.vcsx-avatar-fallback { font-size: 44px; font-weight: 700; color: #0a1628; }
+.vcsx-ring-pulse { position: absolute; inset: -10px; border-radius: 50%; border: 2px solid rgba(168,216,255,.4); pointer-events: none; animation: vcsxRingPulse 1.6s ease-out infinite; }
+.vcsx-ring-pulse-delay { animation-delay: .8s; }
+@keyframes vcsxRingPulse { 0% { transform: scale(.95); opacity: .8; } 100% { transform: scale(1.35); opacity: 0; } }
+.vcsx-speaking-ring { position: absolute; inset: -8px; border-radius: 50%; border: 2px solid rgba(126,200,255,.6); pointer-events: none; animation: vcsxSpeak 1.2s ease-in-out infinite; }
+@keyframes vcsxSpeak { 0%, 100% { transform: scale(1); opacity: .5; } 50% { transform: scale(1.12); opacity: .9; } }
+.vcsx-name { margin-top: 16px; font-size: 22px; font-weight: 600; letter-spacing: 1px; text-shadow: 0 2px 12px rgba(0,0,0,.4); }
+.vcsx-status { margin-top: 8px; min-height: 22px; font-size: 14px; color: rgba(207,233,255,.85); display: flex; align-items: center; gap: 8px; }
+.vcsx-wave { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; }
+.vcsx-wave i { width: 3px; border-radius: 2px; background: #7ec8ff; transform-origin: bottom; animation: vcsxWave 1s ease-in-out infinite; }
+.vcsx-wave i:nth-child(1) { height: 6px; }
+.vcsx-wave i:nth-child(2) { height: 12px; animation-delay: .15s; }
+.vcsx-wave i:nth-child(3) { height: 8px; animation-delay: .3s; }
+.vcsx-wave i:nth-child(4) { height: 13px; animation-delay: .45s; }
+.vcsx-wave i:nth-child(5) { height: 7px; animation-delay: .6s; }
+@keyframes vcsxWave { 0%, 100% { transform: scaleY(.4); } 50% { transform: scaleY(1); } }
+.vcsx-bubbles {
+    margin-top: 18px; width: 100%; max-width: 440px; flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px; padding-bottom: 10px;
+    mask-image: linear-gradient(to bottom, transparent 0, #000 24px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px);
+}
+.vcsx-bubble {
+    max-width: 78%; padding: 10px 14px; font-size: 15px; line-height: 1.55; word-break: break-word;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    animation: vcsxRise .35s ease;
+}
+@keyframes vcsxRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.vcsx-bubble-ai { align-self: flex-start; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.16); border-radius: 20px; border-bottom-left-radius: 6px; color: #eaf6ff; }
+.vcsx-bubble-user { align-self: flex-end; background: rgba(126,200,255,.22); border: 1px solid rgba(168,216,255,.4); border-radius: 20px; border-bottom-right-radius: 6px; color: #fff; }
+.vcsx-bubble-latest { box-shadow: 0 0 0 1px rgba(168,216,255,.35), 0 8px 24px rgba(126,200,255,.15); }
+.vcsx-bubble-interim { opacity: .75; }
+.vcsx-hold-hint { position: relative; z-index: 2; text-align: center; font-size: 12px; opacity: .8; padding: 4px 20px 0; }
+.vcsx-controls { position: relative; z-index: 2; display: flex; justify-content: center; align-items: flex-start; gap: 44px; padding: 18px 20px 0; }
+.vcsx-fab { display: flex; flex-direction: column; align-items: center; gap: 8px; background: none; border: none; cursor: pointer; color: #fff; }
+.vcsx-fab-circle {
+    width: 66px; height: 66px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    transition: transform .12s ease;
+}
+.vcsx-fab:active .vcsx-fab-circle { transform: scale(.92); }
+.vcsx-fab-label { font-size: 12px; color: rgba(255,255,255,.75); }
+.vcsx-fab-default-circle { background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.25); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.vcsx-fab-muted-on-circle { background: rgba(255,59,48,.9); border: 1px solid rgba(255,120,110,.6); box-shadow: 0 8px 24px rgba(255,59,48,.4); }
+.vcsx-fab-mic-circle { background: rgba(126,200,255,.22); border: 1px solid rgba(168,216,255,.5); width: 72px; height: 72px; box-shadow: 0 8px 28px rgba(126,200,255,.3); }
+.vcsx-fab-hang-circle { width: 72px; height: 72px; background: #ff3b30; border: none; box-shadow: 0 10px 30px rgba(255,59,48,.45); }
+.vcsx-fab-accept-circle { width: 72px; height: 72px; background: #34c759; border: none; box-shadow: 0 10px 30px rgba(52,199,89,.45); }
+.vcsx-fab-text-icon { font-size: 22px; font-weight: 700; }
+.vcsx-ended { font-size: 14px; color: rgba(255,255,255,.6); padding-top: 20px; }
+`;

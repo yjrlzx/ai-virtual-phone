@@ -23,12 +23,42 @@ import {
 } from "./tool-storage";
 import { executeCustomAppToolCall } from "./custom-app-tool-runtime";
 import { characterWorkspace, agentComputerRequest, isAgentComputerConfigured } from "./agent-computer";
-import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, HUAWEI_SHELL_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
+import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, HUAWEI_SHELL_CAPABILITY_ID, LIFELINE_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
 import { bridgeConnection, loadBridgeDataItems, loadBridgeShortcutActions, readAllBridgeStateSnapshots, readBridgeStateSnapshot } from "./reality-bridge/storage";
-import { fetchHuaweiCurrentWeather, getAndroidShell, invokeShellJson, loadHuaweiCustomActions, loadHuaweiFootprint, loadHuaweiHealthSnapshot, loadHuaweiShellSettings, readHuaweiLedger, syncHuaweiLedgerFromShell } from "./huawei-shell/storage";
+import { fetchHuaweiCurrentWeather, getAndroidShell, invokeShellJson, loadHuaweiCustomActions, loadHuaweiFootprint, loadHuaweiHealthSnapshot, loadHuaweiShellSettings, loadHuaweiTriggerRules, pushLockedPackagesToShell, readHuaweiLedger, readLockedPackagesFromShell, saveHuaweiTriggerRules, syncHuaweiLedgerFromShell } from "./huawei-shell/storage";
 import type { HuaweiLedgerRecord } from "./huawei-shell/storage";
-import type { HuaweiCustomAction } from "./huawei-shell/types";
-import { ALIPAY_PACKAGE, WECHAT_PACKAGE, type PaymentSource } from "./huawei-shell/types";
+import type { HuaweiCustomAction, HuaweiTriggerRule } from "./huawei-shell/types";
+import { WECHAT_PACKAGE, type PaymentSource } from "./huawei-shell/types";
+import { addPeekGuardEvent, addTodayFocusMinutes, companionDayCount, readCompanionMeta, readTodayFocusMinutes, setCompanionStartDate, setTodayWindowLine } from "./huawei-shell/peek-store";
+import { createDiaryEntry } from "./diary-entry-storage";
+import {
+    appendLifelineFinanceRecord,
+    appendLifelineStudyRecord,
+    appendLocalScheduleEvent,
+    loadWakeAlarm,
+    readCharMemory,
+    readLifelineFinance,
+    readLifelineStudyProgress,
+    readLocalScheduleEvents,
+    rememberCharMemory,
+    saveWakeAlarm,
+} from "./lifeline-bridge";
+import {
+    appendLifelineDietRecord,
+    appendLifelineError,
+    appendLifelineFinanceRecord as appendLifelineStoreFinanceRecord,
+    appendLifelineWeight,
+    completeLifelineTask,
+    addLifelineTask,
+    describeTask as describeLifelineTask,
+    readLifelineBodySummary,
+    readLifelineDiet,
+    readLifelineErrors,
+    readLifelineFinanceSummary,
+    readLifelineTaskPlan,
+    lifelineTodayKey,
+} from "./lifeline-store";
+import { WRITE_REAL_CALENDAR_TOOL, executeWriteRealCalendarTool } from "./char-tools-automation";
 import { createShortcutCommand, deliverShortcutCommand, waitForShortcutCommand } from "./shortcut-command-client";
 import { loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
 import type { MemoryEntry } from "./memory-types";
@@ -791,6 +821,7 @@ async function executeInternalTool(call: ToolCall, context?: ToolExecutionContex
     if (isMusicControlToolName(call.name)) return executeMusicControlTool(call, context);
     if (isCalendarToolName(call.name)) return executeCalendarTool(call, context);
     if (isLocalDataToolName(call.name)) return executeLocalDataTool(call);
+    if (isLifelineToolName(call.name)) return executeLifelineTool(call);
     if (isToolboxManagementToolName(call.name)) return executeToolboxManagementTool(call);
     if (call.name === "发送文件") return executeSendFileTool(call);
     if (call.name === "角色电脑") return executeAgentComputerTool(call, context);
@@ -817,6 +848,7 @@ async function executeInternalTool(call: ToolCall, context?: ToolExecutionContex
 
 function isRealityBridgeToolName(name: string): boolean {
     return name === "查看全部手机数据"
+        || name === WRITE_REAL_CALENDAR_TOOL
         || loadBridgeShortcutActions().some(item => item.enabled && item.name === name)
         || loadBridgeDataItems().some(item => item.name === name);
 }
@@ -890,6 +922,10 @@ async function executeRealityBridgeTool(call: ToolCall, context?: ToolExecutionC
     const capability = getInternalCapability(REALITY_BRIDGE_CAPABILITY_ID);
     if (!capability || !capability.enabled || capability.mode === "off") {
         return { name: call.name, success: false, error: "「现实桥」能力未启用（工具箱 → 内置能力）" };
+    }
+
+    if (call.name === WRITE_REAL_CALENDAR_TOOL) {
+        return executeWriteRealCalendarTool(call.args || {});
     }
 
     const shortcutAction = loadBridgeShortcutActions().find(item => item.enabled && item.name === call.name);
@@ -1039,6 +1075,26 @@ function isHuaweiShellToolName(name: string): boolean {
         || name === "识别屏幕交易"
         || name === "查询行踪足迹"
         || name === "查看健康数据"
+        || name === "写今日窗语"
+        || name === "记录陪伴开始"
+        || name === "记录专注时长"
+        || name === "读取此刻状态"
+        || name === "写TA的日记"
+        || name === "添加守护日历"
+        || name === "锁定应用"
+        || name === "解锁应用"
+        || name === "设置定时提醒"
+        || name === "识别屏幕内容"
+        || name === "写手机日历"
+        || name === "查看本地日程"
+        || name === "设置起床闹钟"
+        || name === "取消起床闹钟"
+        || name === "记一笔账到 Lifeline"
+        || name === "查看 Lifeline 记账"
+        || name === "读取学习进度"
+        || name === "记录学习进度"
+        || name === "记住偏好"
+        || name === "读取我的偏好"
         || loadHuaweiCustomActions().some(action => action.enabled && action.name === name);
 }
 
@@ -1159,7 +1215,6 @@ function huaweiPaymentsTool(args: Record<string, unknown>): ToolResult {
         if (source === "all") return huaweiToolOk("查看记账", "账本暂无记录（需在 系统设置 → 通知使用权 开启，且发生过支付通知）");
         return huaweiToolOk("查看记账", `账本里还没有${source === "wechat" ? "微信" : "支付宝"}的支付记录`);
     }
-    const sourceLabel = (s: string): string => s === "wechat" ? "微信" : s === "alipay" ? "支付宝" : "其他";
     const timeText = (r: HuaweiLedgerRecord): string => r.ts ? huaweiTimeLabel(r.ts) : r.date ? `（${r.date}）` : "";
     const formatGroup = (label: string, items: HuaweiLedgerRecord[]): string => {
         if (items.length === 0) return "";
@@ -1359,12 +1414,23 @@ function huaweiReadFileTool(args: Record<string, unknown>): ToolResult {
     return huaweiToolOk("读取文件", `文件 ${String(result.data.path ?? "")}：\n${truncate(content)}`);
 }
 
+/** 纯本地掌心窗工具：只读写本机 kv（窗语/专注/陪伴/日记/守护日历/定时提醒规则），
+ *  不依赖真机壳连接——掌心窗在没连壳时也能看窗语、陪伴天数与守护日历。 */
+const PEEK_LOCAL_TOOLS = new Set([
+    "写今日窗语",
+    "记录陪伴开始",
+    "记录专注时长",
+    "写TA的日记",
+    "添加守护日历",
+    "设置定时提醒",
+]);
+
 async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
     const capability = getInternalCapability(HUAWEI_SHELL_CAPABILITY_ID);
     if (!capability || !capability.enabled || capability.mode === "off") {
         return { name: call.name, success: false, error: "「华为手机」能力未启用（工具箱 → 内置能力）" };
     }
-    if (!getAndroidShell()) {
+    if (!getAndroidShell() && !PEEK_LOCAL_TOOLS.has(call.name)) {
         return { name: call.name, success: false, error: "华为壳未连接：请通过华为壳 App 打开本站，再在 设置 → 华为壳 检查连接状态与权限" };
     }
     const levelGate = huaweiPermissionGate(call.name);
@@ -1398,6 +1464,26 @@ async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
         case "识别屏幕交易": return huaweiOcrScreenTool();
         case "查询行踪足迹": return huaweiFootprintTool(args);
         case "查看健康数据": return huaweiHealthTool();
+        case "写今日窗语": return huaweiSetWindowLineTool(args);
+        case "记录陪伴开始": return huaweiSetCompanionStartTool(args);
+        case "记录专注时长": return huaweiRecordFocusTool(args);
+        case "读取此刻状态": return huaweiNowStatusTool();
+        case "写TA的日记": return huaweiWriteDiaryTool(args);
+        case "添加守护日历": return huaweiAddGuardEventTool(args);
+        case "锁定应用": return huaweiLockAppTool(args);
+        case "解锁应用": return huaweiUnlockAppTool(args);
+        case "设置定时提醒": return huaweiScheduleReminderTool(args);
+        case "识别屏幕内容": return huaweiReadScreenTool();
+        case "写手机日历": return huaweiWriteCalendarTool(args);
+        case "查看本地日程": return huaweiLocalScheduleTool();
+        case "设置起床闹钟": return huaweiSetWakeAlarmTool(args);
+        case "取消起床闹钟": return huaweiCancelWakeAlarmTool();
+        case "记一笔账到 Lifeline": return huaweiLifelineAddFinanceTool(args);
+        case "查看 Lifeline 记账": return huaweiLifelineFinanceTool(args);
+        case "读取学习进度": return huaweiReadStudyProgressTool();
+        case "记录学习进度": return huaweiRecordStudyTool(args);
+        case "记住偏好": return huaweiRememberPreferenceTool(args);
+        case "读取我的偏好": return huaweiReadPreferencesTool();
         default: return executeHuaweiCustomAction(call.name, args);
     }
 }
@@ -1419,6 +1505,11 @@ const HUAWEI_TOOL_PERMISSION_LEVEL: Record<string, "standard" | "accessibility" 
     "打开网页": "standard",
     "查询行踪足迹": "standard",
     "查看健康数据": "standard",
+    "写今日窗语": "standard",
+    "记录陪伴开始": "standard",
+    "记录专注时长": "standard",
+    "写TA的日记": "standard",
+    "添加守护日历": "standard",
     "查看通知": "accessibility",
     "读取微信消息": "accessibility",
     "点击文字": "accessibility",
@@ -1427,7 +1518,13 @@ const HUAWEI_TOOL_PERMISSION_LEVEL: Record<string, "standard" | "accessibility" 
     "按键操作": "accessibility",
     "专注模式": "accessibility",
     "发送提醒": "accessibility",
+    "读取此刻状态": "accessibility",
+    "锁定应用": "accessibility",
+    "解锁应用": "accessibility",
+    "设置定时提醒": "accessibility",
+    "识别屏幕内容": "accessibility",
     "读取文件": "debugger",
+    "写手机日历": "debugger",
     "识别屏幕交易": "admin",
     "调节亮度": "admin",
 };
@@ -1498,6 +1595,141 @@ function huaweiStartVoiceCallTool(): ToolResult {
     return { name: "发起语音通话", success: true, data: "已向用户的真实手机发起语音通话（响铃+震动中）。请等待用户接听，接听后进入双向语音对话。" };
 }
 
+function huaweiSetWindowLineTool(args: Record<string, unknown>): ToolResult {
+    const text = typeof args.text === "string" ? args.text.trim() : "";
+    if (!text) return huaweiToolFail("写今日窗语", "text 不能为空：请给一句不超过 30 字的温柔短句");
+    setTodayWindowLine(text);
+    return huaweiToolOk("写今日窗语", `已把今日窗语设为：「${text.slice(0, 60)}」。掌心窗今天的今日页就会显示这句话。`);
+}
+
+function huaweiSetCompanionStartTool(args: Record<string, unknown>): ToolResult {
+    let iso = typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date.trim())
+        ? args.date.trim()
+        : formatIsoDate(new Date());
+    setCompanionStartDate(iso);
+    const day = companionDayCount(readCompanionMeta().startDate);
+    return huaweiToolOk("记录陪伴开始", `已记录陪伴从 ${iso} 开始，掌心窗陪伴页现在是第 ${day ?? 1} 天。`);
+}
+
+/** 今日页：把一次专注（分钟数）记进掌心窗当日累计。 */
+function huaweiRecordFocusTool(args: Record<string, unknown>): ToolResult {
+    const minutes = clampToolInteger(args.minutes, 1, 600, 0);
+    if (minutes <= 0) return huaweiToolFail("记录专注时长", "缺少 minutes 参数（这次专注了多少分钟，1-600）");
+    const total = addTodayFocusMinutes(minutes);
+    return huaweiToolOk("记录专注时长", `已把 ${minutes} 分钟专注记进掌心窗，今日累计专注 ${total} 分钟。`);
+}
+
+/** 今日页：像掌心窗「此刻状态」那样，用一段话讲清 TA 现在在干嘛、手机怎样。 */
+function huaweiNowStatusTool(): ToolResult {
+    const parts: string[] = [];
+    const app = invokeShellJson<Record<string, unknown>>(s => (s.getCurrentApp ? s.getCurrentApp() : null));
+    const pkg = app.ok && typeof app.data.currentApp === "string" ? app.data.currentApp : "";
+    parts.push(pkg ? `你现在停在「${huaweiAppLabel(pkg)}」里。` : "这会儿停在桌面上，哪里也没去。");
+    const st = invokeShellJson<Record<string, unknown>>(s => (s.getStatus ? s.getStatus() : null));
+    if (st.ok) {
+        const sys: string[] = [];
+        const battery = Number(st.data.battery);
+        sys.push(st.data.network ? "网络连着" : "网络断着");
+        sys.push(st.data.accessibility ? "无障碍开着" : "无障碍关着");
+        sys.push(st.data.floating ? "悬浮球在窗边" : "悬浮球收起来了");
+        parts.push(sys.join("，") + "。");
+        if (Number.isFinite(battery) && battery < 20) parts.push("电量有点低，记得找个充电器。");
+    }
+    return huaweiToolOk("读取此刻状态", parts.join(" "));
+}
+
+/** 陪伴页：替 TA 把今天看见的你写一篇日记进掌心窗陪伴页（写进角色日记库，掌心窗「TA 的日记」会列出）。 */
+function huaweiWriteDiaryTool(args: Record<string, unknown>): ToolResult {
+    const content = requiredStringArg(args, "content");
+    if (!content) return huaweiToolFail("写TA的日记", "缺少 content 参数（今天想替 TA 记下的一段话）");
+    const companion = loadCharacters()[0];
+    if (!companion) return huaweiToolFail("写TA的日记", "还没有陪伴角色，先在角色页建一个 TA");
+    const entry = createDiaryEntry({
+        characterId: companion.id,
+        characterName: companion.name,
+        title: typeof args.title === "string" && args.title.trim() ? args.title.trim() : content.trim().slice(0, 16),
+        body: content.trim(),
+        blocks: [{ type: "paragraph", text: content.trim() }],
+        trigger: "timer",
+        tags: ["掌心窗"],
+    });
+    return huaweiToolOk("写TA的日记", `已替 ${companion.name} 在掌心窗写下今天的日记（${entry.dateLabel}）：\n${entry.body}`);
+}
+
+/** 守护页：在守护日历上给某个日子画一个有名字的事件（圆点 + 标题）。 */
+function huaweiAddGuardEventTool(args: Record<string, unknown>): ToolResult {
+    const date = typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date.trim())
+        ? args.date.trim()
+        : formatIsoDate(new Date());
+    const title = requiredStringArg(args, "title");
+    if (!title) return huaweiToolFail("添加守护日历", "缺少 title 参数（这个日子要提醒的事，如「考试」「复诊」）");
+    addPeekGuardEvent(date, title);
+    return huaweiToolOk("添加守护日历", `已在掌心窗守护日历 ${date} 画上「${title}」，到那天会有圆点提醒。`);
+}
+
+/** 守护页应用门禁：把某个包名加进锁屏门禁列表并同步到壳。 */
+function huaweiLockAppTool(args: Record<string, unknown>): ToolResult {
+    const pkg = requiredStringArg(args, "packageName");
+    if (!pkg) return huaweiToolFail("锁定应用", "缺少 packageName 参数（要守住的应用包名，如微信 com.tencent.mm）");
+    const list = readLockedPackagesFromShell();
+    if (!list.includes(pkg)) list.push(pkg);
+    const r = pushLockedPackagesToShell(list);
+    return r.ok
+        ? huaweiToolOk("锁定应用", `已把 ${huaweiAppLabel(pkg)}（${pkg}）加进门禁，掌心窗守护页会守住它。`)
+        : huaweiToolFail("锁定应用", r.error || "门禁同步失败");
+}
+
+/** 守护页应用门禁：把某个包名从锁屏门禁列表移除并同步到壳。 */
+function huaweiUnlockAppTool(args: Record<string, unknown>): ToolResult {
+    const pkg = requiredStringArg(args, "packageName");
+    if (!pkg) return huaweiToolFail("解锁应用", "缺少 packageName 参数（要放开的应用包名）");
+    const list = readLockedPackagesFromShell().filter(item => item !== pkg);
+    const r = pushLockedPackagesToShell(list);
+    return r.ok
+        ? huaweiToolOk("解锁应用", `已放开 ${huaweiAppLabel(pkg)}（${pkg}），不再守门。`)
+        : huaweiToolFail("解锁应用", r.error || "门禁同步失败");
+}
+
+/** 守护页主动提醒：新建一条每天（或指定星期）HH:MM 弹本地通知的定时规则，出现在掌心窗「主动提醒」里。 */
+function huaweiScheduleReminderTool(args: Record<string, unknown>): ToolResult {
+    const time = typeof args.time === "string" && /^\d{2}:\d{2}$/.test(args.time.trim()) ? args.time.trim() : "";
+    if (!time) return huaweiToolFail("设置定时提醒", "缺少 time 参数，格式 HH:MM（如 08:30）");
+    const title = requiredStringArg(args, "title");
+    const content = requiredStringArg(args, "content");
+    if (!title || !content) return huaweiToolFail("设置定时提醒", "缺少 title 或 content 参数（提醒标题与正文）");
+    let days: string[] | undefined;
+    if (Array.isArray(args.days) && args.days.length > 0) {
+        const valid = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+        days = (args.days as unknown[]).map(String).filter(d => valid.includes(d));
+        if (days.length === 0) days = undefined;
+    }
+    const rules = loadHuaweiTriggerRules();
+    const rule: HuaweiTriggerRule = {
+        id: `rule_${Date.now().toString(36)}_${rules.length}`,
+        name: title.slice(0, 20),
+        enabled: true,
+        trigger: "time",
+        time,
+        days,
+        action: "send_notification",
+        title,
+        content,
+    };
+    saveHuaweiTriggerRules([...rules, rule]);
+    return huaweiToolOk("设置定时提醒", `已设好每天 ${time} 的提醒「${title}」，到点会在真实手机弹通知，掌心窗守护页的「主动提醒」也会列出它。`);
+}
+
+/** 现实桥 OCR：通过无障碍服务读当前屏幕的界面文字（比支付识别更通用）。 */
+function huaweiReadScreenTool(): ToolResult {
+    const shell = getAndroidShell();
+    if (!shell || typeof shell.dumpScreen !== "function") return huaweiToolFail("识别屏幕内容", "华为壳未提供读屏能力（需开启无障碍服务）");
+    let raw: string;
+    try { raw = shell.dumpScreen() || ""; } catch (err) { return huaweiToolFail("识别屏幕内容", err instanceof Error ? err.message : String(err)); }
+    const text = raw.trim();
+    if (!text) return huaweiToolOk("识别屏幕内容", "当前屏幕没有可读文字（无障碍服务可能未开启，或屏幕是图片/密码界面）。");
+    return huaweiToolOk("识别屏幕内容", `当前屏幕读到的内容：\n${truncate(text)}`);
+}
+
 function huaweiOcrScreenTool(): ToolResult {
     const shell = getAndroidShell();
     if (!shell || typeof shell.ocrPaymentsCapture !== "function") return huaweiToolFail("识别屏幕交易", "华为壳未提供截屏识别能力");
@@ -1534,6 +1766,349 @@ function huaweiHealthTool(): ToolResult {
         `最近睡眠：${snapshot.sleepMinutes != null ? `${Math.floor(snapshot.sleepMinutes / 60)}小时${snapshot.sleepMinutes % 60}分钟` : "—"}`,
     ];
     return huaweiToolOk("查看健康数据", lines.join("\n"));
+}
+
+/* ---------- 华为现实桥 × Lifeline 联动：日历 / 起床 / 记账 / 学习 / 记忆 ---------- */
+
+/** shell 单引号转义：把字符串包进单引号，内部单引号闭合转义。 */
+function shellQuote(arg: string): string {
+    return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/** 校验 YYYY-MM-DD / HH:mm。 */
+function isValidDateKey(s: string): boolean { return /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function isValidTime(s: string): boolean { return /^\d{2}:\d{2}$/.test(s); }
+
+/** 把 日期+时间 按本地时区换算成毫秒时间戳。 */
+function localTimestampMs(date: string, time: string): number {
+    const [y, mo, d] = date.split("-").map(Number);
+    const [h, mi] = time.split(":").map(Number);
+    return new Date(y, mo - 1, d, h, mi, 0, 0).getTime();
+}
+
+/** 写手机日历：壳已连接发 INSERT intent 让华为日历预填；未连接降级存本地日程。 */
+function huaweiWriteCalendarTool(args: Record<string, unknown>): ToolResult {
+    const title = cleanToolString(args.title ?? args.标题 ?? args.name, 120);
+    const date = cleanToolString(args.date ?? args.日期 ?? args.day, 10);
+    const startTime = cleanToolString(args.startTime ?? args.start_time ?? args.start, 5);
+    let endTime = cleanToolString(args.endTime ?? args.end_time ?? args.end, 5);
+    const note = cleanToolString(args.note ?? args.备注 ?? args.description, 300);
+    if (!title) return huaweiToolFail("写手机日历", "缺少 title（日程标题）参数");
+    if (!isValidDateKey(date)) return huaweiToolFail("写手机日历", "date 需要是 YYYY-MM-DD，例如 2026-10-10");
+    if (!isValidTime(startTime)) return huaweiToolFail("写手机日历", "startTime 需要是 HH:mm，例如 09:00");
+    if (!isValidTime(endTime)) {
+        const [h, m] = startTime.split(":").map(Number);
+        const end = new Date(0, 0, 0, h, m, 0, 0);
+        end.setHours(end.getHours() + 1);
+        endTime = `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
+    }
+    const beginMs = localTimestampMs(date, startTime);
+    const endMs = localTimestampMs(date, endTime);
+
+    const shell = getAndroidShell();
+    if (!shell || typeof shell.runShellCommand !== "function") {
+        appendLocalScheduleEvent({ title, date, startTime, endTime, note });
+        return huaweiToolOk("写手机日历", `壳未连接，已存为本地日程（${date} ${startTime}-${endTime} ${title}），连接后可补推到华为日历。`);
+    }
+    const cmd = [
+        "am start -a android.intent.action.INSERT -t vnd.android.cursor.item/event",
+        `--es title ${shellQuote(title)}`,
+        note ? `--es description ${shellQuote(note)}` : "",
+        `--el beginTime ${beginMs}`,
+        `--el endTime ${endMs}`,
+    ].filter(Boolean).join(" ");
+    try {
+        shell.runShellCommand(cmd);
+    } catch (err) {
+        appendLocalScheduleEvent({ title, date, startTime, endTime, note });
+        return huaweiToolFail("写手机日历", `下发日历 intent 失败，已改为本地暂存：${err instanceof Error ? err.message : String(err)}`);
+    }
+    return huaweiToolOk("写手机日历", `已在华为日历新建事件页预填「${title}」（${date} ${startTime}-${endTime}），确认即写入。`);
+}
+
+/** 查看本地日程（壳未连接时降级暂存的日程）。 */
+function huaweiLocalScheduleTool(): ToolResult {
+    const events = readLocalScheduleEvents();
+    if (events.length === 0) return huaweiToolOk("查看本地日程", "本地还没有暂存的日程。壳已连接时日程会直接推到华为日历。");
+    const lines = events.slice(-20).reverse().map((e, i) =>
+        `${i + 1}. ${e.date} ${e.startTime}-${e.endTime} ${e.title}${e.note ? `（${e.note}）` : ""}`);
+    return huaweiToolOk("查看本地日程", `本地暂存日程 ${events.length} 条：\n${lines.join("\n")}`);
+}
+
+/** 设置起床闹钟（写 kv，调度器到点响铃+通知）。 */
+function huaweiSetWakeAlarmTool(args: Record<string, unknown>): ToolResult {
+    const time = cleanToolString(args.time ?? args.时间, 5);
+    if (!isValidTime(time)) return huaweiToolFail("设置起床闹钟", "time 需要是 HH:mm，例如 07:00");
+    const message = cleanToolString(args.message ?? args.留言 ?? args.备注, 120);
+    saveWakeAlarm({ enabled: true, time, message, lastFiredDate: "" });
+    return huaweiToolOk("设置起床闹钟", `已设置每天 ${time} 响铃喊你起床学习${message ? `（留言：${message}）` : ""}。`);
+}
+
+/** 取消起床闹钟。 */
+function huaweiCancelWakeAlarmTool(): ToolResult {
+    const cfg = loadWakeAlarm();
+    saveWakeAlarm({ ...cfg, enabled: false });
+    return huaweiToolOk("取消起床闹钟", "已取消起床闹钟。");
+}
+
+/** 手动记一笔账到 Lifeline。 */
+function huaweiLifelineAddFinanceTool(args: Record<string, unknown>): ToolResult {
+    const amount = Number(args.amount ?? args.金额);
+    if (!Number.isFinite(amount) || amount === 0) return huaweiToolFail("记一笔账到 Lifeline", "缺少或无效 amount（金额，数字）");
+    const category = cleanToolString(args.category ?? args.分类, 20) || "其他";
+    const note = cleanToolString(args.note ?? args.备注, 80);
+    const sourceRaw = cleanToolString(args.source ?? args.来源, 20);
+    const method: "wechat" | "alipay" | "cash" = sourceRaw.includes("微信") || sourceRaw === "wechat"
+        ? "wechat"
+        : sourceRaw.includes("支付宝") || sourceRaw === "alipay"
+            ? "alipay"
+            : "cash";
+    const rec = appendLifelineFinanceRecord({ amount, category, note, method, type: "expense" });
+    if (!rec) return huaweiToolFail("记一笔账到 Lifeline", "写入 Lifeline 失败（Lifeline 数据暂不可用）。");
+    return huaweiToolOk("记一笔账到 Lifeline", `已记一笔支出：¥${rec.amount}（${rec.category}${note ? ` · ${note}` : ""}）。`);
+}
+
+/** 查看 Lifeline 最近记账 + 今日/本月合计。 */
+function huaweiLifelineFinanceTool(args: Record<string, unknown>): ToolResult {
+    const limit = clampToolInteger(args.limit, 1, 100, 15);
+    const view = readLifelineFinance(limit);
+    if (view.records.length === 0) return huaweiToolOk("查看 Lifeline 记账", "Lifeline 还没有财务记录。");
+    const lines = view.records.map((r, i) =>
+        `${i + 1}. ${r.date} ${r.type === "income" ? "收" : "支"} ¥${r.amount}（${r.category}${r.note ? ` · ${r.note}` : ""}）`);
+    return huaweiToolOk("查看 Lifeline 记账", `${lines.join("\n")}\n\n今日支出合计 ¥${view.todayTotal}，本月支出合计 ¥${view.monthTotal}。`);
+}
+
+/** 读取 Lifeline 学习进度（今日任务/错题本/近 7 天时长）。 */
+function huaweiReadStudyProgressTool(): ToolResult {
+    return huaweiToolOk("读取学习进度", truncate(readLifelineStudyProgress()));
+}
+
+/** 记录一条学习进度到 Lifeline。 */
+function huaweiRecordStudyTool(args: Record<string, unknown>): ToolResult {
+    const subject = cleanToolString(args.subject ?? args.科目, 20);
+    const content = cleanToolString(args.content ?? args.内容, 80);
+    const minutes = clampToolInteger(args.minutes ?? args.duration ?? args.时长分钟, 0, 1440, 0);
+    if (!content) return huaweiToolFail("记录学习进度", "缺少 content（学习内容）参数");
+    const ok = appendLifelineStudyRecord({ subject, content, minutes });
+    if (!ok) return huaweiToolFail("记录学习进度", "写入 Lifeline 失败（Lifeline 数据暂不可用）。");
+    return huaweiToolOk("记录学习进度", `已记录学习：${subject ? `[${subject}]` : ""}${content}${minutes ? `（${minutes} 分钟）` : ""}。`);
+}
+
+/** char 长期记忆：记一条偏好/事实。 */
+function huaweiRememberPreferenceTool(args: Record<string, unknown>): ToolResult {
+    const category = cleanToolString(args.category ?? args.类别, 20);
+    const text = cleanToolString(args.text ?? args.内容, 300);
+    if (!text) return huaweiToolFail("记住偏好", "缺少 text（要记住的内容）参数");
+    const entry = rememberCharMemory(category || "其他", text);
+    if (!entry) return huaweiToolFail("记住偏好", "记忆为空，未保存。");
+    return huaweiToolOk("记住偏好", `已记住（${entry.category}）：${entry.text}`);
+}
+
+/** char 长期记忆：按类别分组读回。 */
+function huaweiReadPreferencesTool(): ToolResult {
+    const all = readCharMemory();
+    if (all.length === 0) return huaweiToolOk("读取我的偏好", "还没有记住任何偏好或事实，先让我「记住偏好」。");
+    const byCategory = new Map<string, string[]>();
+    for (const e of all) {
+        const list = byCategory.get(e.category) || [];
+        list.push(e.text);
+        byCategory.set(e.category, list);
+    }
+    const lines: string[] = [];
+    for (const [cat, items] of byCategory) {
+        lines.push(`【${cat}】`);
+        items.forEach((t, i) => lines.push(`  ${i + 1}. ${t}`));
+    }
+    return huaweiToolOk("读取我的偏好", truncate(lines.join("\n")));
+}
+
+/* ---------- Lifeline 每日记录：财务 / 学习计划 / 饮食体重 / 错题本 ---------- */
+
+const LIFELINE_TOOL_NAMES = new Set([
+    "查看今日消费",
+    "查看消费记录",
+    "记一笔账",
+    "查看学习计划",
+    "记录学习任务",
+    "查看今日饮食",
+    "记录饮食",
+    "记录体重",
+    "查看体重",
+    "查看错题本",
+    "录入错题",
+]);
+
+function isLifelineToolName(name: string): boolean {
+    return LIFELINE_TOOL_NAMES.has(name);
+}
+
+function lifelineOk(name: string, data: string): ToolResult {
+    return { name, success: true, data, userNotice: `${name}完成` };
+}
+
+function lifelineFail(name: string, error: string): ToolResult {
+    return { name, success: false, error };
+}
+
+function lifelinePeriodLabel(period: string): string {
+    return period === "morning" ? "上午" : period === "evening" ? "晚上" : "下午";
+}
+
+function executeLifelineTool(call: ToolCall): ToolResult {
+    const capability = getInternalCapability(LIFELINE_CAPABILITY_ID);
+    if (!capability || !capability.enabled || capability.mode === "off") {
+        return lifelineFail(call.name, "「Lifeline 每日记录」能力未启用（工具箱 → 内置能力）");
+    }
+    const args = call.args || {};
+    switch (call.name) {
+        case "查看今日消费": {
+            const view = readLifelineFinanceSummary({ days: 1 });
+            if (view.records.length === 0) return lifelineOk(call.name, "今天还没有记支出。");
+            const lines = view.records.map((r, i) => `${i + 1}. ¥${r.amount}（${r.category}${r.note ? ` · ${r.note}` : ""}）`);
+            return lifelineOk(call.name, `${lines.join("\n")}\n\n今日支出合计 ¥${view.todayTotal}。`);
+        }
+        case "查看消费记录": {
+            const days = clampToolInteger(args.days, 1, 120, 7);
+            const category = typeof args.category === "string" ? args.category.trim() : "";
+            const view = readLifelineFinanceSummary({ days, category: category || undefined });
+            if (view.records.length === 0) {
+                return lifelineOk(call.name, `最近 ${days} 天${category ? `（${category}）` : ""}还没有支出记录。`);
+            }
+            const lines = view.records.slice(0, 30).map(r =>
+                `${r.date} ¥${r.amount}（${r.category}${r.note ? ` · ${r.note}` : ""}）`);
+            return lifelineOk(call.name, truncate(`${lines.join("\n")}\n\n最近 ${days} 天支出合计 ¥${view.windowTotal}，今日 ¥${view.todayTotal}。`));
+        }
+        case "记一笔账": {
+            const amount = Number(args.amount);
+            if (!Number.isFinite(amount) || amount <= 0) {
+                return lifelineFail(call.name, "缺少有效的 amount（金额，元，必须大于 0）。");
+            }
+            const rec = appendLifelineStoreFinanceRecord({
+                amount,
+                category: typeof args.category === "string" ? args.category : undefined,
+                note: typeof args.note === "string" ? args.note : undefined,
+                method: args.method === "alipay" || args.method === "cash" ? args.method : "wechat",
+                type: args.type === "income" ? "income" : "expense",
+                date: typeof args.date === "string" ? args.date : undefined,
+            });
+            if (!rec) return lifelineFail(call.name, "写入 Lifeline 失败（Lifeline 数据暂不可用）。");
+            return lifelineOk(call.name, `已记一笔${rec.type === "income" ? "收入" : "支出"}：¥${rec.amount}（${rec.category}${rec.note ? ` · ${rec.note}` : ""}，${rec.date}）。`);
+        }
+        case "查看学习计划": {
+            const date = typeof args.date === "string" ? args.date : undefined;
+            const days = clampToolInteger(args.days, 1, 14, 2);
+            const plan = readLifelineTaskPlan({ date, days });
+            const lines: string[] = [];
+            for (const day of plan) {
+                lines.push(`【${day.date}】${day.done}/${day.total} 完成`);
+                if (day.items.length === 0) lines.push("  （无任务）");
+                for (const it of day.items) {
+                    const mark = it.done ? "✓" : "○";
+                    const subj = it.subject ? `[${it.subject}]` : "";
+                    const dur = it.minutes ? ` ${it.minutes}分钟` : "";
+                    const idTag = it.id ? ` #${it.id}` : "";
+                    lines.push(`  ${mark} ${lifelinePeriodLabel(it.period)} ${subj}${it.name}${dur}${idTag}`);
+                }
+            }
+            return lifelineOk(call.name, truncate(lines.join("\n")));
+        }
+        case "记录学习任务": {
+            const taskId = typeof args.taskId === "string" && args.taskId.trim() ? args.taskId.trim() : "";
+            const keyword = typeof args.keyword === "string" && args.keyword.trim() ? args.keyword.trim() : "";
+            if (taskId || keyword) {
+                const t = completeLifelineTask({ taskId: taskId || undefined, keyword: keyword || undefined });
+                if (!t) return lifelineFail(call.name, "没找到要标记完成的任务（对照「查看学习计划」返回的 id 或任务名关键词）。");
+                return lifelineOk(call.name, `已把任务标记完成：${describeLifelineTask(t).name}。`);
+            }
+            const name = cleanToolString(args.name ?? args.content, 60);
+            if (!name) return lifelineFail(call.name, "缺少 name（任务内容）；要标记已有任务完成请传 taskId 或 keyword。");
+            const t = addLifelineTask({
+                name,
+                date: typeof args.date === "string" ? args.date : undefined,
+                period: typeof args.period === "string" ? args.period : undefined,
+                subject: typeof args.subject === "string" ? args.subject : undefined,
+                duration: clampToolInteger(args.duration, 0, 1440, 0),
+                completed: args.completed === true,
+            });
+            if (!t) return lifelineFail(call.name, "写入 Lifeline 失败（Lifeline 数据暂不可用）。");
+            const d = describeLifelineTask(t);
+            return lifelineOk(call.name, `已新增任务（${d.done ? "已完成" : "待完成"}）：${d.name}。`);
+        }
+        case "查看今日饮食": {
+            const date = typeof args.date === "string" ? args.date : undefined;
+            const list = readLifelineDiet(date);
+            if (list.length === 0) return lifelineOk(call.name, `${date || lifelineTodayKey()} 还没有记录饮食。`);
+            const lines = list.map(r => `· ${r.meal}｜${r.food}${r.price > 0 ? ` ¥${r.price}` : ""}`);
+            return lifelineOk(call.name, lines.join("\n"));
+        }
+        case "记录饮食": {
+            const food = cleanToolString(args.food ?? args.吃了什么, 60);
+            if (!food) return lifelineFail(call.name, "缺少 food（吃了什么）。");
+            const rec = appendLifelineDietRecord({
+                food,
+                meal: typeof args.meal === "string" ? args.meal : undefined,
+                price: typeof args.price === "number" ? args.price : undefined,
+                date: typeof args.date === "string" ? args.date : undefined,
+            });
+            if (!rec) return lifelineFail(call.name, "写入 Lifeline 失败（Lifeline 数据暂不可用）。");
+            return lifelineOk(call.name, `已记下${rec.meal}：${rec.food}${rec.price > 0 ? `（¥${rec.price}，已同步一笔餐饮支出）` : ""}。`);
+        }
+        case "记录体重": {
+            const weight = Number(args.weight);
+            if (!Number.isFinite(weight) || weight <= 0) return lifelineFail(call.name, "缺少有效的 weight（体重，斤）。");
+            const row = appendLifelineWeight({
+                weight,
+                slot: args.slot === "night" ? "night" : "morning",
+                date: typeof args.date === "string" ? args.date : undefined,
+                target: typeof args.target === "number" ? args.target : undefined,
+            });
+            if (!row) return lifelineFail(call.name, "写入 Lifeline 失败（Lifeline 数据暂不可用）。");
+            const parts: string[] = [];
+            if (row.morning != null) parts.push(`早上 ${row.morning} 斤`);
+            if (row.night != null) parts.push(`晚上 ${row.night} 斤`);
+            return lifelineOk(call.name, `已记录 ${row.date} 体重：${parts.join("，") || row.weight}。`);
+        }
+        case "查看体重": {
+            const summary = readLifelineBodySummary();
+            if (!summary.latest) return lifelineOk(call.name, "还没有记录过体重，先「记录体重」开个头吧。");
+            const lines: string[] = [];
+            lines.push(`最新记录（${summary.latest.date}）：${summary.latest.morning != null ? `早上 ${summary.latest.morning} 斤` : ""}${summary.latest.morning != null && summary.latest.night != null ? "，" : ""}${summary.latest.night != null ? `晚上 ${summary.latest.night} 斤` : ""}`.trim().replace(/^，|，$/g, ""));
+            lines.push(`目标体重：${summary.target != null ? `${summary.target} 斤` : "未设置"}`);
+            lines.push(`累计记录 ${summary.count} 天。`);
+            return lifelineOk(call.name, lines.join("\n"));
+        }
+        case "查看错题本": {
+            const list = readLifelineErrors({
+                subject: typeof args.subject === "string" ? args.subject : undefined,
+                status: typeof args.status === "string" ? args.status : undefined,
+            });
+            if (list.length === 0) return lifelineOk(call.name, "错题本还没有符合条件的题目。");
+            const lines = list.slice(0, 20).map(it => {
+                const opt = it.options.length ? ` 选项：${it.options.join(" / ")}` : "";
+                return `【${it.subjectName}·${it.status}】${it.q.slice(0, 80)}${opt}\n    错：${it.wrong || "-"} ｜ 对：${it.right || "-"}`;
+            });
+            return lifelineOk(call.name, truncate(`共 ${list.length} 道：\n${lines.join("\n")}`));
+        }
+        case "录入错题": {
+            const q = cleanToolString(args.q ?? args.题干, 500);
+            if (!q) return lifelineFail(call.name, "缺少 q（题干）。");
+            const it = appendLifelineError({
+                subject: typeof args.subject === "string" ? args.subject : "",
+                q,
+                options: Array.isArray(args.options) ? args.options.map(o => String(o)) : undefined,
+                wrong: typeof args.wrong === "string" ? args.wrong : undefined,
+                right: typeof args.right === "string" ? args.right : undefined,
+                analysis: typeof args.analysis === "string" ? args.analysis : undefined,
+                type: typeof args.type === "string" ? args.type : undefined,
+                source: typeof args.source === "string" ? args.source : undefined,
+                date: typeof args.date === "string" ? args.date : undefined,
+            });
+            if (!it) return lifelineFail(call.name, "录入失败：subject 必须是 finance/math/english/politics 之一，且 q 不能为空。");
+            return lifelineOk(call.name, `已录入错题（未掌握）：${q.slice(0, 40)}${it.right ? `，正解 ${it.right}` : ""}。`);
+        }
+        default:
+            return lifelineFail(call.name, "未知的 Lifeline 动作");
+    }
 }
 
 /** 用户登记的自定义快捷动作：按类型走 invokeShellJson 下发原生执行。

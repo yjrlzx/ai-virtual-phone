@@ -21,7 +21,6 @@ import { CloudServicesPage } from "./settings/cloud-services-setup";
 import { ToolboxSettings } from "./settings/toolbox-settings";
 import { ModerationCenter } from "./settings/moderation-center";
 import { AgentComputerSettings } from "./settings/agent-computer-settings";
-import { HuaweiShellSettings } from "./huawei-shell-settings";
 import { fetchIsAdmin } from "@/lib/moderation-client";
 import { PageShell } from "./ui/page-shell";
 import { CardGrid, FeaturedCard, type CardItem, type FeaturedCardItem } from "./ui/card-grid";
@@ -57,7 +56,6 @@ type SubPage =
     | "weixin"
     | "toolbox"
     | "agentComputer"
-    | "huaweiShell"
     | "moderation"
     | "about";
 
@@ -324,8 +322,6 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                 return <ToolboxSettings />;
             case "agentComputer":
                 return <AgentComputerSettings onNotice={onNotice} />;
-            case "huaweiShell":
-                return <HuaweiShellSettings onNotice={onNotice} />;
             case "moderation":
                 return <ModerationCenter onNotice={onNotice} />;
             case "identity":

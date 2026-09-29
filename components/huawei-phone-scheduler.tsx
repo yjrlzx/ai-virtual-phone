@@ -25,6 +25,14 @@ import {
     type HuaweiHealthSnapshot,
     type HuaweiOcrParsed,
 } from "@/lib/huawei-shell/storage";
+import { ALIPAY_PACKAGE, WECHAT_PACKAGE } from "@/lib/huawei-shell/types";
+import {
+    appendLifelineFinanceRecord,
+    appendLifelineStudyRecord,
+    loadWakeAlarm,
+    rememberCharMemory,
+    saveWakeAlarm,
+} from "@/lib/lifeline-bridge";
 
 /** 调度器 tick 粒度（秒级业务阈值仍由各设置项的扫描间隔控制）。 */
 const TICK_MS = 10000;
@@ -123,6 +131,27 @@ export function HuaweiPhoneScheduler() {
             } catch { parsed = null; }
             if (parsed) {
                 const result = addHuaweiLedgerRecordFromOcr(parsed);
+                // 现实桥 → Lifeline 财务 → char 记忆 闭环：识别到真实消费就同步进 Lifeline 记账，
+                // 并往 char 长期记忆里塞一条轻量消费记录。
+                if (result.ok && result.added && typeof parsed.amount === "number" && parsed.amount > 0) {
+                    const method: "wechat" | "alipay" | "cash" = parsed.pkg === WECHAT_PACKAGE
+                        ? "wechat"
+                        : parsed.pkg === ALIPAY_PACKAGE
+                            ? "alipay"
+                            : "cash";
+                    appendLifelineFinanceRecord({
+                        amount: parsed.amount,
+                        category: "其他",
+                        note: parsed.merchant ? `屏幕识别·${parsed.merchant}` : "屏幕识别消费",
+                        method,
+                        type: "expense",
+                    });
+                    const srcLabel = method === "wechat" ? "微信" : method === "alipay" ? "支付宝" : "现金";
+                    const dk = new Date();
+                    const pad = (n: number) => String(n).padStart(2, "0");
+                    const dateStr = `${dk.getMonth() + 1}月${dk.getDate()}日`;
+                    rememberCharMemory("消费", `${dateStr}${srcLabel}支出 ¥${parsed.amount}${parsed.merchant ? `（${parsed.merchant}）` : ""}`);
+                }
                 const amountStr = parsed.amount != null ? `${parsed.amount}元` : "";
                 const who = parsed.merchant || "交易";
                 const summary = parsed.ok
@@ -158,6 +187,9 @@ export function HuaweiPhoneScheduler() {
     // 周期调度
     useEffect(() => {
         const tick = () => {
+            // 起床闹钟：不依赖壳是否连接都检查（壳不在则退化为网页通知）
+            checkWakeAlarm();
+
             const settings = loadHuaweiShellSettings();
             if (!getAndroidShell()) return;
             const now = Date.now();
@@ -355,6 +387,35 @@ export function HuaweiPhoneScheduler() {
         }
 
         if (changed) saveHuaweiShellSettings(settings);
+    };
+
+    // ⑤ 起床闹钟：到 HH:mm 响铃+通知喊起床学习，同一天只触发一次
+    const checkWakeAlarm = () => {
+        const cfg = loadWakeAlarm();
+        if (!cfg.enabled) return;
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const hhmm = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        if (hhmm !== cfg.time || cfg.lastFiredDate === today) return;
+
+        cfg.lastFiredDate = today;
+        saveWakeAlarm(cfg);
+
+        const title = "起床啦，该学习了";
+        const content = cfg.message || "起床啦，新的一天，开始学习吧。";
+        const shell = getAndroidShell();
+        if (shell) {
+            try { if (typeof shell.ring === "function") shell.ring(180); } catch { /* 响铃失败不阻断 */ }
+            try { if (typeof shell.sendNotification === "function") shell.sendNotification(title, content, ""); } catch { /* 推送失败不阻断 */ }
+        } else if (typeof Notification !== "undefined") {
+            // 壳未连接：退化到网页通知
+            try {
+                if (Notification.permission === "granted") new Notification(title, { body: content });
+            } catch { /* 网页通知失败不阻断 */ }
+        }
+        // 往 Lifeline 写一条起床记录
+        appendLifelineStudyRecord({ subject: "起床", content: `${cfg.time} 按时起床学习`, minutes: 0 });
     };
 
     return null;

@@ -576,7 +576,7 @@ export function saveHuaweiCustomActions(actions: HuaweiCustomAction[]): void {
 /* ---------- 自动联动规则（通知 / 定时触发动作） ---------- */
 
 const HUAWEI_TRIGGER_TYPES = new Set(["notification", "time"]);
-const HUAWEI_RULE_ACTIONS = new Set(["send_notification", "open_app"]);
+const HUAWEI_RULE_ACTIONS = new Set(["send_notification", "open_app", "custom_action"]);
 const HUAWEI_WEEKDAYS = new Set(["sun", "mon", "tue", "wed", "thu", "fri", "sat"]);
 
 function normalizeTriggerRules(raw: unknown): HuaweiTriggerRule[] {
@@ -606,6 +606,7 @@ function normalizeTriggerRules(raw: unknown): HuaweiTriggerRule[] {
             content: typeof r.content === "string" ? r.content.trim().slice(0, 500) : undefined,
             openApp: typeof r.openApp === "string" ? r.openApp.trim().slice(0, 200) : undefined,
             actionPackageName: typeof r.actionPackageName === "string" ? r.actionPackageName.trim().slice(0, 200) : undefined,
+            actionName: typeof r.actionName === "string" ? r.actionName.trim().slice(0, 100) : undefined,
             lastTriggeredAt: Number(r.lastTriggeredAt) || undefined,
             lastSeenTs: Number(r.lastSeenTs) || undefined,
             triggerCount: Number(r.triggerCount) || undefined,

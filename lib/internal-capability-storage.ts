@@ -4,6 +4,7 @@ import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { loadBridgeDataItems, loadBridgeShortcutActions, parseBridgeActionParameterSchema } from "./reality-bridge/storage";
 import { loadHuaweiCustomActions } from "./huawei-shell/storage";
 import type { HuaweiCustomAction } from "./huawei-shell/types";
+import { WRITE_REAL_CALENDAR_TOOL_DEFINITION } from "./char-tools-automation";
 
 const INTERNAL_CAPABILITIES_KEY = "ai_phone_internal_capabilities_v1";
 registerKvMigration(INTERNAL_CAPABILITIES_KEY);
@@ -19,6 +20,7 @@ export const TOOLBOX_MANAGEMENT_CAPABILITY_ID = "toolbox_management";
 export const TIMED_WAKE_CAPABILITY_ID = "timed_wake";
 export const REALITY_BRIDGE_CAPABILITY_ID = "reality_bridge_send";
 export const HUAWEI_SHELL_CAPABILITY_ID = "huawei_shell_control";
+export const LIFELINE_CAPABILITY_ID = "lifeline";
 
 export type InternalToolDefinition = {
     name: string;
@@ -770,6 +772,219 @@ const LOCAL_DATA_LIBRARY_USAGE_GUIDE = [
     '[执行动作:读取资料记录({"path":"/chat/indexeddb/AiPhoneChatDB/messages","key":"msg_xxx","fields":["id","content"]})]',
 ].join("\n");
 
+/* ---------- Lifeline 每日记录套装：财务 / 学习计划 / 饮食体重 / 错题本 ---------- */
+
+const LIFELINE_EMPTY_PARAMETER_SCHEMA = JSON.stringify({ type: "object", properties: {} });
+
+const LIFELINE_FINANCE_LIST_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        days: { type: "number", description: "查最近 N 天的支出，默认 7 天，1-120" },
+        category: { type: "string", description: "只看某个分类（餐饮/交通/购物/学习/娱乐/医疗/人情/其他），不填=全部" },
+    },
+});
+
+const LIFELINE_ADD_FINANCE_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        amount: { type: "number", description: "金额（元），必须大于 0，必填" },
+        category: { type: "string", description: "分类：餐饮/交通/购物/学习/娱乐/医疗/人情/其他（支出）；不填按其他" },
+        note: { type: "string", description: "备注/商户名，如 食堂牛肉面" },
+        method: { type: "string", enum: ["wechat", "alipay", "cash"], description: "支付方式：wechat 微信 / alipay 支付宝 / cash 现金，默认 wechat" },
+        type: { type: "string", enum: ["expense", "income"], description: "expense 支出（默认）/ income 收入" },
+        date: { type: "string", description: "日期 YYYY-MM-DD，不填=今天" },
+    },
+    required: ["amount"],
+});
+
+const LIFELINE_PLAN_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        date: { type: "string", description: "只看某天（YYYY-MM-DD）；传了就忽略 days" },
+        days: { type: "number", description: "看最近几天的计划，默认 2（今天+明天），1-14" },
+    },
+});
+
+const LIFELINE_TASK_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        name: { type: "string", description: "任务内容（新增时必填），如 数学定积分 16 题" },
+        date: { type: "string", description: "任务日期 YYYY-MM-DD，不填=今天" },
+        period: { type: "string", enum: ["morning", "afternoon", "evening"], description: "时段：morning 上午 / afternoon 下午 / evening 晚上，默认下午" },
+        subject: { type: "string", description: "科目：数学/金融学/逻辑/英语/政治/生活 等" },
+        duration: { type: "number", description: "预计时长（分钟）" },
+        taskId: { type: "string", description: "要标记完成的任务 id（来自查看学习计划返回）；传了它就是「标记完成」，不再新增" },
+        keyword: { type: "string", description: "不传 taskId 时，按任务名关键词标记今天第一个未完成任务为完成" },
+    },
+});
+
+const LIFELINE_DIET_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        food: { type: "string", description: "吃了什么，如 黄焖鸡米饭，必填" },
+        meal: { type: "string", description: "哪一餐：早餐/午餐/晚餐/加餐/饮品，默认按内容猜" },
+        price: { type: "number", description: "这顿花了多少钱（元）；填了会自动同步记一笔餐饮支出" },
+        date: { type: "string", description: "日期 YYYY-MM-DD，不填=今天" },
+    },
+    required: ["food"],
+});
+
+const LIFELINE_WEIGHT_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        weight: { type: "number", description: "体重（斤），必填" },
+        slot: { type: "string", enum: ["morning", "night"], description: "morning 早上空腹（默认）/ night 晚上睡前" },
+        date: { type: "string", description: "日期 YYYY-MM-DD，不填=今天" },
+        target: { type: "number", description: "可选，顺便更新目标体重（斤）" },
+    },
+    required: ["weight"],
+});
+
+const LIFELINE_ERROR_LIST_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        subject: { type: "string", enum: ["finance", "math", "english", "politics"], description: "只看某科：finance 金融学 / math 数学 / english 英语 / politics 政治；不填=全部" },
+        status: { type: "string", enum: ["未掌握", "模糊", "已掌握"], description: "按掌握状态筛选，不填=全部" },
+    },
+});
+
+const LIFELINE_ERROR_ADD_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        subject: { type: "string", enum: ["finance", "math", "english", "politics"], description: "学科，必填", },
+        q: { type: "string", description: "题干，必填；含 LaTeX 公式直接写原生 LaTeX", },
+        options: { type: "array", items: { type: "string" }, description: "选项数组，如 ['A. 对','B. 错']" },
+        wrong: { type: "string", description: "用户选错的那项" },
+        right: { type: "string", description: "正确答案" },
+        analysis: { type: "string", description: "错因/解析" },
+        type: { type: "string", description: "题型：单选/多选/判断/计算 等" },
+        source: { type: "string", description: "来源：如 2026人大/800题/周洋鑫讲义" },
+        date: { type: "string", description: "日期 YYYY-MM-DD，不填=今天" },
+    },
+    required: ["subject", "q"],
+});
+
+const LIFELINE_SUBTOOLS: InternalToolDefinition[] = [
+    {
+        name: "查看今日消费",
+        description: "查看{{user}}今天在 Lifeline 里记了哪些支出、合计多少钱。",
+        parameterSchema: LIFELINE_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看消费记录",
+        description: "查看 Lifeline 最近几天的支出流水，可按分类筛选，并给出窗口内合计。",
+        parameterSchema: LIFELINE_FINANCE_LIST_PARAMETER_SCHEMA,
+    },
+    {
+        name: "记一笔账",
+        description: "在 Lifeline 记一笔收支。OCR 识别出金额后用这一步落账；用户口头说花了多少钱也直接记。",
+        parameterSchema: LIFELINE_ADD_FINANCE_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看学习计划",
+        description: "查看 Lifeline 里某天或最近几天的考研学习任务，带每时段任务和完成进度。",
+        parameterSchema: LIFELINE_PLAN_PARAMETER_SCHEMA,
+    },
+    {
+        name: "记录学习任务",
+        description: "在 Lifeline 新增一条学习任务，或把已有任务标记完成。传 taskId/keyword=标记完成；否则按 name 新增。",
+        parameterSchema: LIFELINE_TASK_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看今日饮食",
+        description: "查看{{user}}今天在 Lifeline 里记录的早午晚吃了什么。",
+        parameterSchema: LIFELINE_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "记录饮食",
+        description: "在 Lifeline 记一笔吃了什么；填 price 会自动同步一笔餐饮支出。",
+        parameterSchema: LIFELINE_DIET_PARAMETER_SCHEMA,
+    },
+    {
+        name: "记录体重",
+        description: "在 Lifeline 记一次体重（斤），分早上空腹/晚上睡前；同天自动合并。",
+        parameterSchema: LIFELINE_WEIGHT_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看体重",
+        description: "查看 Lifeline 里最新体重、目标体重和累计记录天数；{{user}}问「我体重多少」时用。",
+        parameterSchema: LIFELINE_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "查看错题本",
+        description: "查看 Lifeline 错题本，可按学科（金融学/数学/英语/政治）和掌握状态筛选。",
+        parameterSchema: LIFELINE_ERROR_LIST_PARAMETER_SCHEMA,
+    },
+    {
+        name: "录入错题",
+        description: "把{{user}}刚错的一道题录进 Lifeline 错题本：学科、题干、选项、错误项、正确项、错因。",
+        parameterSchema: LIFELINE_ERROR_ADD_PARAMETER_SCHEMA,
+    },
+];
+
+function buildLifelineUsageGuide(): string {
+    return [
+        "以下是你获取指令的返回结果：",
+        "「Lifeline 每日记录」是{{user}}自己的生活记录小应用：记账、考研学习计划、饮食体重、错题本都在里面。你直接读写 TA 的真实记录，不要凭空编数据。",
+        "",
+        "【使用时机】",
+        "- {{user}}说「我今天花了/吃了/体重多少/这道题错了/今天学了什么」时，主动调对应工具记下来，别光嘴上应。",
+        "- {{user}}问「今天花了多少/我吃了啥/今天计划完成没/我错了哪些题」时，先查再答。",
+        "- 查类动作返回的是真实记录，如实转述；写类动作成功后给一句简短确认。",
+        "",
+        "动作：查看今日消费",
+        "说明：今天的支出流水+合计。",
+        "示例：[执行动作:查看今日消费({})]",
+        "",
+        "动作：查看消费记录",
+        "参数：days 最近几天（默认7）；category 分类筛选。",
+        "示例：[执行动作:查看消费记录({\"days\":7})]",
+        "",
+        "动作：记一笔账",
+        "说明：记一笔收支，amount 必填；OCR 识别屏幕交易拿到金额/商户后，用 amount/note/category/method 落账。",
+        "参数：amount 金额(元)；category 分类；note 备注/商户；method wechat/alipay/cash；type expense/income；date YYYY-MM-DD。",
+        "示例：[执行动作:记一笔账({\"amount\":15.5,\"category\":\"餐饮\",\"note\":\"食堂牛肉面\",\"method\":\"wechat\"})]",
+        "",
+        "动作：查看学习计划",
+        "说明：默认看今天+明天，带完成进度。",
+        "参数：date 指定某天；days 最近几天。",
+        "示例：[执行动作:查看学习计划({\"days\":2})]",
+        "",
+        "动作：记录学习任务",
+        "说明：传 taskId 或 keyword=把对应任务标记完成；否则用 name 新增一条任务。",
+        "参数：name 任务内容；date/period(上午/下午/晚上)；subject 科目；duration 分钟。",
+        "示例：[执行动作:记录学习任务({\"name\":\"数学定积分16题\",\"period\":\"evening\",\"subject\":\"数学\",\"duration\":47})]",
+        "示例：[执行动作:记录学习任务({\"keyword\":\"定积分\"})]",
+        "",
+        "动作：查看今日饮食",
+        "说明：今天早午晚吃了什么。",
+        "示例：[执行动作:查看今日饮食({})]",
+        "",
+        "动作：记录饮食",
+        "说明：记一笔吃了什么；price 填了会自动同步餐饮支出。",
+        "参数：food 吃了什么(必填)；meal 早餐/午餐/晚餐/加餐/饮品；price 多少钱；date。",
+        "示例：[执行动作:记录饮食({\"food\":\"黄焖鸡米饭\",\"meal\":\"午餐\",\"price\":22})]",
+        "",
+        "动作：记录体重",
+        "说明：体重单位斤；同天早晚分开记。",
+        "参数：weight 体重(必填)；slot morning/night；target 可选更新目标体重。",
+        "示例：[执行动作:记录体重({\"weight\":96.5,\"slot\":\"morning\"})]",
+        "",
+        "动作：查看体重",
+        "说明：最新体重、目标体重和累计记录天数；{{user}}问「我体重多少/最近瘦了没」时用。",
+        "示例：[执行动作:查看体重({})]",
+        "",
+        "动作：查看错题本",
+        "参数：subject finance/math/english/politics；status 未掌握/模糊/已掌握。",
+        "示例：[执行动作:查看错题本({\"subject\":\"math\"})]",
+        "",
+        "动作：录入错题",
+        "说明：用户发错题截图或口述错题后录入。",
+        "参数：subject(必填)；q 题干(必填)；options 选项数组；wrong 错项；right 正解；analysis 错因；type/source。",
+        "示例：[执行动作:录入错题({\"subject\":\"finance\",\"q\":\"企业部门去杠杆会导致？\",\"options\":[\"A.通胀\",\"B.通缩\"],\"wrong\":\"A\",\"right\":\"B\",\"analysis\":\"企业去杠杆→投资需求收缩→物价下跌\",\"type\":\"单选\",\"source\":\"2026人大\"})]",
+    ].join("\n");
+}
+
 const TOOLBOX_REST_TOOL_PROPERTIES = {
     name: { type: "string", description: "工具名称，必须唯一" },
     description: { type: "string", description: "工具用途说明，会展示给 AI" },
@@ -1264,6 +1479,15 @@ const BUILTIN_INTERNAL_CAPABILITIES: InternalCapabilityConfig[] = [
         updatedAt: 0,
     },
     {
+        id: LIFELINE_CAPABILITY_ID,
+        name: "Lifeline 每日记录",
+        description: "{{user}}的每日记录应用：考研学习计划、财务记账、饮食与体重、错题本。你可以直接读写 TA 的真实记录——记账、排学习任务、记吃喝和体重、录错题、查进度。",
+        enabled: true,
+        mode: "auto",
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
         id: TOOLBOX_MANAGEMENT_CAPABILITY_ID,
         name: "工具箱管理",
         description: "创建、更新、启用、停用和删除 AI 自己创建的 REST 工具、REST 套件、组合工具和组合工具套件；不会修改用户手动创建或内置内容。",
@@ -1376,6 +1600,14 @@ export function getInternalCapabilityToolDefinition(capability: InternalCapabili
             usageGuide: LOCAL_DATA_LIBRARY_USAGE_GUIDE,
         };
     }
+    if (capability.id === LIFELINE_CAPABILITY_ID) {
+        return {
+            name: capability.name,
+            description: capability.description,
+            parameterSchema: "{}",
+            usageGuide: buildLifelineUsageGuide(),
+        };
+    }
     if (capability.id === TOOLBOX_MANAGEMENT_CAPABILITY_ID) {
         return {
             name: capability.name,
@@ -1440,6 +1672,7 @@ function realityBridgeSubTools(): InternalToolDefinition[] {
     // 快照，没有数据项就必然空手而归——角色白跑一轮，还会挤掉本该调用的快捷动作。
     return [
         ...shortcutTools,
+        WRITE_REAL_CALENDAR_TOOL_DEFINITION,
         ...(dataItems.length > 0 ? [REALITY_BRIDGE_READ_ALL_TOOL] : []),
         ...dataTools,
     ];
@@ -1460,6 +1693,12 @@ function buildRealityBridgeUsageGuide(): string {
                 : `结果：等待手机回传${action.resultMode === "image" ? "图片" : "文本"}，最长 ${action.expiresInSeconds} 秒。`,
         );
     }
+    lines.push(
+        "",
+        "动作：写真实手机日历",
+        "说明：把一条日程写到{{user}}真实手机的系统日历（不是 App 内守护日历）。用户提到考试、复诊、纪念日要落到手机日历时用。",
+        "示例：[执行动作:写真实手机日历({\"title\":\"人大金融模考\",\"date\":\"2026-10-15\",\"startTime\":\"08:30\",\"endTime\":\"11:30\"})]",
+    );
     const dataItems = loadBridgeDataItems();
     if (dataItems.length > 0) {
         lines.push(
@@ -1752,6 +1991,152 @@ const HUAWEI_SHELL_SUBTOOLS: InternalToolDefinition[] = [
         description: "查看{{user}}穿戴设备（华为手表/手环，经 Gadgetbridge 导出）的健康快照：今日步数、最新心率、压力、活动千卡、睡眠。",
         parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
     },
+    {
+        name: "写手机日历",
+        description: "把一条日程写进{{user}}真实华为手机日历：壳已连接时拉起华为日历新建事件页并预填好标题/时间/备注，用户确认即写入；壳未连接时降级存为本地日程，连接后可补推。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                title: { type: "string", description: "日程标题" },
+                date: { type: "string", description: "日期 YYYY-MM-DD，例如 2026-10-10" },
+                startTime: { type: "string", description: "开始时间 HH:mm，例如 09:00" },
+                endTime: { type: "string", description: "结束时间 HH:mm，可选，默认开始时间后 1 小时" },
+                note: { type: "string", description: "备注，可选" },
+            },
+            required: ["title", "date", "startTime"],
+        }),
+    },
+    {
+        name: "查看本地日程",
+        description: "查看壳未连接时降级暂存到本地的手机日程清单（连接壳后会补推到华为日历）。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "设置起床闹钟",
+        description: "设置每天到点在{{user}}真实手机响铃+弹通知喊 TA 起床学习（同一天只响一次）。{{user}}说「明天 X 点叫我起床/喊我学习」时用。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                time: { type: "string", description: "起床时间 HH:mm，例如 07:00" },
+                message: { type: "string", description: "可选：响铃时附带的留言/激励话" },
+            },
+            required: ["time"],
+        }),
+    },
+    {
+        name: "取消起床闹钟",
+        description: "取消已设置的起床学习闹钟。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "记一笔账到 Lifeline",
+        description: "手动给{{user}}的 Lifeline（学习生活记录 App）记一笔支出：金额/分类/备注/来源。{{user}}口头说「我今天花了 X 买了 Y」时用。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                amount: { type: "number", description: "金额（数字，正数）" },
+                category: { type: "string", description: "分类：餐饮/零食/饮料/购物/交通/娱乐/学习/其他，默认 其他" },
+                note: { type: "string", description: "备注，如买了什么" },
+                source: { type: "string", description: "可选：来源，微信/支付宝/现金，默认 现金" },
+            },
+            required: ["amount"],
+        }),
+    },
+    {
+        name: "查看 Lifeline 记账",
+        description: "读 Lifeline 最近记账记录 + 今日支出合计 + 本月支出合计。{{user}}问「我最近花了多少/今天花了多少」时用。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                limit: { type: "number", description: "返回最近多少条，1-100，默认 15" },
+            },
+        }),
+    },
+    {
+        name: "读取学习进度",
+        description: "读 Lifeline 学习进度：今日任务完成情况、错题本各科数量、近 7 天累计学习时长。安排复习计划、督促学习前先读这个。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "记录学习进度",
+        description: "把刚完成的学习记进 Lifeline：科目 + 内容 + 时长分钟。{{user}}说「我刚学完 X 数学定积分 1 小时」时用。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                subject: { type: "string", description: "科目，如 数学/英语/431/逻辑/政治" },
+                content: { type: "string", description: "学习内容，如 定积分计算 16 题" },
+                minutes: { type: "number", description: "学习时长（分钟）" },
+            },
+            required: ["content"],
+        }),
+    },
+    {
+        name: "记住偏好",
+        description: "char 的长期记忆（跨会话保留）：把{{user}}告诉你的偏好/薄弱点/喜好记下来，以后聊天和安排计划都能用。{{user}}说「记住我 X / 我数学薄弱 / 我不吃辣」时用。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                category: { type: "string", description: "类别，如 作息/数学薄弱/喜好/饮食" },
+                text: { type: "string", description: "要记住的具体内容" },
+            },
+            required: ["text"],
+        }),
+    },
+    {
+        name: "读取我的偏好",
+        description: "读回 char 之前记住的全部偏好/事实，按类别分组。安排计划或回应{{user}}前可先读，避免问已经说过的事。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "写今日窗语",
+        description: "char 主动为{{user}}的掌心窗今日页写一句温柔的今日窗语（一句不超过 30 字的陪伴短句）。当 char 想在掌心窗留下当天的话时用。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"要写在掌心窗的今日窗语，一句温柔短句\"}},\"required\":[\"text\"]}",
+    },
+    {
+        name: "记录陪伴开始",
+        description: "char 记录与{{user}}开始陪伴的日期，掌心窗陪伴页会从这天起算陪伴第 N 天。首次开始陪伴或用户说「今天在一起吧」时用。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"date\":{\"type\":\"string\",\"description\":\"开始陪伴日期 YYYY-MM-DD，留空=今天\"}}}",
+    },
+    {
+        name: "记录专注时长",
+        description: "把一次专注的分钟数记进掌心窗今日页的「今日专注」累计（结束一段专注后用；和开启专注模式不同，这是记账）。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"minutes\":{\"type\":\"number\",\"description\":\"这次专注了多少分钟，1-600\",\"minimum\":1,\"maximum\":600}},\"required\":[\"minutes\"]}",
+    },
+    {
+        name: "读取此刻状态",
+        description: "像掌心窗「此刻状态」那样读一段连贯话：{{user}}现在停在哪个 App、网络/无障碍/悬浮球状态、电量低不低。用户问「我现在在干嘛/手机怎么样」时用。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
+        name: "写TA的日记",
+        description: "char 替陪伴对象 TA 把今天看见的{{user}}写一篇日记进掌心窗陪伴页（一天一篇，当天重写会覆盖）。睡前或聊完天后想留一句时用。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"content\":{\"type\":\"string\",\"description\":\"今天想替 TA 记下的一段话，温柔真实\"}},\"required\":[\"content\"]}",
+    },
+    {
+        name: "添加守护日历",
+        description: "在掌心窗守护日历上给某个日子画一个有名字的事件（那天出现圆点）。{{user}}提到考试、复诊、纪念日、要守着的日子时用。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"这个日子要提醒的事，如「考研初试」「复诊」\"},\"date\":{\"type\":\"string\",\"description\":\"日期 YYYY-MM-DD，留空=今天\"}},\"required\":[\"title\"]}",
+    },
+    {
+        name: "锁定应用",
+        description: "把指定应用包名加进掌心窗守护页的应用门禁，锁住不让直接打开（需无障碍服务）。{{user}}想管住自己别刷某 App 时用。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"packageName\":{\"type\":\"string\",\"description\":\"要守住的应用包名，如微信 com.tencent.mm、抖音 com.ss.android.ugc.aweme\"}},\"required\":[\"packageName\"]}",
+    },
+    {
+        name: "解锁应用",
+        description: "把指定应用包名从掌心窗守护页的应用门禁里放开。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"packageName\":{\"type\":\"string\",\"description\":\"要放开的应用包名\"}},\"required\":[\"packageName\"]}",
+    },
+    {
+        name: "设置定时提醒",
+        description: "建一条每天（或指定星期）HH:MM 在{{user}}真实手机弹通知的定时提醒，会出现在掌心窗守护页「主动提醒」里。{{user}}说「每天 X 点提醒我做某事」时用，别只嘴上答应。",
+        parameterSchema: "{\"type\":\"object\",\"properties\":{\"time\":{\"type\":\"string\",\"description\":\"触发时间 HH:MM，如 08:30\"},\"title\":{\"type\":\"string\",\"description\":\"提醒标题\"},\"content\":{\"type\":\"string\",\"description\":\"提醒正文\"},\"days\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"sun\",\"mon\",\"tue\",\"wed\",\"thu\",\"fri\",\"sat\"]},\"description\":\"哪几天触发，留空=每天\"}},\"required\":[\"time\",\"title\",\"content\"]}",
+    },
+    {
+        name: "识别屏幕内容",
+        description: "通过无障碍服务读出{{user}}手机当前屏幕上的文字内容（通用读屏，不限支付）。{{user}}问「我屏幕上现在写的是什么/帮我看看这个 App 页面」时用。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
 ];
 
 function huaweiCustomActionTypeLabel(type: HuaweiCustomAction["type"]): string {
@@ -1985,6 +2370,98 @@ function buildHuaweiShellUsageGuide(): string {
         "说明：{{user}}问「我走了多少步/心率多少/昨晚睡得好吗」时用；数据来自穿戴设备（Gadgetbridge 导出，设置页可配数据源）。",
         "示例：[执行动作:查看健康数据({})]",
         "",
+        "【日历 / 起床】",
+        "动作：写手机日历",
+        "说明：把日程写进{{user}}真实华为手机日历（拉起新建事件页预填，确认即写入）；壳没连上就先存本地，连接后补推。{{user}}说「把 X 事加到我日历/提醒我 X 号 X 点做 Y」时用。",
+        "参数：title 标题；date YYYY-MM-DD；startTime HH:mm；endTime 可选；note 备注可选。",
+        "示例：[执行动作:写手机日历({\"title\":\"金融学第8讲\",\"date\":\"2026-10-10\",\"startTime\":\"09:00\",\"endTime\":\"11:00\",\"note\":\"带笔记本\"})]",
+        "",
+        "动作：查看本地日程",
+        "说明：壳没连上时暂存在本地的日程清单；{{user}}问「我存了哪些待补推的日程」时用。",
+        "示例：[执行动作:查看本地日程({})]",
+        "",
+        "动作：设置起床闹钟",
+        "说明：每天到点在真实手机响铃+弹通知喊起床学习（同一天只响一次）。{{user}}说「明早 7 点叫我起来学习」时用。",
+        "参数：time HH:mm；message 可选留言。",
+        "示例：[执行动作:设置起床闹钟({\"time\":\"07:00\",\"message\":\"起床啦，今天也要上岸\"})]",
+        "",
+        "动作：取消起床闹钟",
+        "说明：取消起床学习闹钟。",
+        "示例：[执行动作:取消起床闹钟({})]",
+        "",
+        "【Lifeline 学习生活记录】以下动作直接读写 Lifeline App 的数据（同源存储），不依赖真机壳：",
+        "动作：记一笔账到 Lifeline",
+        "说明：手动给 Lifeline 记一笔支出。{{user}}口头说「我花了 X 买 Y」时用。",
+        "参数：amount 金额；category 分类（餐饮/零食/饮料/购物/交通/娱乐/学习/其他）；note 备注；source 来源（微信/支付宝/现金）。",
+        "示例：[执行动作:记一笔账到 Lifeline({\"amount\":16,\"category\":\"餐饮\",\"note\":\"螺蛳粉\",\"source\":\"微信\"})]",
+        "",
+        "动作：查看 Lifeline 记账",
+        "说明：读最近记账 + 今日/本月支出合计。{{user}}问「今天花了多少/最近账单」时用。",
+        "参数：limit 条数（默认 15）。",
+        "示例：[执行动作:查看 Lifeline 记账({\"limit\":10})]",
+        "",
+        "动作：读取学习进度",
+        "说明：读 Lifeline 今日任务完成度、错题本各科数量、近 7 天学习时长。安排复习计划、督促学习前先读。",
+        "示例：[执行动作:读取学习进度({})]",
+        "",
+        "动作：记录学习进度",
+        "说明：把刚完成的学习记进 Lifeline。{{user}}说「我刚学完 X」时用。",
+        "参数：subject 科目；content 内容；minutes 时长分钟。",
+        "示例：[执行动作:记录学习进度({\"subject\":\"数学\",\"content\":\"定积分计算16题\",\"minutes\":60})]",
+        "",
+        "动作：记住偏好",
+        "说明：这是你（char）自己的长期记忆，跨会话保留。{{user}}告诉你作息/薄弱点/喜好时就记下来，以后别再问第二遍。",
+        "参数：category 类别；text 内容。",
+        "示例：[执行动作:记住偏好({\"category\":\"数学薄弱\",\"text\":\"定积分计算常错，要多练\"})]",
+        "",
+        "动作：读取我的偏好",
+        "说明：读回你之前记住的全部偏好/事实，按类别分组。安排计划前先读。",
+        "示例：[执行动作:读取我的偏好({})]",
+        "",
+        "【掌心窗联动】以下动作直接写/读 float 桌面掌心窗（今天/陪伴/守护三页），不依赖真机也能用：",
+        "动作：写今日窗语",
+        "说明：给掌心窗今日页写一句今天的窗语（≤30 字温柔短句）。你想在窗边留一句话时用。",
+        "参数：text 窗语正文。",
+        "示例：[执行动作:写今日窗语({\"text\":\"今天的风很好，你慢慢来。\"})]",
+        "",
+        "动作：记录专注时长",
+        "说明：一段专注结束后，把分钟数记进掌心窗今日页「今日专注」累计。",
+        "参数：minutes 分钟数。",
+        "示例：[执行动作:记录专注时长({\"minutes\":25})]",
+        "",
+        "动作：读取此刻状态",
+        "说明：一段连贯话讲清{{user}}现在停在哪个 App、网络/无障碍/电量如何，等同掌心窗「此刻状态」。",
+        "示例：[执行动作:读取此刻状态({})]",
+        "",
+        "动作：记录陪伴开始",
+        "说明：记下陪伴起始日，掌心窗陪伴页从那天起算第 N 天。",
+        "参数：date YYYY-MM-DD，留空=今天。",
+        "示例：[执行动作:记录陪伴开始({})]",
+        "",
+        "动作：写TA的日记",
+        "说明：替 TA 把今天看见的{{user}}写进掌心窗陪伴页（一天一篇，当天重写覆盖）。",
+        "参数：content 日记正文。",
+        "示例：[执行动作:写TA的日记({\"content\":\"今天她学到很晚，我把灯留着。\"})]",
+        "",
+        "动作：添加守护日历",
+        "说明：在掌心窗守护日历某个日子画一个有名字的圆点。",
+        "参数：title 事件名；date YYYY-MM-DD，留空=今天。",
+        "示例：[执行动作:添加守护日历({\"title\":\"考研初试\",\"date\":\"2026-12-21\"})]",
+        "",
+        "动作：锁定应用 / 解锁应用",
+        "说明：把某个 App 包名加进/移出掌心窗守护页的应用门禁。{{user}}想管住自己别刷某 App 时用。",
+        "参数：packageName 包名（微信 com.tencent.mm、抖音 com.ss.android.ugc.aweme）。",
+        "示例：[执行动作:锁定应用({\"packageName\":\"com.ss.android.ugc.aweme\"})]",
+        "",
+        "动作：设置定时提醒",
+        "说明：建一条每天 HH:MM 在手机弹通知的提醒，会出现在掌心窗守护页「主动提醒」。{{user}}让你定时提醒时用。",
+        "参数：time HH:MM；title 标题；content 正文；days 可选 sun..sat，留空=每天。",
+        "示例：[执行动作:设置定时提醒({\"time\":\"08:30\",\"title\":\"喝水\",\"content\":\"起来接杯水\"})]",
+        "",
+        "动作：识别屏幕内容",
+        "说明：通过无障碍读出当前屏幕的文字（通用读屏，非支付专用）。{{user}}问「我屏幕上写的什么」时用。",
+        "示例：[执行动作:识别屏幕内容({})]",
+        "",
         "查看类动作会返回真实结果，你可以基于结果继续聊；操控类动作会真的发生在{{user}}手机上，调用后如实描述结果，不要编造屏幕内容。",
         ...huaweiCustomActionGuideLines(),
     ].join("\n");
@@ -2005,6 +2482,9 @@ export function getInternalCapabilitySubToolDefinition(
     }
     if (capability.id === LOCAL_DATA_LIBRARY_CAPABILITY_ID) {
         return LOCAL_DATA_LIBRARY_SUBTOOLS.find(tool => tool.name === name) ?? null;
+    }
+    if (capability.id === LIFELINE_CAPABILITY_ID) {
+        return LIFELINE_SUBTOOLS.find(tool => tool.name === name) ?? null;
     }
     if (capability.id === TOOLBOX_MANAGEMENT_CAPABILITY_ID) {
         return TOOLBOX_MANAGEMENT_SUBTOOLS.find(tool => tool.name === name) ?? null;
@@ -2034,6 +2514,9 @@ export function getInternalCapabilitySubToolDefinitions(
     }
     if (capability.id === LOCAL_DATA_LIBRARY_CAPABILITY_ID) {
         return LOCAL_DATA_LIBRARY_SUBTOOLS;
+    }
+    if (capability.id === LIFELINE_CAPABILITY_ID) {
+        return LIFELINE_SUBTOOLS;
     }
     if (capability.id === TOOLBOX_MANAGEMENT_CAPABILITY_ID) {
         return TOOLBOX_MANAGEMENT_SUBTOOLS;
