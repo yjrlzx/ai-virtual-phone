@@ -30,6 +30,7 @@ export type IconId =
   | "realitybridge"
   | "huaweibridge"
   | "huaweipeek"
+  | "lifeline"
   | "qa"
   | "mixology";
 
@@ -71,7 +72,7 @@ export const PAGE_2_DEFAULT: IconId[] = [
 ];
 
 // 第三页默认图标：右半边 2×2 排布（左半边留给日历组件），位置见 createDefaultDesktopIconLayout
-export const PAGE_3_DEFAULT: IconId[] = ["worldbuilder", "qa", "resource_hub", "realitybridge", "huaweibridge", "huaweipeek", "mixology"];
+export const PAGE_3_DEFAULT: IconId[] = ["worldbuilder", "qa", "resource_hub", "realitybridge", "huaweibridge", "huaweipeek", "lifeline", "mixology"];
 
 export const DOCK_DEFAULT: IconId[] = ["settings", "theme", "resources", "characters"];
 
@@ -109,6 +110,7 @@ export const ICONS: Record<IconId, IconMeta> = {
   realitybridge: { id: "realitybridge", label: "iOS现实桥", tone: "var(--c-icon-teal)", placeholder: false },
   huaweibridge: { id: "huaweibridge", label: "华为现实桥", tone: "var(--c-icon-blue)", placeholder: false },
   huaweipeek: { id: "huaweipeek", label: "掌心窗", tone: "var(--c-icon-rose)", placeholder: false },
+  lifeline: { id: "lifeline", label: "Lifeline", tone: "var(--c-icon-blue)", placeholder: false },
   settings: { id: "settings", label: "设置", tone: "var(--c-icon-slate)", placeholder: false },
   theme: { id: "theme", label: "\u4E3B\u9898", tone: "var(--c-icon-violet)", placeholder: true },
   resources: { id: "resources", label: "\u8D44\u6E90\u5E93", tone: "var(--c-icon-teal)", placeholder: false },

@@ -38,6 +38,7 @@ import {
   mdiHome,
   mdiBridge,
   mdiEye,
+  mdiNotebookOutline,
   mdiHammerWrench,
   mdiGlassCocktail,
   mdiStorefrontOutline,
@@ -80,6 +81,7 @@ const MDI_PATHS: Record<IconId, string> = {
   realitybridge: mdiBridge,
   huaweibridge: mdiCellphone,
   huaweipeek: mdiEye,
+  lifeline: mdiNotebookOutline,
 };
 
 export function IconGlyph({ id, className }: IconGlyphProps) {
