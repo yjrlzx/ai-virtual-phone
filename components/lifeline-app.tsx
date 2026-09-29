@@ -81,6 +81,8 @@ export function LifelineApp({ onClose }: {
             fontSize: 20,
             lineHeight: 1,
             padding: 4,
+            pointerEvents: "auto",
+            zIndex: 10,
           }}
         >
           ←
