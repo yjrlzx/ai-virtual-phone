@@ -395,6 +395,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
         <button type="button" onClick={onClose} aria-label="返回桌面" style={{
           border: "none", background: "transparent", color: INK,
           cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 2,
+          pointerEvents: "auto", zIndex: 10,
         }}>←</button>
         <span style={{ fontSize: 15 }}>🪟</span>
         <span>掌心窗</span>

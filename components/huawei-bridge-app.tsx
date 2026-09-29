@@ -73,13 +73,13 @@ export function HuaweiBridgeApp({ onClose, onNotice }: {
       }}
     >
       <div style={TITLEBAR}>
-        <button type="button" style={GLASS_BTN} onClick={onClose} aria-label="返回桌面">
+        <button type="button" onClick={onClose} aria-label="返回桌面" style={{ ...GLASS_BTN, pointerEvents: "auto", zIndex: 10 }}>
           ‹
         </button>
         <span style={{ flex: 1, textAlign: "center" }}>华为现实桥</span>
         <button
           type="button"
-          style={{ ...GLASS_BTN, fontSize: 16, letterSpacing: 1 }}
+          style={{ ...GLASS_BTN, fontSize: 16, letterSpacing: 1, pointerEvents: "auto", zIndex: 10 }}
           onClick={() => setMenuOpen(v => !v)}
           aria-label="桥接设置"
         >
