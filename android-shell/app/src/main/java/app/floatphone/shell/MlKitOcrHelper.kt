@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import org.json.JSONObject
 
 /**
@@ -18,7 +19,7 @@ object MlKitOcrHelper {
     private fun client(context: Context): com.google.mlkit.vision.text.TextRecognizer {
         var r = recognizer
         if (r == null) {
-            r = TextRecognition.getClient()
+            r = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             recognizer = r
         }
         return r

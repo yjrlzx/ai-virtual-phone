@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
             val act = activeActivity ?: return
             val b64 = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             act.runOnUiThread {
-                act.evaluateJavascript("window.__floatBridgeOnSpeechText && window.__floatBridgeOnSpeechText(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))")
+                act.webView.evaluateJavascript("window.__floatBridgeOnSpeechText && window.__floatBridgeOnSpeechText(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))", null)
             }
         }
 
@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
             val act = activeActivity ?: return
             val b64 = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             act.runOnUiThread {
-                act.evaluateJavascript("window.__floatBridgeOnWakeWord && window.__floatBridgeOnWakeWord(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))")
+                act.webView.evaluateJavascript("window.__floatBridgeOnWakeWord && window.__floatBridgeOnWakeWord(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))", null)
             }
         }
 
@@ -88,7 +88,7 @@ class MainActivity : AppCompatActivity() {
             val act = activeActivity ?: return
             val b64 = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             act.runOnUiThread {
-                act.evaluateJavascript("window.__floatBridgeOnOcrResult && window.__floatBridgeOnOcrResult(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))")
+                act.webView.evaluateJavascript("window.__floatBridgeOnOcrResult && window.__floatBridgeOnOcrResult(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))", null)
             }
         }
     }
@@ -156,7 +156,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        companion.activeActivity = this
+        Companion.activeActivity = this
         WindowCompat.setDecorFitsSystemWindows(window, true)
         // 音量键默认调媒体流：WebView 里的语音条/TTS 都走媒体流播放，
         // 不设的话短音频没在播时按键调的是铃声，用户感觉"音量键无效、声音巨大"
@@ -321,7 +321,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (companion.activeActivity === this) companion.activeActivity = null
+        if (Companion.activeActivity === this) Companion.activeActivity = null
         CookieManager.getInstance().flush()
         webView.destroy()
         super.onDestroy()
@@ -948,7 +948,7 @@ class MainActivity : AppCompatActivity() {
                     .put("granted", rootAvailable)
                     .put("hint", if (rootAvailable) "Root 可用，已开高级能力" else "鸿蒙/EMUI 未开放 Root，此层不可用（可选层级）"))
                 .toString()
-        }.getOrElse { errJson(it.message) }
+        }.getOrElse { error -> errJson(error.message) }
 
         /** 打开指定系统权限设置页。setting: accessibility/notification/overlay/write_settings/storage/location/microphone */
         @JavascriptInterface
