@@ -965,7 +965,10 @@ class MainActivity : AppCompatActivity() {
                 .put("notificationListener", notifListener)
                 .put("debugger", org.json.JSONObject()
                     .put("shell", true)
-                    .put("file", storage))
+                    .put("file", storage)
+                    .put("shizukuInstalled", ShizukuAuthorizer.isShizukuInstalled(this@MainActivity))
+                    .put("shizukuRunning", ShizukuAuthorizer.isServiceRunning())
+                    .put("shizukuPermission", ShizukuAuthorizer.hasPermission()))
                 .put("admin", org.json.JSONObject()
                     .put("mediaProjection", MediaProjectionCapture.projectionToken != null)
                     .put("overlay", overlay)
@@ -993,6 +996,35 @@ class MainActivity : AppCompatActivity() {
             }
             startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
             """{"ok":true}"""
+        }.getOrElse { errJson(it.message) }
+
+        /** 请求 Shizuku 权限（引导用户在 Shizuku 应用里授权） */
+        @JavascriptInterface
+        fun requestShizukuPermission(): String = runCatching {
+            ShizukuAuthorizer.requestPermission { granted ->
+                // 权限结果通过 toast 提示，不回传网页（Shizuku 授权是异步弹窗）
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    if (granted) "Shizuku 权限已授权" else "Shizuku 权限被拒绝",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+            """{"ok":true,"message":"已请求 Shizuku 权限，请在弹窗中授权"}"""
+        }.getOrElse { errJson(it.message) }
+
+        /** 通过 Shizuku 执行 shell 命令，返回 stdout/exitCode */
+        @JavascriptInterface
+        fun executeShellCommand(command: String): String = runCatching {
+            if (!ShizukuAuthorizer.hasPermission()) {
+                return@runCatching """{"ok":false,"error":"Shizuku 权限未授权"}"""
+            }
+            val result = ShizukuAuthorizer.executeShell(command)
+            org.json.JSONObject()
+                .put("ok", result.success)
+                .put("stdout", result.stdout)
+                .put("stderr", result.stderr)
+                .put("exitCode", result.exitCode)
+                .toString()
         }.getOrElse { errJson(it.message) }
 
         private fun scaleBitmapForOcr(bitmap: android.graphics.Bitmap): android.graphics.Bitmap {
