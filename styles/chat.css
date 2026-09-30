@@ -7226,3 +7226,5 @@
   background: currentColor;
   animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
 }
+
+@keyframes vcsxwave { from { transform: scaleY(.3); } to { transform: scaleY(1); } }

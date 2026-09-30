@@ -628,6 +628,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStopGeneration: () => void;
     onTriggerAIResponse: () => void;
 	onSendSticker: (name: string, url?: string) => void;
+    onSendVoice: (audioDataUrl: string, durationSec: number) => void;
 }>(function ChatTextInputBar({
     characterName,
     characterId,
@@ -659,6 +660,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStopGeneration,
     onTriggerAIResponse,
     onSendSticker,
+    onSendVoice,
 }, ref) {
     const [inputText, setInputText] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -673,6 +675,86 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     }, [muteUntilMs]);
     const muteRemainingMs = muteUntilMs > muteNowTick ? muteUntilMs - muteNowTick : 0;
     const inputLocked = isSpectator || muteRemainingMs > 0;
+
+    // 微信式按住说话录音
+    const [recording, setRecording] = useState(false);
+    const [recordCancel, setRecordCancel] = useState(false);
+    const [recordingSec, setRecordingSec] = useState(0);
+    const recorderRef = useRef<MediaRecorder | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+    const streamRef = useRef<MediaStream | null>(null);
+    const recordStartRef = useRef(0);
+    const recordTickRef = useRef<number | null>(null);
+    const slideUpRef = useRef(false);
+
+    const stopRecording = (shouldCancel: boolean) => {
+        const rec = recorderRef.current;
+        const stream = streamRef.current;
+        if (recordTickRef.current) { window.clearInterval(recordTickRef.current); recordTickRef.current = null; }
+        if (rec && rec.state !== "inactive") {
+            try { rec.stop(); } catch {}
+        }
+        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch {} }); streamRef.current = null; }
+        recorderRef.current = null;
+        setRecording(false);
+        setRecordCancel(false);
+        setRecordingSec(0);
+        slideUpRef.current = false;
+        if (!shouldCancel && rec) {
+            // onstop handler will fire and send
+        }
+    };
+
+    const startRecording = async () => {
+        if (inputLocked) return;
+        try {
+            if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+                return;
+            }
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = stream;
+            chunksRef.current = [];
+            const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+            const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 24_000 } : undefined);
+            recorderRef.current = rec;
+            rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+            rec.onstop = () => {
+                const dur = Math.round((Date.now() - recordStartRef.current) / 1000);
+                const wasCancel = slideUpRef.current;
+                const chunks = chunksRef.current;
+                chunksRef.current = [];
+                if (wasCancel || dur < 1 || chunks.length === 0) return;
+                const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+                const reader = new FileReader();
+                reader.onload = () => { onSendVoice(String(reader.result), dur); };
+                reader.readAsDataURL(blob);
+            };
+            rec.start();
+            recordStartRef.current = Date.now();
+            setRecording(true);
+            setRecordingSec(0);
+            recordTickRef.current = window.setInterval(() => setRecordingSec(Math.floor((Date.now() - recordStartRef.current) / 1000)), 200);
+        } catch (err) {
+            // 麦克风权限被拒绝，静默失败
+        }
+    };
+
+    const recordStartYRef = useRef(0);
+    const handleRecordStart = (e: React.PointerEvent) => {
+        e.preventDefault();
+        recordStartYRef.current = e.clientY;
+        startRecording();
+    };
+    const handleRecordMove = (e: React.PointerEvent) => {
+        if (!recording) return;
+        const dist = recordStartYRef.current - e.clientY;
+        if (dist > 60) { slideUpRef.current = true; setRecordCancel(true); }
+        else { slideUpRef.current = false; setRecordCancel(false); }
+    };
+    const handleRecordEnd = () => {
+        if (!recording) return;
+        stopRecording(slideUpRef.current);
+    };
 
     const resetTextareaHeight = () => {
         if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -818,6 +900,20 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
 
             <div className="chat-input-actions">
                 <button
+                    onPointerDown={handleRecordStart}
+                    onPointerMove={handleRecordMove}
+                    onPointerUp={handleRecordEnd}
+                    onPointerCancel={handleRecordEnd}
+                    onPointerLeave={handleRecordEnd}
+                    disabled={inputLocked}
+                    className="ui-bare-btn text-[var(--c-text)]"
+                    style={{ ...(inputLocked ? { opacity: 0.35 } : {}), minWidth: 44, minHeight: 44, touchAction: "none", cursor: "pointer" }}
+                    aria-label="按住说话"
+                    title="按住说话"
+                >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10v1a7 7 0 0 0 14 0v-1" /><line x1="12" y1="18" x2="12" y2="22" /></svg>
+                </button>
+                <button
                     onClick={onToggleOfflineMode}
                     className="ui-bare-btn text-[var(--c-text)] chat-offline-toggle"
                     aria-label="线下模式"
@@ -913,6 +1009,36 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     characterId={characterId}
                     characterIds={stickerCharacterIds}
                 />
+            )}
+
+            {recording && (
+                <div style={{
+                    position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column",
+                    alignItems: "center", justifyContent: "center",
+                    background: recordCancel ? "rgba(220,38,38,.35)" : "rgba(0,0,0,.45)",
+                    backdropFilter: "blur(4px)",
+                }}>
+                    <div style={{
+                        background: recordCancel ? "#dc2626" : "#22c55e",
+                        borderRadius: 24, padding: "28px 36px", color: "#fff",
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
+                        minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,.3)",
+                    }}>
+                        <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 40 }}>
+                            {Array.from({ length: 12 }).map((_, i) => (
+                                <div key={i} style={{
+                                    width: 4, borderRadius: 2, background: "rgba(255,255,255,.9)",
+                                    height: 8 + Math.abs(Math.sin(Date.now() / 150 + i)) * 28,
+                                    animation: `vcsxwave 0.${(i % 5) + 3}s ease-in-out infinite alternate`,
+                                }} />
+                            ))}
+                        </div>
+                        <div style={{ fontSize: 18, fontWeight: 700 }}>
+                            {recordCancel ? "松开取消" : `${recordingSec}s`}
+                        </div>
+                        <div style={{ fontSize: 12, opacity: .85 }}>{recordCancel ? "松手取消录音" : "上滑取消 · 松开发送"}</div>
+                    </div>
+                </div>
             )}
         </div>
     );
@@ -6273,6 +6399,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 onStopGeneration={clearStuckGeneration}
                 onTriggerAIResponse={triggerAIResponse}
                 onSendSticker={(name, url) => { setShowStickerPanel(false); sendRichMessage("sticker", { label: name, stickerUrl: url }); }}
+                onSendVoice={(audioDataUrl, durationSec) => {
+                    sendRichMessage("audio", { label: `${durationSec}秒语音` }, "", audioDataUrl);
+                }}
             />
             ))}
 
