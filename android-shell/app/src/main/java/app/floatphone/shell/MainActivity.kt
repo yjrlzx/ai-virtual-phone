@@ -1152,7 +1152,7 @@ class MainActivity : AppCompatActivity() {
                 else -> return """{"ok":false,"error":"未知 action：$action"}"""
             }
             val r = ShizukuAuthorizer.executeShell(cmd)
-            org.json.JSONObject()
+            return org.json.JSONObject()
                 .put("ok", r.success)
                 .put("action", action)
                 .put("packageName", pkg)
@@ -1168,7 +1168,7 @@ class MainActivity : AppCompatActivity() {
             val state = if (on) "true" else "false"
             val r1 = ShizukuAuthorizer.executeShell("settings put global airplane_mode_on $v")
             val r2 = ShizukuAuthorizer.executeShell("am broadcast -a android.intent.action.AIRPLANE_MODE --ez state $state")
-            org.json.JSONObject()
+            return org.json.JSONObject()
                 .put("ok", true)
                 .put("on", on)
                 .put("settings", r1.stdout)

@@ -117,8 +117,13 @@ object ShellTts {
     private fun maybeStartNext() {
         if (!initialized) return
         val item: QueuedItem? = synchronized(lock) {
-            if (speaking) return@synchronized null
-            queue.pollFirst()
+            if (speaking) {
+                null
+            } else if (queue.isEmpty()) {
+                null
+            } else {
+                queue.removeFirst()
+            }
         }
         if (item == null) return
         runCatching {
