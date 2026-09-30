@@ -1,43 +1,120 @@
 // lib/call-settings.ts
-// 网页侧通话设置（与华为壳原生通话设置并存）：来电铃声 URL。
-// 三态语义对齐安卓壳 CallAlert/RingingAlert：
-//   null = 跟随系统/不播网页铃声（壳原生响铃或仅振动）
-//   ""   = 只振动，不播铃声
-//   非空 = HTMLAudioElement 循环播放该 URL
+// 网页侧通话设置（与华为壳原生通话设置并存）：
+// - 全局来电铃声 URL（三态：null=跟随系统、""=只振动、非空=指定 URL）
+// - 按 characterId 存通话外观：铃声、背景、头像、形象来源、图片/视频 API 配置
 
-import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { kvGet, kvSet, registerKvMigration, registerDynamicPrefix } from "./kv-db";
 
+// ── 全局铃声（保留旧字段，兼容） ──
 const RINGTONE_KEY = "web_call_ringtone_url_v1";
 registerKvMigration(RINGTONE_KEY);
 
-/** 读网页来电铃声 URL。null=跟随系统，空串=只振动，非空=指定 URL。 */
 export function loadWebCallRingtoneUrl(): string | null {
     if (typeof window === "undefined") return null;
     try {
         const v = kvGet(RINGTONE_KEY);
         if (v === null) return null;
-        return v; // 可能是 ""（只振动）
+        return v;
     } catch {
         return null;
     }
 }
 
-/** 写网页来电铃声 URL。传 null 清除（跟随系统），传 "" 只振动，传 URL 指定铃声。 */
 export function saveWebCallRingtoneUrl(url: string | null): void {
     if (typeof window === "undefined") return;
     try {
-        if (url === null) {
-            // 不写——保持 null 语义
-        } else {
-            kvSet(RINGTONE_KEY, url);
-        }
-    } catch { /* 忽略写入失败 */ }
+        if (url !== null) kvSet(RINGTONE_KEY, url);
+    } catch { /* 忽略 */ }
 }
 
-/**
- * 来电铃声播放器：循环播放指定 URL，直到 stop()。
- * URL 为 null 或空串时不播放（调用方自行处理振动/壳原生响铃）。
- */
+// ── 按角色的通话外观配置 ──
+
+export type CallAvatarSource = "static" | "image_api" | "video_api";
+
+export type CallApiConfig = {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+};
+
+export type CallAppearanceConfig = {
+    /** 来电铃声 URL；null=跟随全局/系统，""=静音，非空=播放 */
+    ringtoneUrl: string | null;
+    /** 通话背景图片 URL/data URI；空=用渐变 */
+    backgroundUrl: string;
+    /** 预设渐变色（当 backgroundUrl 为空时用） */
+    backgroundGradient: string;
+    /** 自定义通话头像 data URI/URL；空=用 character.avatar */
+    avatarOverride: string;
+    /** 角色形象来源：静态头像 / 图片生成 API / 视频生成 API */
+    avatarSource: CallAvatarSource;
+    /** 图片生成 API 配置（avatarSource=image_api 时用） */
+    imageApiConfig: CallApiConfig;
+    /** 视频生成 API 配置（avatarSource=video_api 时用） */
+    videoApiConfig: CallApiConfig;
+};
+
+const DEFAULT_APPEARANCE: CallAppearanceConfig = {
+    ringtoneUrl: null,
+    backgroundUrl: "",
+    backgroundGradient: "linear-gradient(160deg, #1a2744 0%, #0f1629 100%)",
+    avatarOverride: "",
+    avatarSource: "static",
+    imageApiConfig: { baseUrl: "", apiKey: "", model: "" },
+    videoApiConfig: { baseUrl: "", apiKey: "", model: "" },
+};
+
+function appearanceKey(characterId: string): string {
+    return `web_call_appearance_v1_${characterId}`;
+}
+registerDynamicPrefix("web_call_appearance_v1_");
+
+export function loadCallAppearance(characterId: string): CallAppearanceConfig {
+    if (typeof window === "undefined" || !characterId) return { ...DEFAULT_APPEARANCE };
+    try {
+        const raw = kvGet(appearanceKey(characterId));
+        if (!raw) return { ...DEFAULT_APPEARANCE };
+        const parsed = JSON.parse(raw) as Partial<CallAppearanceConfig>;
+        return {
+            ...DEFAULT_APPEARANCE,
+            ...parsed,
+            imageApiConfig: { ...DEFAULT_APPEARANCE.imageApiConfig, ...(parsed.imageApiConfig ?? {}) },
+            videoApiConfig: { ...DEFAULT_APPEARANCE.videoApiConfig, ...(parsed.videoApiConfig ?? {}) },
+        };
+    } catch {
+        return { ...DEFAULT_APPEARANCE };
+    }
+}
+
+export function saveCallAppearance(characterId: string, config: CallAppearanceConfig): void {
+    if (typeof window === "undefined" || !characterId) return;
+    try {
+        kvSet(appearanceKey(characterId), JSON.stringify(config));
+    } catch { /* 忽略 */ }
+}
+
+/** 解析通话页实际用的头像：自定义覆盖 > 角色头像 > null */
+export function resolveCallAvatar(characterId: string, characterAvatar: string | null | undefined): string | null {
+    const cfg = loadCallAppearance(characterId);
+    if (cfg.avatarOverride) return cfg.avatarOverride;
+    return characterAvatar || null;
+}
+
+/** 解析通话页实际用的背景：自定义图片 > 角色头像模糊 > 渐变 */
+export function resolveCallBackground(characterId: string): string {
+    const cfg = loadCallAppearance(characterId);
+    return cfg.backgroundUrl || cfg.backgroundGradient;
+}
+
+/** 解析来电铃声 URL：角色配置 > 全局配置 > null */
+export function resolveCallRingtoneUrl(characterId: string): string | null {
+    const cfg = loadCallAppearance(characterId);
+    if (cfg.ringtoneUrl !== null) return cfg.ringtoneUrl;
+    return loadWebCallRingtoneUrl();
+}
+
+// ── 铃声播放器 ──
+
 export function playIncomingRingtone(url: string | null): { stop: () => void } {
     if (typeof window === "undefined") return { stop: () => {} };
     if (!url) return { stop: () => {} };
@@ -48,7 +125,7 @@ export function playIncomingRingtone(url: string | null): { stop: () => void } {
         audio.volume = 0.6;
         const p = audio.play();
         if (p && typeof p.catch === "function") {
-            p.catch(() => { /* 自动播放被拦（未用户手势）静默忽略，振动仍在 */ });
+            p.catch(() => { /* 自动播放被拦静默忽略，振动仍在 */ });
         }
     } catch {
         audio = null;
@@ -56,10 +133,7 @@ export function playIncomingRingtone(url: string | null): { stop: () => void } {
     return {
         stop: () => {
             try {
-                if (audio) {
-                    audio.pause();
-                    audio.currentTime = 0;
-                }
+                if (audio) { audio.pause(); audio.currentTime = 0; }
             } catch { /* 忽略 */ }
         },
     };

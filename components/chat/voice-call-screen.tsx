@@ -21,9 +21,10 @@ import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
+import { CallAppearanceSettings } from "./call-appearance-settings";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { getAndroidShell, loadHuaweiShellSettings } from "@/lib/huawei-shell/storage";
-import { loadWebCallRingtoneUrl, playIncomingRingtone } from "@/lib/call-settings";
+import { loadWebCallRingtoneUrl, playIncomingRingtone, resolveCallAvatar, resolveCallRingtoneUrl, loadCallAppearance } from "@/lib/call-settings";
 
 /** 华为壳原生语音识别（免云端）是否可用：window.AndroidShell.startListening 存在即视为可用。 */
 const huaweiNativeSttAvailable = typeof window !== "undefined"
@@ -102,6 +103,10 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const [typedText, setTypedText] = useState("");
     const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
     const [showSttWarning, setShowSttWarning] = useState(false);
+    const [showCallSettings, setShowCallSettings] = useState(false);
+
+    // 通话头像：自定义覆盖 > 角色头像；同步读 kv
+    const callAvatar = resolveCallAvatar(session.contactId, character.avatar);
 
     const sttRef = useRef<STTSession | null>(null);
     const audioAbortRef = useRef<(() => void) | null>(null);
@@ -169,7 +174,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         const stopVib = startIncomingCallVibration();
         let shell: { stopRing?: () => void } | null = null;
         // 网页侧铃声：URL 非空时 HTMLAudioElement 循环播放；空串/null 不播（壳原生或仅振动）
-        const webRingtone = playIncomingRingtone(loadWebCallRingtoneUrl());
+        const webRingtone = playIncomingRingtone(resolveCallRingtoneUrl(session.contactId));
         try {
             if (huaweiNativeSttAvailable) {
                 const s = getAndroidShell();
@@ -883,6 +888,20 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 </button>
             )}
 
+            <button
+                type="button"
+                className="vcsx-min-btn"
+                style={{ top: onMinimize ? 64 : 16 }}
+                onClick={() => setShowCallSettings(true)}
+                aria-label="通话设置"
+                title="通话外观设置"
+            >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+            </button>
+
             {/* 顶部居中：来电铃声滚动 / 通话计时 */}
             <div className="vcsx-topline">
                 {callState === "CONNECTING" && initiator === "character" ? (
@@ -908,8 +927,8 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             <div className="vcsx-main">
                 <div className="vcsx-avatar-wrap">
                     <div className="vcsx-avatar">
-                        {character.avatar ? (
-                            <img src={character.avatar} alt={character.name} />
+                        {callAvatar ? (
+                            <img src={callAvatar} alt={character.name} />
                         ) : (
                             <span className="vcsx-avatar-fallback">{character.name?.[0] || "?"}</span>
                         )}
@@ -1170,6 +1189,14 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 <CallSttWarningDialog
                     onClose={() => setShowSttWarning(false)}
                     onNeverShow={handleNeverShowSttWarning}
+                />
+            )}
+
+            {showCallSettings && (
+                <CallAppearanceSettings
+                    characterId={session.contactId}
+                    characterName={character.name}
+                    onClose={() => setShowCallSettings(false)}
                 />
             )}
         </div>

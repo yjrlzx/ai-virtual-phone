@@ -26,19 +26,10 @@ import {
 } from "lucide-react";
 import { DATA_MODULES, getLightModuleIds } from "@/lib/data-management/modules";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
-import { Select, Toggle } from "@/components/ui/form";
+import { Toggle } from "@/components/ui/form";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { CloudUpload } from "lucide-react";
-import {
-  DEFAULT_CLOUD_BACKUP_CONFIG,
-  isCloudBackupConfigured,
-  loadCloudBackupConfig,
-  saveCloudBackupConfig,
-  type CloudBackupConfig,
-} from "@/lib/cloud-backup/config";
 import { getRuntimePwaDisplayMode } from "@/lib/pwa-display-mode";
-import { listCloudBackups, loadCloudBackupState, restoreFromCloudManifest, runCloudBackup, type CloudBackupListItem, type CloudBackupState } from "@/lib/cloud-backup/engine";
-import { CloudDownload } from "lucide-react";
 import {
   clearModules,
   createBackupBlob,
@@ -71,10 +62,6 @@ type PendingImport = {
 type PendingExport = {
   blob: Blob;
   manifest: BackupManifest;
-};
-
-type PendingCloudRestore = {
-  item: CloudBackupListItem;
 };
 
 type ConfirmRequest =
@@ -293,14 +280,39 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const [persistSupported, setPersistSupported] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [cloudConfig, setCloudConfig] = useState<CloudBackupConfig>(DEFAULT_CLOUD_BACKUP_CONFIG);
-  const [cloudBackingUp, setCloudBackingUp] = useState(false);
-  const [cloudProgress, setCloudProgress] = useState<{ percent: number; detail: string } | null>(null);
-  const [cloudState, setCloudState] = useState<CloudBackupState>({});
-  const [showRestore, setShowRestore] = useState(false);
-  const [restoreLoading, setRestoreLoading] = useState(false);
-  const [restoreList, setRestoreList] = useState<CloudBackupListItem[]>([]);
-  const [restorePending, setRestorePending] = useState<PendingCloudRestore | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<{
+    ok: boolean;
+    serverUrl: string;
+    onlineSessions: number;
+    dbBytes: number | null;
+  } | null>(null);
+  const [cloudReachable, setCloudReachable] = useState<boolean | null>(null);
+  const [excludeMedia, setExcludeMedia] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch("/api/cloud/status", { cache: "no-store" });
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        if (cancelled) return;
+        setCloudReachable(true);
+        setCloudStatus({
+          ok: Boolean(j.ok),
+          serverUrl: j.serverUrl || "",
+          onlineSessions: Number(j?.push?.onlineSessions) || 0,
+          dbBytes: typeof j?.backup?.dbBytes === "number" ? j.backup.dbBytes : null,
+        });
+      } catch {
+        if (!cancelled) setCloudReachable(false);
+      }
+    };
+    void poll();
+    const t = setInterval(() => void poll(), 10_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
   const [mediaConfig, setMediaConfig] = useState<MediaMaintenanceConfig>(DEFAULT_MEDIA_MAINTENANCE_CONFIG);
   const [mediaState, setMediaState] = useState<MediaMaintenanceState>({});
   const [spaceStats, setSpaceStats] = useState<StorageCategoryStat[] | null>(null);
@@ -310,93 +322,12 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const [spaceClearRange, setSpaceClearRange] = useState<number>(30);
 
   useEffect(() => {
-    setCloudConfig(loadCloudBackupConfig());
-    setCloudState(loadCloudBackupState());
-  }, []);
-
-  useEffect(() => {
     setMediaConfig(loadMediaMaintenanceConfig());
     setMediaState(loadMediaMaintenanceState());
     const handleUpdate = () => setMediaState(loadMediaMaintenanceState());
     window.addEventListener("media-maintenance-updated", handleUpdate);
     return () => window.removeEventListener("media-maintenance-updated", handleUpdate);
   }, []);
-
-  const runBackupNow = async () => {
-    if (cloudBackingUp) return;
-    setCloudBackingUp(true);
-    try {
-      saveCloudBackupConfig(cloudConfig);
-      // Cloud uploads are chunked → large media is fine; always back up in full (incl. images).
-      const result = await runCloudBackup(cloudConfig, { force: true, excludeMedia: false, onProgress: setCloudProgress });
-      setCloudState(loadCloudBackupState());
-      if (result.status === "anomaly") {
-        onNotice?.("数据明显变小，已存为待复核备份并保留之前的备份。");
-      } else if (result.status === "skipped") {
-        onNotice?.("数据没有变化，已跳过本次备份。");
-      } else {
-        onNotice?.(`已备份：上传 ${result.uploadedModules} 个模块，${formatBytes(result.totalBytes)}。`);
-      }
-    } catch (error) {
-      onNotice?.(error instanceof Error ? error.message : "备份失败。");
-      setCloudState(loadCloudBackupState());
-    } finally {
-      setCloudBackingUp(false);
-      setCloudProgress(null);
-    }
-  };
-
-  const openRestore = async () => {
-    const next = !showRestore;
-    setShowRestore(next);
-    if (!next) return;
-    setRestoreLoading(true);
-    try {
-      saveCloudBackupConfig(cloudConfig);
-      setRestoreList(await listCloudBackups(cloudConfig));
-    } catch (error) {
-      onNotice?.(error instanceof Error ? error.message : "读取云端备份列表失败。");
-      setRestoreList([]);
-    } finally {
-      setRestoreLoading(false);
-    }
-  };
-
-  const confirmRestore = (pending: PendingCloudRestore) => runAction("恢复中", async () => {
-    try {
-      // Cloud restore is a recovery path: "merge" keeps extra local records, but
-      // same-ID conflicts should still prefer the backup so partial/empty local
-      // shells cannot block a complete cloud backup from coming back.
-      const result = await restoreFromCloudManifest(cloudConfig, pending.item.name, { overwrite: true, onProgress: setCloudProgress });
-      setRestorePending(null);
-      setShowRestore(false);
-      if (result.errors.length > 0) {
-        console.warn("[DataManagement] cloud restore errors:", result.errors);
-      }
-      const restoredCount = result.added + result.overwritten;
-      if (restoredCount === 0 && result.errors.length > 0) {
-        throw new Error(`云端恢复失败：${result.errors[0]}`);
-      }
-      const errorNote = result.errors.length > 0 ? `，${result.errors.length} 项出错` : "";
-      const errorDetails = result.errors.length > 0
-        ? `\n错误详情：${result.errors.slice(0, 3).join("；")}`
-        : "";
-      setRestartNotice({
-        title: result.errors.length > 0 ? "恢复部分完成，请彻底重启应用" : "恢复完成，请彻底重启应用",
-        summary: `已从云端恢复：新增 ${result.added}，覆盖 ${result.overwritten}，跳过 ${result.skipped}${errorNote}。${errorDetails}`,
-      });
-    } finally {
-      setCloudProgress(null);
-    }
-  });
-
-  const updateCloud = (patch: Partial<CloudBackupConfig>) => {
-    setCloudConfig((prev) => {
-      const next = { ...prev, ...patch };
-      saveCloudBackupConfig(next);
-      return next;
-    });
-  };
 
   const updateMediaMaintenance = (enabled: boolean) => {
     const next = saveMediaMaintenanceConfig({ enabled });
@@ -454,7 +385,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
 
   const executeExport = (moduleIds: DataModuleId[]) => runAction("导出中", async () => {
     // 本地文件带上云服务连接信息：恢复后云备份直接是通的，不用再走一遍部署
-    const { blob, manifest, warnings } = await createBackupBlob(moduleIds, { excludeMedia: cloudConfig.excludeMedia, includeCloudCredentials: true });
+    const { blob, manifest, warnings } = await createBackupBlob(moduleIds, { excludeMedia, includeCloudCredentials: false });
     const note = manifest.mediaExcluded ? "（不含图片/多媒体）" : "";
     // 导出侧不静默：数据库打不开 / 关键模块 0 记录必须当面告知，
     // 否则用户会带着一个"看起来成功、实际缺整库"的备份走（用户实报踩坑）
@@ -749,10 +680,10 @@ export function DataManagement({ onNotice }: DataManagementProps) {
           <div className="menu-item data-readonly-item">
             <div className="menu-label-group">
               <span className="menu-label">本地导出·不含图片/多媒体</span>
-              <span className="menu-desc">仅【本地导出备份文件】生效：去掉壁纸、聊天图、朋友圈图等大文件（保留角色头像），文件更小、导出不卡。云端备份已支持分片上传，会完整备份图片，不受此开关影响。</span>
+              <span className="menu-desc">仅【导出备份文件】生效：去掉壁纸、聊天图、朋友圈图等大文件（保留角色头像），文件更小、导出不卡。</span>
             </div>
             <span className="menu-right">
-              <Toggle checked={cloudConfig.excludeMedia} onChange={(checked) => updateCloud({ excludeMedia: checked })} />
+              <Toggle checked={excludeMedia} onChange={setExcludeMedia} />
             </span>
           </div>
           <div className="menu-item data-readonly-item">
@@ -798,153 +729,43 @@ export function DataManagement({ onNotice }: DataManagementProps) {
       <div className="data-section">
         <DataSectionTitle>Cloud Backup</DataSectionTitle>
         <div className="menu-group">
-          <div className="menu-item data-readonly-item">
-            <DataSettingsIcon icon={CloudUpload} color={BINDING_ACCENTS.api} />
-            <div className="menu-label-group">
-              <span className="menu-label">备份到你的 Supabase</span>
-              <span className="menu-desc">云端备份与恢复</span>
-            </div>
-          </div>
-
-          <div className="data-cloud-form">
-            <div className="flex items-center gap-3">
-              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${isCloudBackupConfigured(cloudConfig) ? "bg-green-500" : "bg-black/20"}`} />
-              <span className="menu-label flex-1">{isCloudBackupConfigured(cloudConfig) ? "已部署" : "未部署"}</span>
-              <button
-                type="button"
-                className="ui-btn ui-btn-outline shrink-0 py-1 px-3 ts-12"
-                onClick={() => window.dispatchEvent(new CustomEvent("settings-navigate", { detail: { page: "cloud" } }))}
-              >
-                {isCloudBackupConfigured(cloudConfig) ? "重新部署" : "去部署"}
-              </button>
+          <div className="menu-item data-readonly-item" style={{ alignItems: "stretch", flexDirection: "column", gap: 12 }}>
+            <div className="flex items-start gap-3">
+              <DataSettingsIcon icon={CloudUpload} color={BINDING_ACCENTS.api} />
+              <div className="menu-label-group">
+                <span className="menu-label">云服务器备份</span>
+                <span className="menu-desc !mt-0 break-all">{cloudStatus?.serverUrl || "连接中…"}</span>
+              </div>
             </div>
 
-            <div className="data-cloud-actions">
-              <button
-                type="button"
-                className={`ui-btn ui-btn-primary ${cloudBackingUp ? "is-busy" : ""}`}
-                onClick={() => void runBackupNow()}
-                disabled={cloudBackingUp || !isCloudBackupConfigured(cloudConfig)}
-              >
-                {cloudBackingUp ? <><Loader2 size={16} className="animate-spin" /> 备份中…</> : <><CloudUpload size={16} /> 立即备份</>}
-              </button>
-              <button
-                type="button"
-                className="ui-btn ui-btn-outline"
-                onClick={() => void openRestore()}
-                disabled={cloudBackingUp || !isCloudBackupConfigured(cloudConfig)}
-              >
-                <CloudDownload size={16} /> {showRestore ? "收起" : "云端恢复"}
-              </button>
+            <div className="flex items-center gap-2">
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${cloudReachable === false ? "bg-red-500" : "bg-green-500"}`} />
+              <span className="menu-label flex-1">
+                {cloudReachable === false
+                  ? "云服务器不可达"
+                  : cloudStatus && cloudStatus.onlineSessions > 0
+                    ? `已连接 · ${cloudStatus.onlineSessions} 个在线设备`
+                    : "已连接"}
+              </span>
+              {cloudStatus?.dbBytes != null && (
+                <span className="menu-desc shrink-0">数据库 {formatBytes(cloudStatus.dbBytes)}</span>
+              )}
             </div>
 
-            {cloudBackingUp && cloudProgress && (
-              <div className="data-cloud-progress" role="status">
-                <div className="data-cloud-progress-track">
-                  <div className="data-cloud-progress-fill" style={{ width: `${Math.min(100, Math.round(cloudProgress.percent))}%` }} />
-                </div>
-                <span className="data-cloud-progress-text">{cloudProgress.detail} · {Math.round(cloudProgress.percent)}%</span>
-              </div>
-            )}
-
-            {cloudState.lastCreatedAt && (
-              <div className="data-cloud-status">
-                上次备份：{formatTime(cloudState.lastCreatedAt)}
-                {typeof cloudState.lastTotalBytes === "number" ? ` · ${formatBytes(cloudState.lastTotalBytes)}` : ""}
-                {cloudState.lastResult === "anomaly" ? " · ⚠️ 待复核（数据异常变小）" : ""}
-                {cloudState.lastResult === "skipped" ? " · 无变化已跳过" : ""}
-              </div>
-            )}
-            {cloudState.lastResult === "error" && cloudState.lastError && (
-              <div className="data-cloud-result is-err" role="status">
-                最近一次云备份失败：{cloudState.lastError}
-              </div>
-            )}
-
-            {showRestore && (
-              <div className="data-cloud-restore">
-                <div className="data-cloud-status">恢复会合并写入：同 ID 以云端为准，本机额外数据会保留。</div>
-                {busy === "恢复中" ? (
-                  <div className="data-cloud-progress" role="status">
-                    <div className="data-cloud-progress-track">
-                      <div className="data-cloud-progress-fill" style={{ width: `${Math.min(100, Math.round(cloudProgress?.percent ?? 0))}%` }} />
-                    </div>
-                    <span className="data-cloud-progress-text">
-                      {cloudProgress ? `${cloudProgress.detail} · ${Math.round(cloudProgress.percent)}%` : "正在从云端恢复，请稍候…"}
-                    </span>
-                  </div>
-                ) : restoreLoading ? (
-                  <div className="data-cloud-status"><Loader2 size={14} className="animate-spin" /> 读取云端备份…</div>
-                ) : restoreList.length === 0 ? (
-                  <div className="data-cloud-status">云端还没有备份。</div>
-                ) : (
-                  <ul className="data-cloud-restore-list">
-                    {restoreList.map((item) => (
-                      <li key={item.name} className="data-cloud-restore-item">
-                        <div className="menu-label-group">
-                          <span className="menu-label">
-                            {formatTime(item.createdAt)}{item.error ? " · 清单损坏" : item.quarantine ? " · 待复核" : ""}
-                          </span>
-                          <span className="menu-desc">
-                            {item.error ?? `${formatBytes(item.totalBytes)} · ${item.totalRecords} 项`}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                          onClick={() => setRestorePending({ item })}
-                          disabled={Boolean(busy) || Boolean(item.error)}
-                        >
-                          恢复
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="menu-item data-readonly-item">
-            <div className="menu-label-group">
-              <span className="menu-label">自动备份</span>
-              <span className="menu-desc">开启后按间隔在后台静默备份。</span>
-            </div>
-            <span className="menu-right">
-              <Toggle
-                checked={cloudConfig.enabled}
-                onChange={(checked) => updateCloud({ enabled: checked })}
-                disabled={!isCloudBackupConfigured(cloudConfig)}
-              />
+            <span className="menu-desc !mt-0">
+              数据实时保存在你的云服务器（SQLite），三端自动同步，无需手动备份。
             </span>
-          </div>
 
-          <div className="data-cloud-options">
-            <label className="data-cloud-field">
-              <span className="menu-desc ml-1">备份间隔</span>
-              <Select
-                value={String(cloudConfig.intervalHours)}
-                onChange={(e) => updateCloud({ intervalHours: Number(e.target.value) })}
-                disabled={!cloudConfig.enabled}
+            <div className="data-menu-actions">
+              <button
+                type="button"
+                className="ui-btn ui-btn-primary"
+                onClick={() => handleExport(selectedExportModules)}
+                disabled={Boolean(busy)}
               >
-                <option value="0.5">每 30 分钟</option>
-                <option value="1">每小时</option>
-                <option value="6">每 6 小时</option>
-                <option value="12">每 12 小时</option>
-                <option value="24">每天</option>
-              </Select>
-            </label>
-            <label className="data-cloud-field">
-              <span className="menu-desc ml-1">保留份数</span>
-              <Select
-                value={String(cloudConfig.keepCount)}
-                onChange={(e) => updateCloud({ keepCount: Number(e.target.value) })}
-                disabled={!cloudConfig.enabled}
-              >
-                <option value="2">2 份</option>
-                <option value="3">3 份</option>
-              </Select>
-            </label>
+                <Download size={16} /> 导出备份 JSON
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1150,18 +971,6 @@ export function DataManagement({ onNotice }: DataManagementProps) {
           }
           onConfirm={handleConfirmRequest}
           onCancel={() => setConfirmRequest(null)}
-        />
-      )}
-
-      {restorePending && (
-        <ConfirmDialog
-          title="确认从云端恢复？"
-          message={`将把 ${formatTime(restorePending.item.createdAt)} 这份云端备份合并到本机数据；本机没有的数据会新增，同 ID 数据以云端为准，本机额外数据会保留。建议先「立即备份」当前数据。是否继续？`}
-          icon={CloudDownload}
-          variant="action"
-          confirmLabel="确认恢复"
-          onConfirm={() => { const pending = restorePending; setRestorePending(null); if (pending) void confirmRestore(pending); }}
-          onCancel={() => setRestorePending(null)}
         />
       )}
 

@@ -22,6 +22,7 @@ import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHi
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
+import { resolveCallAvatar } from "@/lib/call-settings";
 
 // ── Types ───────────────────────────────────────────
 
@@ -109,6 +110,8 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const _initUi = resolveUserIdentity(session.contactId, "chat");
     const userNameRef = useRef<string>(_initUi?.name || "你");
     const userAvatarRef = useRef<string | null>(_initUi?.avatarUrl || null);
+    // 通话头像：自定义覆盖 > 角色头像
+    const callAvatar = resolveCallAvatar(session.contactId, character.avatar);
 
     useEffect(() => { stateRef.current = callState; }, [callState]);
     useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
@@ -695,9 +698,9 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                             <span className="ts-60 text-[var(--c-icon)]">{userNameRef.current?.[0] || "?"}</span>
                         </div>
                     )
-                ) : character.avatar ? (
+                ) : callAvatar ? (
                     <img
-                        src={character.avatar}
+                        src={callAvatar}
                         alt={character.name}
                         className="w-full h-full object-cover transition-opacity duration-500 ease-in-out"
                         style={{
@@ -720,8 +723,8 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 title="点击切换大小画面"
             >
                 {pipSwapped ? (
-                    character.avatar ? (
-                        <img src={character.avatar} alt={character.name} className="w-full h-full object-cover" />
+                    callAvatar ? (
+                        <img src={callAvatar} alt={character.name} className="w-full h-full object-cover" />
                     ) : (
                         <span className="ts-18 text-[var(--c-icon)]">{character.name?.[0] || "?"}</span>
                     )
