@@ -40,33 +40,9 @@ export type PushSendResult = {
   errors: string[];
 };
 
-/** 广播给安卓壳的消息载荷：type=call 时壳直接拉起全屏来电页。 */
-export type ShellBroadcastMessage = {
-  type?: "message" | "call";
-  title: string;
-  body: string;
-  url?: string;
-  sessionId?: string;
-  characterName?: string;
-  callTs?: number;
-};
-
 // 安卓壳（FloatShell App）注册的合成订阅端点前缀：不做 Web Push，
 // 改由进程内总线（SSE 长连接）送达。
 const SHELL_ENDPOINT_PREFIX = "shell:";
-
-/** 向某用户的在线壳连接广播一条通知（尽力而为，同步返回是否有在线接收端）。 */
-export function broadcastShellNotify(userId: string, message: ShellBroadcastMessage): boolean {
-  return emitShellNotify(userId, {
-    type: message.type === "call" ? "call" : "message",
-    title: message.title,
-    body: message.body,
-    url: message.url || "/",
-    sessionId: message.sessionId,
-    characterName: message.characterName,
-    callTs: message.callTs,
-  });
-}
 
 /** VAPID subject 必须是 https: 或 mailto:。本地 http 环境回退到 mailto。 */
 export function resolvePushSubject(requestUrl: string): string {
@@ -169,7 +145,12 @@ export async function sendPushToUser(
   const shellSubs = subs.filter(sub => sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
   const webSubs = subs.filter(sub => !sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
   if (shellSubs.length > 0) {
-    const ok = broadcastShellNotify(userId, { title: message.title, body: message.body, url: navigate });
+    const ok = emitShellNotify(userId, {
+      type: "message",
+      title: message.title,
+      body: message.body,
+      url: navigate,
+    });
     if (ok) result.sent += shellSubs.length;
     else result.errors.push("shell not connected");
   }

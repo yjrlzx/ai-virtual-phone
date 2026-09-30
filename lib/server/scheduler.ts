@@ -5,7 +5,7 @@
 // 启动入口：instrumentation.ts 的 register() 在 node 运行时启动后调用一次。
 // 用 globalThis 兜底，避免 Next dev 热重载 / 路由重复 import 造出多份定时器。
 
-import { broadcastShellNotify } from "./push-service";
+import { emitShellNotify } from "./shell-bus";
 import { listDueJobs, markJobFired } from "./push-store";
 
 const TICK_MS = 1000;
@@ -30,7 +30,7 @@ function sweep(): void {
     try {
       const data = JSON.parse(job.payload) as StoredPayload;
       const isCall = job.type === "call";
-      broadcastShellNotify(job.user_id, {
+      emitShellNotify(job.user_id, {
         type: isCall ? "call" : "message",
         title: typeof data.title === "string" && data.title ? data.title : "小手机",
         body: typeof data.body === "string" ? data.body : "",

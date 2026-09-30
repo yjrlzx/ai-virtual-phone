@@ -40,6 +40,21 @@ const nextConfig = {
     "/api/**": ["./data/**"],
   },
   webpack: (config, { isServer, webpack }) => {
+    if (isServer) {
+      // instrumentation/scheduler 这条链把 kv-store(node:fs/path/sqlite) 拉进 bundle 时，
+      // webpack 的 server target 不识别 node: scheme。统一把所有 node: 内置模块标成
+      // external，运行时由 Node 原生 require。
+      config.externals = [
+        ...(Array.isArray(config.externals) ? config.externals : [config.externals]),
+        (ctx, callback) => {
+          const req = ctx && ctx.request;
+          if (typeof req === "string" && (req.startsWith("node:") || ["http", "https", "net", "fs", "path", "os", "crypto", "stream", "util"].includes(req))) {
+            return callback(null, `commonjs ${req}`);
+          }
+          callback();
+        },
+      ];
+    }
     if (!isServer) {
       // @gltf-transform/core 的 dist 引用 node:fs / node:path(带 node: 前缀),
       // 它的 browser 字段只映射了裸 fs/path,webpack 对 node: 前缀报 UnhandledSchemeError。
