@@ -297,6 +297,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false);
   const [avatarUrlDraft, setAvatarUrlDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const peekBgFileRef = useRef<HTMLInputElement | null>(null);
 
   /* 设置写入后用来触发三 Tab 重新读 store 的 tick */
   const [storeTick, setStoreTick] = useState(0);
@@ -905,14 +906,29 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                 ))}
               </div>
 
-              {/* 自定义背景图 URL */}
-              <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 12 }}>自定义背景图 URL（填了就覆盖预设）</div>
-              <input
-                value={callDraft.background.startsWith("preset:") ? "" : callDraft.background}
-                onChange={e => setCallDraft(d => ({ ...d, background: e.target.value }))}
-                placeholder="https://…/bg.jpg"
-                style={{ ...INPUT, marginTop: 6 }}
-              />
+              {/* 从相册选背景图 */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 12 }}>自定义背景图（选了就覆盖预设）</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <button type="button" style={{ ...ACTION_BTN_GHOST, flex: 1, minHeight: 40, fontSize: 12 }}
+                  onClick={() => peekBgFileRef.current?.click()}>
+                  {callDraft.background.startsWith("preset:") ? "从相册选择背景" : "已选相册图 · 重新选"}
+                </button>
+                {!callDraft.background.startsWith("preset:") && (
+                  <button type="button" style={{ ...ACTION_BTN_GHOST, minHeight: 40, fontSize: 12, padding: "0 12px" }}
+                    onClick={() => setCallDraft(d => ({ ...d, background: "preset:ocean" }))}>
+                    清除
+                  </button>
+                )}
+              </div>
+              <input ref={peekBgFileRef} type="file" accept="image/*" style={{ display: "none" }}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const reader = new FileReader();
+                  reader.onload = () => setCallDraft(d => ({ ...d, background: String(reader.result) }));
+                  reader.readAsDataURL(f);
+                  e.target.value = "";
+                }} />
 
               {/* 开关 */}
               <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>

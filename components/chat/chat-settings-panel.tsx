@@ -44,7 +44,8 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, type LucideIcon } from "lucide-react";
+import { loadCallAppearance, saveCallAppearance } from "@/lib/call-settings";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -297,6 +298,8 @@ export function ChatSettingsPanel({
     const [alias, setAlias] = useState<string>(session.alias || "");
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
+    // 通话外观（按角色存 kv）
+    const [callAppearance, setCallAppearance] = useState(() => loadCallAppearance(session.contactId));
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
     // 自定义状态栏（状态区）
     const [statusRegion, setStatusRegion] = useState<StatusRegionConfig>(() => getStatusRegionConfig(session.id));
@@ -1218,6 +1221,66 @@ export function ChatSettingsPanel({
                             <ChevronRight size={16} />
                         </div>
                         <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setVoiceBackground, "voiceBackground")} className="hidden" />
+                    </label>
+                    <label className="menu-item">
+                        <ChatInfoIcon icon={Music} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">通话铃声</span>
+                            <span className="menu-desc">角色来电时播放（选本地音乐文件）</span>
+                        </div>
+                        <div className="menu-right">
+                            {callAppearance.ringtoneUrl ? (
+                                <>
+                                    <span className="menu-desc mr-1">{callAppearance.ringtoneUrl === "" ? "静音" : callAppearance.ringtoneUrl.startsWith("data:") ? "本地音乐" : "自定义"}</span>
+                                    <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => { e.preventDefault(); const next = { ...callAppearance, ringtoneUrl: null }; setCallAppearance(next); saveCallAppearance(session.contactId, next); }}>清除</button>
+                                </>
+                            ) : (
+                                <span className="menu-desc mr-1">跟随系统</span>
+                            )}
+                            <ChevronRight size={16} />
+                        </div>
+                        <input type="file" accept="audio/*" className="hidden"
+                            onChange={e => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                    const next = { ...callAppearance, ringtoneUrl: String(reader.result) };
+                                    setCallAppearance(next);
+                                    saveCallAppearance(session.contactId, next);
+                                };
+                                reader.readAsDataURL(f);
+                                e.target.value = "";
+                            }} />
+                    </label>
+                    <label className="menu-item">
+                        <ChatInfoIcon icon={Video} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">通话头像</span>
+                            <span className="menu-desc">通话页大圆形头像（上传后覆盖角色默认头像）</span>
+                        </div>
+                        <div className="menu-right">
+                            {callAppearance.avatarOverride ? (
+                                <>
+                                    <span className="menu-desc mr-1">已设置</span>
+                                    <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => { e.preventDefault(); const next = { ...callAppearance, avatarOverride: "" }; setCallAppearance(next); saveCallAppearance(session.contactId, next); }}>清除</button>
+                                </>
+                            ) : null}
+                            <ChevronRight size={16} />
+                        </div>
+                        <input type="file" accept="image/*" className="hidden"
+                            onChange={e => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                    const next = { ...callAppearance, avatarOverride: String(reader.result) };
+                                    setCallAppearance(next);
+                                    saveCallAppearance(session.contactId, next);
+                                };
+                                reader.readAsDataURL(f);
+                                e.target.value = "";
+                            }} />
                     </label>
                 </div>
 
