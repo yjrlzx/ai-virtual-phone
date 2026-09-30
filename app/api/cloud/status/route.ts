@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { getCurrentAccount } from "@/lib/server/account-auth";
 import { countSubscriptionForUser } from "@/lib/server/push-store";
 import { countShellListeners } from "@/lib/server/shell-bus";
+import { getKvValue } from "@/lib/server/kv-store";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,15 @@ export async function GET(request: Request) {
       // 数据文件还没建出来就保持 null
     }
 
+    let weixinEnabled = false;
+    try {
+      const raw = getKvValue("weixin_config_v1");
+      if (raw) {
+        const cfg = JSON.parse(raw) as { appId?: string; token?: string };
+        weixinEnabled = Boolean(cfg.appId && cfg.token);
+      }
+    } catch { /* ignore */ }
+
     return NextResponse.json({
       ok: true,
       serverUrl: new URL(request.url).origin,
@@ -42,7 +52,7 @@ export async function GET(request: Request) {
         onlineSessions: countShellListeners(account.id),
       },
       backup: { dbBytes, dbModifiedAt },
-      weixin: { enabled: false },
+      weixin: { enabled: weixinEnabled },
     });
   } catch (err) {
     return NextResponse.json(
