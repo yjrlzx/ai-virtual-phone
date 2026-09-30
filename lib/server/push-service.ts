@@ -5,8 +5,6 @@
 
 import { randomBytes } from "node:crypto";
 
-import webpush from "web-push";
-
 import {
   deleteSubscription,
   getVapidConfigRow,
@@ -15,6 +13,14 @@ import {
   upsertVapidConfig,
 } from "./push-store";
 import { emitShellNotify } from "./shell-bus";
+
+// web-push 是纯 Node 包（依赖 https-proxy-agent → net/http/https），
+// 必须动态 import，避免 Next 在 build 时沿静态引用链把它打进客户端/edge bundle。
+let _webpush: typeof import("web-push") | null = null;
+async function loadWebpush(): Promise<typeof import("web-push")> {
+  if (!_webpush) _webpush = (await import("web-push")).default;
+  return _webpush;
+}
 
 type VapidKeys = { publicKey: string; privateKey: string };
 
@@ -86,7 +92,8 @@ export async function getOrCreateVapidConfig(): Promise<VapidKeys> {
     return { publicKey: existing.vapid_public_key, privateKey: existing.vapid_private_key };
   }
 
-  const keys = webpush.generateVAPIDKeys();
+  const wp = await loadWebpush();
+  const keys = wp.generateVAPIDKeys();
   upsertVapidConfig({
     vapid_public_key: keys.publicKey,
     vapid_private_key: keys.privateKey,
@@ -169,7 +176,8 @@ export async function sendPushToUser(
 
   for (const sub of webSubs) {
     try {
-      await webpush.sendNotification(
+      const wp = await loadWebpush();
+      await wp.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         payload,
         {

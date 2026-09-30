@@ -24,6 +24,9 @@ const nextConfig = {
   typedRoutes: true,
   outputFileTracingRoot: projectRoot,
   distDir: resolveDistDir(),
+  // web-push 及其依赖 https-proxy-agent 是纯 Node 包（依赖 net/http/https 内置模块），
+  // 只能在 Node 运行时 require，不能被 webpack 打进 bundle；Next 会自动 externalize。
+  serverExternalPackages: ["web-push", "https-proxy-agent"],
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -51,6 +54,9 @@ const nextConfig = {
         fs: false,
         path: false,
         module: false,
+        http: false,
+        https: false,
+        net: false,
       };
     }
     return config;
