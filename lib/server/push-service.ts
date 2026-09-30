@@ -1,26 +1,22 @@
 // 服务端 Web Push：VAPID 密钥自举 + 面向账号的推送发送。
-// 密钥存 push_server_config 表（首次调用自动生成），订阅存 push_subscriptions。
+// 密钥存本地 SQLite push_server_config（首次调用自动生成），订阅存 push_subscriptions。
+// 安卓壳（FloatShell App）的长连接收消息走进程内 EventEmitter（shell-bus.ts）
+// + SSE 路由（app/api/push/stream），不再依赖 Supabase Realtime。
 
 import { randomBytes } from "node:crypto";
 
 import webpush from "web-push";
 
-import { encodeSupabaseFilter, getSupabaseServerConfig, supabaseRestFetch } from "./supabase-rest";
+import {
+  deleteSubscription,
+  getVapidConfigRow,
+  listSubscriptionsByUser,
+  touchSubscriptionSuccess,
+  upsertVapidConfig,
+} from "./push-store";
+import { emitShellNotify } from "./shell-bus";
 
 type VapidKeys = { publicKey: string; privateKey: string };
-
-type VapidConfigRow = {
-  vapid_public_key: string;
-  vapid_private_key: string;
-  cron_secret?: string | null;
-  payload_key?: string | null;
-};
-
-type PushSubscriptionRow = {
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-};
 
 export type PushMessage = {
   title: string;
@@ -38,39 +34,32 @@ export type PushSendResult = {
   errors: string[];
 };
 
-// 安卓壳（FloatShell App）注册的合成订阅端点前缀：不能走 Web Push，
-// 改由 Supabase Realtime 广播送达壳内长连接（PushService）。
+/** 广播给安卓壳的消息载荷：type=call 时壳直接拉起全屏来电页。 */
+export type ShellBroadcastMessage = {
+  type?: "message" | "call";
+  title: string;
+  body: string;
+  url?: string;
+  sessionId?: string;
+  characterName?: string;
+  callTs?: number;
+};
+
+// 安卓壳（FloatShell App）注册的合成订阅端点前缀：不做 Web Push，
+// 改由进程内总线（SSE 长连接）送达。
 const SHELL_ENDPOINT_PREFIX = "shell:";
 
-/** 向安卓壳的个人频道 shellpush:<userId> 广播一条通知（尽力而为）。 */
-export async function broadcastShellNotify(
-  userId: string,
-  message: { title: string; body: string; url?: string },
-): Promise<boolean> {
-  const config = getSupabaseServerConfig();
-  if (!config) return false;
-  try {
-    const response = await fetch(`${config.url}/realtime/v1/api/broadcast`, {
-      method: "POST",
-      headers: {
-        apikey: config.key,
-        Authorization: `Bearer ${config.key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messages: [{
-          topic: `shellpush:${userId}`,
-          event: "notify",
-          payload: { title: message.title, body: message.body, url: message.url || "/" },
-        }],
-      }),
-      cache: "no-store",
-    });
-    await response.text().catch(() => undefined);
-    return response.ok;
-  } catch {
-    return false;
-  }
+/** 向某用户的在线壳连接广播一条通知（尽力而为，同步返回是否有在线接收端）。 */
+export function broadcastShellNotify(userId: string, message: ShellBroadcastMessage): boolean {
+  return emitShellNotify(userId, {
+    type: message.type === "call" ? "call" : "message",
+    title: message.title,
+    body: message.body,
+    url: message.url || "/",
+    sessionId: message.sessionId,
+    characterName: message.characterName,
+    callTs: message.callTs,
+  });
 }
 
 /** VAPID subject 必须是 https: 或 mailto:。本地 http 环境回退到 mailto。 */
@@ -85,58 +74,36 @@ export function resolvePushSubject(requestUrl: string): string {
 }
 
 export async function getOrCreateVapidConfig(): Promise<VapidKeys> {
-  const select = "push_server_config?id=eq.main&select=vapid_public_key,vapid_private_key,cron_secret,payload_key&limit=1";
-  const existing = await supabaseRestFetch<VapidConfigRow[]>(select);
-  if (!existing.ok) throw new Error(existing.error);
-  if (existing.data[0]) {
+  const existing = getVapidConfigRow();
+  if (existing) {
     // 老行补齐 cron_secret / payload_key
-    const patch: Record<string, string> = {};
-    if (!existing.data[0].cron_secret) patch.cron_secret = randomBytes(24).toString("hex");
-    if (!existing.data[0].payload_key) patch.payload_key = randomBytes(32).toString("hex");
-    if (Object.keys(patch).length > 0) {
-      await supabaseRestFetch("push_server_config?id=eq.main", {
-        method: "PATCH",
-        body: JSON.stringify(patch),
-      }).catch(() => undefined);
-    }
-    return { publicKey: existing.data[0].vapid_public_key, privateKey: existing.data[0].vapid_private_key };
+    upsertVapidConfig({
+      vapid_public_key: existing.vapid_public_key,
+      vapid_private_key: existing.vapid_private_key,
+      cron_secret: existing.cron_secret || randomBytes(24).toString("hex"),
+      payload_key: existing.payload_key || randomBytes(32).toString("hex"),
+    });
+    return { publicKey: existing.vapid_public_key, privateKey: existing.vapid_private_key };
   }
 
   const keys = webpush.generateVAPIDKeys();
-  const insert = await supabaseRestFetch("push_server_config", {
-    method: "POST",
-    headers: { Prefer: "resolution=ignore-duplicates" },
-    body: JSON.stringify([{
-      id: "main",
-      vapid_public_key: keys.publicKey,
-      vapid_private_key: keys.privateKey,
-      cron_secret: randomBytes(24).toString("hex"),
-      payload_key: randomBytes(32).toString("hex"),
-    }]),
+  upsertVapidConfig({
+    vapid_public_key: keys.publicKey,
+    vapid_private_key: keys.privateKey,
+    cron_secret: randomBytes(24).toString("hex"),
+    payload_key: randomBytes(32).toString("hex"),
   });
-  if (!insert.ok) throw new Error(insert.error);
-
-  // 并发自举时可能有另一实例先写入——以表里的最终行为准。
-  const again = await supabaseRestFetch<VapidConfigRow[]>(select);
-  if (!again.ok) throw new Error(again.error);
-  if (again.data[0]) {
-    return { publicKey: again.data[0].vapid_public_key, privateKey: again.data[0].vapid_private_key };
-  }
   return keys;
 }
 
-/** 快照加解密密钥：存表共享，Next 路由与 Edge Function 从同一来源读取，
- *  彻底避免两端环境变量 service key 不一致导致的解密失败。 */
+/** 快照加解密密钥：存本地表共享，Next 路由统一从同一来源读取。 */
 export async function getOrCreatePushPayloadKey(): Promise<string> {
-  const select = "push_server_config?id=eq.main&select=payload_key&limit=1";
-  const existing = await supabaseRestFetch<{ payload_key?: string | null }[]>(select);
-  if (!existing.ok) throw new Error(existing.error);
-  if (existing.data[0]?.payload_key) return existing.data[0].payload_key;
+  const existing = getVapidConfigRow();
+  if (existing?.payload_key) return existing.payload_key;
   // 行不存在或列为空：走 VAPID 自举顺带补齐，再读一次
   await getOrCreateVapidConfig();
-  const again = await supabaseRestFetch<{ payload_key?: string | null }[]>(select);
-  if (!again.ok) throw new Error(again.error);
-  const key = again.data[0]?.payload_key;
+  const again = getVapidConfigRow();
+  const key = again?.payload_key;
   if (!key) throw new Error("payload_key bootstrap failed");
   return key;
 }
@@ -148,10 +115,7 @@ export async function sendPushToUser(
   subject: string,
 ): Promise<PushSendResult> {
   const vapid = await getOrCreateVapidConfig();
-  const subs = await supabaseRestFetch<PushSubscriptionRow[]>(
-    `push_subscriptions?user_id=eq.${encodeSupabaseFilter(userId)}&select=endpoint,p256dh,auth`,
-  );
-  if (!subs.ok) throw new Error(subs.error);
+  const subs = listSubscriptionsByUser(userId);
 
   const navigate = (() => {
     if (message.url) {
@@ -193,18 +157,17 @@ export async function sendPushToUser(
       },
     },
   });
-  const result: PushSendResult = { sent: 0, total: subs.data.length, errors: [] };
+  const result: PushSendResult = { sent: 0, total: subs.length, errors: [] };
 
-  const shellSubs = subs.data.filter(sub => sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
-  const webSubs = subs.data.filter(sub => !sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
+  const shellSubs = subs.filter(sub => sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
+  const webSubs = subs.filter(sub => !sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
   if (shellSubs.length > 0) {
-    const ok = await broadcastShellNotify(userId, { title: message.title, body: message.body, url: navigate });
+    const ok = broadcastShellNotify(userId, { title: message.title, body: message.body, url: navigate });
     if (ok) result.sent += shellSubs.length;
-    else result.errors.push("shell broadcast failed");
+    else result.errors.push("shell not connected");
   }
 
   for (const sub of webSubs) {
-    const endpointFilter = `push_subscriptions?endpoint=eq.${encodeSupabaseFilter(sub.endpoint)}`;
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
@@ -215,17 +178,14 @@ export async function sendPushToUser(
         },
       );
       result.sent += 1;
-      await supabaseRestFetch(endpointFilter, {
-        method: "PATCH",
-        body: JSON.stringify({ last_ok_at: new Date().toISOString(), fail_count: 0 }),
-      }).catch(() => undefined);
+      touchSubscriptionSuccess(sub.endpoint);
     } catch (err) {
       const statusCode = typeof err === "object" && err && "statusCode" in err
         ? Number((err as { statusCode?: unknown }).statusCode)
         : 0;
       if (statusCode === 404 || statusCode === 410) {
         // 订阅已在系统侧失效（用户删了 PWA / 撤销授权）——清掉这行。
-        await supabaseRestFetch(endpointFilter, { method: "DELETE" }).catch(() => undefined);
+        deleteSubscription(sub.endpoint, userId);
       } else {
         result.errors.push(err instanceof Error ? err.message : String(err));
       }

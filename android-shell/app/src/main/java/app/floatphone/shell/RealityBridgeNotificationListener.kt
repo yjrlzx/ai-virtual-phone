@@ -1,8 +1,17 @@
 package app.floatphone.shell
 
 import android.app.Notification
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.os.Bundle
+import android.os.Parcelable
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 import java.util.LinkedHashMap
 import java.util.regex.Pattern
 
@@ -20,6 +29,7 @@ object RealityBridgeNotificationStore {
         val title: String,
         val text: String,
         val ts: Long,
+        val avatar: String,
     )
 
     private val lock = Any()
@@ -41,7 +51,7 @@ object RealityBridgeNotificationStore {
         "向(.{1,12})(?:付款|转账|支付)|(?:付款给|支付给)(.{1,12})|(?:商户|收款方|收款人)[:：\\s]+(.{1,12})"
     )
 
-    fun upsert(sbn: StatusBarNotification) {
+    fun upsert(sbn: StatusBarNotification, ctx: Context) {
         val key = sbn.key
         val n = sbn.notification ?: return
         val extras = n.extras
@@ -49,8 +59,9 @@ object RealityBridgeNotificationStore {
         val body = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val big = extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
         val text = listOf(body, big).filter { it.isNotBlank() }.distinct().joinToString(" ")
+        val avatar = extractAvatar(ctx, extras)
         synchronized(lock) {
-            entries[key] = Entry(key, sbn.packageName ?: "", title, text, sbn.postTime)
+            entries[key] = Entry(key, sbn.packageName ?: "", title, text, sbn.postTime, avatar)
             while (entries.size > 200) {
                 val it = entries.entries.iterator()
                 it.next()
@@ -75,7 +86,8 @@ object RealityBridgeNotificationStore {
                 sb.append("\"pkg\":").append(jsonStr(e.packageName)).append(",")
                 sb.append("\"title\":").append(jsonStr(e.title)).append(",")
                 sb.append("\"text\":").append(jsonStr(e.text)).append(",")
-                sb.append("\"ts\":").append(e.ts)
+                sb.append("\"ts\":").append(e.ts).append(",")
+                sb.append("\"avatar\":").append(jsonStr(e.avatar))
                 sb.append("}")
             }
             sb.append("\n]")
@@ -134,6 +146,54 @@ object RealityBridgeNotificationStore {
         return null
     }
 
+    /** 从通知 extras 提取发送者头像：优先 EXTRA_LARGE_ICON（微信等聊天通知），退而求其次 EXTRA_PICTURE；压缩成 data URI。 */
+    private fun extractAvatar(ctx: Context, extras: Bundle?): String {
+        extras ?: return ""
+        val bmp = runCatching {
+            val obj: Parcelable? = extras.getParcelable<Parcelable>(Notification.EXTRA_LARGE_ICON)
+                ?: extras.getParcelable<Parcelable>(Notification.EXTRA_PICTURE)
+            when (obj) {
+                is Bitmap -> obj
+                is android.graphics.drawable.Icon -> drawableToBitmap(obj.loadDrawable(ctx))
+                else -> null
+            }
+        }.getOrNull() ?: return ""
+        return bitmapToDataUri(bmp)
+    }
+
+    private fun drawableToBitmap(d: Drawable?): Bitmap? {
+        d ?: return null
+        (d as? BitmapDrawable)?.bitmap?.let { return it }
+        val w = d.intrinsicWidth.coerceAtLeast(1)
+        val h = d.intrinsicHeight.coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        d.setBounds(0, 0, w, h)
+        d.draw(canvas)
+        return bmp
+    }
+
+    /** 最长边压到 96px、JPEG 质量 80 后 base64，避免单条通知几 MB。 */
+    private fun bitmapToDataUri(src: Bitmap): String {
+        return runCatching {
+            val longest = maxOf(src.width, src.height)
+            val bmp = if (longest > 96) {
+                val ratio = 96f / longest
+                Bitmap.createScaledBitmap(
+                    src,
+                    (src.width * ratio).toInt().coerceAtLeast(1),
+                    (src.height * ratio).toInt().coerceAtLeast(1),
+                    true,
+                )
+            } else {
+                src
+            }
+            val baos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+            "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        }.getOrDefault("")
+    }
+
     private fun jsonStr(v: String?): String {
         if (v == null) return "null"
         return "\"" + v
@@ -147,12 +207,12 @@ object RealityBridgeNotificationStore {
 class RealityBridgeNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         if (android.os.Build.VERSION.SDK_INT >= 23) {
-            runCatching { activeNotifications?.forEach { RealityBridgeNotificationStore.upsert(it) } }
+            runCatching { activeNotifications?.forEach { RealityBridgeNotificationStore.upsert(it, this@RealityBridgeNotificationListener) } }
         }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        RealityBridgeNotificationStore.upsert(sbn)
+        RealityBridgeNotificationStore.upsert(sbn, this)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {

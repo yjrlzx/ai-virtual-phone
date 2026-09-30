@@ -9,12 +9,13 @@
 | 能力 | 网页版（安卓 Chrome） | 安卓壳 |
 | --- | --- | --- |
 | 页面功能 | ✅ | ✅ 完全一致（加载同一网页） |
-| 离线推送 | 依赖 FCM（需 GMS + 能连 Google） | ✅ 自建 Supabase Realtime 长连接，无 GMS 也能收 |
+| 离线推送 | 依赖 FCM（需 GMS + 能连 Google） | ✅ 自建 SSE 长连接（站点自身后端推送），无 GMS 也能收 |
 | 网页更新 | 自动 | ✅ 同样自动（壳只是浏览器，部署即生效） |
 
-推送链路：`push-generate` 边缘函数生成完离线消息后，除了发 Web Push，
-还会向 Supabase Realtime 的个人频道 `shellpush:<userId>` 广播一份；
-壳内前台服务保持一条 WebSocket 长连接订阅该频道，收到即弹系统通知。
+推送链路：服务端任何模块（测试按钮、快捷指令、定时调度器）要给壳发消息时，
+直接向进程内 EventEmitter 广播；SSE 路由 `/api/push/stream` 把事件写进响应流，
+壳内前台服务保持一条 SSE 长连接（带登录 Cookie），收到 `data: {...}` 即弹系统通知；
+`type=call` 的事件直接拉起全屏来电页响铃。
 设置页的「测试」按钮走同一条链路，可直接验证。
 
 ## 一键构建（GitHub Actions）
@@ -89,7 +90,7 @@ base64 -w0 shell.keystore   # 得到一长串 base64
 android-shell/
 ├── app/src/main/java/app/floatphone/shell/
 │   ├── MainActivity.kt   # 全屏 WebView：站内导航/外链/文件选择/下载/返回键
-│   ├── PushService.kt    # 前台服务：借 WebView Cookie 取配置 → WS 长连接订阅 shellpush:<userId>
+│   ├── PushService.kt    # 前台服务：借 WebView Cookie 登录 → SSE 长连接 /api/push/stream
 │   └── BootReceiver.kt   # 开机自启
 └── ...gradle 工程
 ```
@@ -99,13 +100,13 @@ android-shell/
   `requestIgnoreBatteryOptimization()` 三个方法。
 - 推送服务首次连上后会向站点注册一条合成订阅（endpoint `shell:<userId>`），
   用途是让离线消息排期的「账号已订阅」门控放行；服务端对它只做
-  Realtime 广播，不做 Web Push 投递。
+  进程内 SSE 推送，不做 Web Push 投递。
 - 壳内设置页的「离线推送」开关由壳自动接管（显示为已开启且不可关），
   Web Push 在 WebView 里本来就不可用。
 
 ## 服务端前提
 
-- Supabase 项目已按 `docs/push-supabase.sql` 配好离线推送（pg_cron + 边缘函数）。
-- `supabase/functions/push-generate/index.ts` 需要是包含 shellpush 广播的最新版
-  （改动后需重新部署边缘函数）。
-- Realtime 广播用 service key 直接调 HTTP API，无需额外建表或改配置。
+- 站点是 node 长跑进程（自托管），SSE 长连接可用；
+  VAPID 密钥与壳订阅落在服务端本地 SQLite（`data/float.db`）。
+- 定时来电/消息由进程内调度器扫描 `scheduled_jobs` 表，到点经 SSE 推送，
+  网页端通过 `POST /api/push/schedule` 预约。

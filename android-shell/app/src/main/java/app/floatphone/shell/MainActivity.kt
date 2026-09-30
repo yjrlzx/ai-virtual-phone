@@ -851,6 +851,22 @@ class MainActivity : AppCompatActivity() {
             return """{"ok":true}"""
         }
 
+        /** 设置来电铃声：uri 为系统铃声 Uri；空串 = 只振动不响铃；未设置时跟随系统默认铃声。 */
+        @JavascriptInterface
+        fun setCallRingtone(uri: String): String {
+            CallAlert.ringtoneUri = uri
+            return """{"ok":true}"""
+        }
+
+        /** 读取当前来电铃声设置（uri 空串 = 未设置/跟随系统；网页显式设空串则只振动不响铃）。 */
+        @JavascriptInterface
+        fun getCallRingtone(): String {
+            return org.json.JSONObject()
+                .put("ok", true)
+                .put("uri", CallAlert.ringtoneUri ?: "")
+                .toString()
+        }
+
         /** 开启常驻语音唤醒（前台服务）。configJson: {wakeWord, mode:"system"|"on_device"}；命中回传 window.__floatBridgeOnWakeWord。 */
         @JavascriptInterface
         fun startWakeWord(configJson: String): String {
@@ -917,7 +933,7 @@ class MainActivity : AppCompatActivity() {
             org.json.JSONObject().put("ok", true).put("templates", templates.size).toString()
         }.getOrElse { errJson(it.message) }
 
-        /** 文本朗读（TTS 队列）。configJson: {text, queue?, rate?, pitch?, languageTag?}；事件异步回传 window.__floatBridgeOnTtsEvent。 */
+        /** 文本朗读（TTS 队列）。configJson: {text, queue?, rate?, pitch?, languageTag?, apiKey?, voiceId?, baseUrl?, model?}；事件异步回传 window.__floatBridgeOnTtsEvent。 */
         @JavascriptInterface
         fun speak(configJson: String): String = runCatching {
             val cfg = org.json.JSONObject(configJson)
@@ -927,8 +943,22 @@ class MainActivity : AppCompatActivity() {
             val rate = cfg.optDouble("rate", 1.0).toFloat()
             val pitch = cfg.optDouble("pitch", 1.0).toFloat()
             val lang = cfg.optString("languageTag", "zh-CN")
+            val apiKey = cfg.optString("apiKey", "")
+            val voiceId = cfg.optString("voiceId", "")
+            val baseUrl = cfg.optString("baseUrl", "")
+            val model = cfg.optString("model", "")
             ShellTts.attach(this@MainActivity) { json -> deliverTtsEventToWeb(json) }
-            ShellTts.speak(text, interrupt = !queue, rate = rate, pitch = pitch, languageTag = lang)
+            ShellTts.speak(
+                text,
+                interrupt = !queue,
+                rate = rate,
+                pitch = pitch,
+                languageTag = lang,
+                apiKey = apiKey,
+                voiceId = voiceId,
+                baseUrl = baseUrl,
+                model = model,
+            )
             """{"ok":true}"""
         }.getOrElse { errJson(it.message) }
 

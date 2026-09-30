@@ -991,7 +991,7 @@ export function ToolboxSettings() {
                         const isExpanded = expandedCompositePackageIds.has(pkg.id);
                         return (
                             <div key={pkg.id} className="flex flex-col gap-1.5">
-                                <div className="ui-group-card !flex-row !items-center">
+                                <div className={`ui-group-card !flex-row !items-center${pkg.enabled ? "" : " opacity-50"}`}>
                                     <button
                                         type="button"
                                         onClick={() => toggleCompositePackageExpanded(pkg.id)}
@@ -1032,7 +1032,7 @@ export function ToolboxSettings() {
                                 </div>
 
                                 {isExpanded && (
-                                    <div className="ml-3 flex flex-col gap-1.5 border-l border-[var(--c-border)] pl-3">
+                                    <div className={`ml-3 flex flex-col gap-1.5 border-l border-[var(--c-border)] pl-3${pkg.enabled ? "" : " opacity-50"}`}>
                                         {children.length === 0 ? (
                                             <div className="ui-group-card py-2">
                                                 <span className="menu-desc !mt-0">暂无组合工具</span>

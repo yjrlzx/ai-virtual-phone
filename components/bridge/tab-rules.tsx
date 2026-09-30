@@ -185,7 +185,7 @@ function RuleWizard({
   const [step, setStep] = useState(1);
   const [pipe, setPipe] = useState<PipeStatus | null>(() => readPipeStatus());
   const [testResult, setTestResult] = useState<string | null>(null);
-  const [recentNotifs, setRecentNotifs] = useState<Array<{ pkg: string; title: string; text: string }> | null>(null);
+  const [recentNotifs, setRecentNotifs] = useState<Array<{ pkg: string; title: string; text: string; avatar: string }> | null>(null);
 
   const set = (patch: Partial<Draft>) => setDraft(d => ({ ...d, ...patch }));
 
@@ -253,6 +253,7 @@ function RuleWizard({
             pkg: String(n.pkg ?? ""),
             title: String(n.title ?? ""),
             text: String(n.text ?? ""),
+            avatar: typeof n.avatar === "string" ? n.avatar : "",
           })));
         } catch {
           setRecentNotifs([]);
@@ -515,8 +516,16 @@ function RuleWizard({
               <label style={{ ...fieldLabel, marginTop: 0 }}>最近通知预览（看信号能否命中）</label>
               {recentNotifs.length === 0 ? <div style={{ fontSize: 11.5, color: FAINT }}>暂无可读通知。</div> :
                 recentNotifs.map((n, i) => (
-                  <div key={i} style={{ fontSize: 11.5, color: SUB, padding: "5px 0", borderBottom: "1px solid rgba(150,190,230,.15)" }}>
-                    <Badge tone="gray" text={n.pkg || "未知"} /> <span style={{ marginLeft: 6 }}>{n.title || n.text}</span>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: SUB, padding: "5px 0", borderBottom: "1px solid rgba(150,190,230,.15)" }}>
+                    {n.avatar ? (
+                      <img
+                        src={n.avatar}
+                        alt=""
+                        style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", flex: "0 0 auto" }}
+                      />
+                    ) : null}
+                    <Badge tone="gray" text={n.pkg || "未知"} />
+                    <span style={{ marginLeft: 6, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.title || n.text}</span>
                   </div>
                 ))}
             </div>

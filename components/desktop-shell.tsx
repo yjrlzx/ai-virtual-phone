@@ -21,7 +21,6 @@ import { PhoneQaApp } from "@/components/phone-qa-app";
 import { ChatPluginPageBoundary } from "@/components/chat/chat-plugin-page-boundary";
 import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
-import { RealityBridgeApp } from "@/components/reality-bridge-app";
 import { HuaweiBridgeApp } from "@/components/huawei-bridge-app";
 import { HuaweiPeekApp } from "@/components/huawei-peek-app";
 import { LifelineApp } from "@/components/lifeline-app";
@@ -4038,9 +4037,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
     if (activeApp === "calendar") {
       return <PhoneCalendarApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
-    }
-    if (activeApp === "realitybridge") {
-      return <RealityBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
     }
     if (activeApp === "huaweibridge") {
       return <HuaweiBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;

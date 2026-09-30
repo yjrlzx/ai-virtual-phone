@@ -13,7 +13,7 @@ const DB_PATH = path.join(DB_DIR, "float.db");
 
 let _db: DatabaseSync | null = null;
 
-function getDb(): DatabaseSync {
+export function getDatabase(): DatabaseSync {
   if (_db) return _db;
   fs.mkdirSync(DB_DIR, { recursive: true });
   const db = new DatabaseSync(DB_PATH);
@@ -23,25 +23,25 @@ function getDb(): DatabaseSync {
 }
 
 export function getAllKvEntries(): Array<{ key: string; value: string }> {
-  const db = getDb();
+  const db = getDatabase();
   const rows = db.prepare("SELECT key, value FROM kv").all() as Array<{ key: string; value: string }>;
   return rows;
 }
 
 export function getKvValue(key: string): string | null {
-  const db = getDb();
+  const db = getDatabase();
   const row = db.prepare("SELECT value FROM kv WHERE key = ?").get(key) as { value: string } | undefined;
   return row ? row.value : null;
 }
 
 export function setKvValue(key: string, value: string): void {
-  const db = getDb();
+  const db = getDatabase();
   db.prepare(
     "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   ).run(key, value);
 }
 
 export function deleteKvValue(key: string): void {
-  const db = getDb();
+  const db = getDatabase();
   db.prepare("DELETE FROM kv WHERE key = ?").run(key);
 }

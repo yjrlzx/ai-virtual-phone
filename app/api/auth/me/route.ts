@@ -9,6 +9,7 @@ import {
 import { ACCOUNT_GATE_COOKIE } from "@/lib/account-cookie-constants";
 import { createAccountGateCookieValue } from "@/lib/account-gate-cookie";
 import { formatSupabaseRestError, getSupabaseServerConfig } from "@/lib/server/supabase-rest";
+import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
 
 function authSetupError(message: string): string {
   if (/app_users|activation_codes|app_sessions|schema cache|does not exist|PGRST/i.test(message)) {
@@ -19,7 +20,8 @@ function authSetupError(message: string): string {
 
 export async function GET(request: Request) {
   try {
-    if (!getSupabaseServerConfig()) {
+    // 自托管模式走本地账号（local_user），不依赖 Supabase 环境变量
+    if (!getSupabaseServerConfig() && !isSelfHostedModeEnabled()) {
       return NextResponse.json({ ok: false, account: null, error: "Supabase 环境变量未配置。" }, { status: 503 });
     }
     const account = await getCurrentAccount(request);

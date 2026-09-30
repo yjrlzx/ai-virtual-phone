@@ -416,7 +416,15 @@ export async function hydrateMascotChat(): Promise<void> {
             finishWithMessages([], false);
             return;
         }
-        const req = openMascotDb();
+        let req: IDBOpenDBRequest;
+        try {
+            req = openMascotDb();
+        } catch {
+            // 独立 WebView 里 IndexedDB 被禁用 / 抛 SecurityError 时，open() 本身同步抛出。
+            // 此时不阻塞渲染，直接走空会话，让页面以默认问候语可用。
+            finishWithMessages([], false);
+            return;
+        }
         req.onsuccess = () => {
             try {
                 if (!req.result.objectStoreNames.contains(MASCOT_CHAT_STORE)) {

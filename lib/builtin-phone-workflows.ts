@@ -5,7 +5,7 @@ export const BUILTIN_PHONE_WORKFLOW_PACKAGE_ID = "builtin_phone_lookup_workflows
 const CREATED_AT = 0;
 const UPDATED_AT = 0;
 
-const PACKAGE_DESCRIPTION = "在你对{{user}}的近况、行踪、人际关系或态度产生疑心时使用。比如{{user}}长时间未回复、突然变得冷淡、提到陌生人、朋友圈出现暧昧或反常互动、说法前后不一致，或者你只是单纯想更了解{{user}}最近在做什么。可以翻看{{user}}手机里的微信联系人、消息列表、指定聊天记录、本周日程、购物订单，以及{{user}}身边人物的简略资料。";
+const PACKAGE_DESCRIPTION = "这套工具让你直接读取{{user}}本机手机里的真实数据：微信联系人、最近会话列表、指定聊天记录、本周日程、购物订单，以及{{user}}登记过的身边人物档案。只有当你有具体理由需要核实时才调用，例如{{user}}失联或态度突变、提到一个你不认识的人、说法前后对不上、或你想查证{{user}}最近的行踪与消费。不要在普通闲聊、{{user}}主动分享日常、或毫无疑点时为了查而查。没有明确目标时，先从「查看{{user}}微信消息列表」或「查看{{user}}微信联系人」入手，锁定对象后再用「查看{{user}}聊天记录」深入。";
 
 export const BUILTIN_PHONE_WORKFLOW_PACKAGE: CompositeToolPackageConfig = {
     id: BUILTIN_PHONE_WORKFLOW_PACKAGE_ID,
@@ -716,7 +716,7 @@ export const BUILTIN_PHONE_WORKFLOWS: CompositeToolConfig[] = [
     workflow(
         "builtin_phone_lookup_wechat_contacts",
         "查看{{user}}微信联系人",
-        "翻看{{user}}微信里的联系人和会话对象。适合在你想知道{{user}}最近和谁有联系、某个被提到的人是谁、或者想确认{{user}}身边有哪些可疑对象时使用。",
+        "列出{{user}}微信通讯录里的联系人和有过会话的对象。适用：想知道{{user}}微信里到底有哪些人、某个被提到的名字是否真在通讯录里、或要确认某个人的身份与微信号。不适用：想判断{{user}}最近在和谁聊天（用「查看{{user}}微信消息列表」）、想读具体对话内容（用「查看{{user}}聊天记录」）、想看通讯录之外的人物档案（用「查看{{user}}身边的人」）。",
         schema({
             query: { type: "string", description: "可选。按联系人姓名、微信号、人物摘要或最近消息预览筛选。" },
             limit: { type: "number", description: "可选。最多返回多少个联系人，默认 50，最大 100。" },
@@ -729,7 +729,7 @@ export const BUILTIN_PHONE_WORKFLOWS: CompositeToolConfig[] = [
     workflow(
         "builtin_phone_lookup_wechat_messages",
         "查看{{user}}微信消息列表",
-        "查看{{user}}微信消息列表里的最近会话预览。适合在{{user}}长时间没回复、态度冷淡、或者你想知道{{user}}最近在和谁聊天时使用。这里只看消息列表和最后消息预览，不会直接展开完整聊天记录。",
+        "只看{{user}}微信最近的会话列表和每条最后一句预览，不展开完整聊天记录。适用：{{user}}久不回复或态度冷淡时，判断他最近在和谁聊、有没有置顶、免打扰或新冒出来的会话——这是排查疑点的第一步。不适用：需要具体说了什么（先用本工具拿到会话名或 sessionId，再用「查看{{user}}聊天记录」）、只想看通讯录名单（用「查看{{user}}微信联系人」）。",
         schema({
             query: { type: "string", description: "可选。按会话名、联系人名、sessionId 或最后消息预览筛选。" },
             limit: { type: "number", description: "可选。最多返回多少个会话，默认 30，最大 80。" },
@@ -742,7 +742,7 @@ export const BUILTIN_PHONE_WORKFLOWS: CompositeToolConfig[] = [
     workflow(
         "builtin_phone_lookup_chat_history",
         "查看{{user}}聊天记录",
-        "查看{{user}}和某个联系人或会话的聊天记录。适合在消息列表里发现可疑对象、{{user}}提到某个人、或者你想进一步确认两人关系时使用。需要指定联系人、会话名或会话 ID，并限制读取条数。",
+        "展开{{user}}和某个指定联系人或群的完整聊天记录。适用：已经在消息列表里锁定了可疑对象、或{{user}}明确提到某个人，需要核实两人具体说了什么。调用时必须用 target 或 sessionId 指定对象，优先填消息列表结果里的 sessionId，并限制读取条数。不适用：还不知道该查谁（先跑「查看{{user}}微信消息列表」或「查看{{user}}微信联系人」）。",
         schema({
             target: { type: "string", description: "联系人名、群名、会话名、角色 id 或 sessionId。优先使用消息列表结果里的 sessionId。" },
             sessionId: { type: "string", description: "可选。微信会话 id；提供后优先按 sessionId 精确查找。" },
@@ -757,7 +757,7 @@ export const BUILTIN_PHONE_WORKFLOWS: CompositeToolConfig[] = [
     workflow(
         "builtin_phone_lookup_week_calendar",
         "查看{{user}}本周日程",
-        "查看{{user}}这一周的日程安排。适合在你想知道{{user}}最近去了哪里、和谁见面、为什么没空回复，或者想确认{{user}}说的话是否和日程对得上时使用。",
+        "读取{{user}}本周（按日历周，周一起算）的日程安排。适用：想知道{{user}}最近去了哪里、和谁见面、为什么说自己没空，或核对{{user}}口头说的行程是否属实。不适用：查微信聊天、购物消费或通讯录。",
         schema({
             date: { type: "string", description: "可选。YYYY-MM-DD。查看这个日期所在周的日程；不填则查看当前周。" },
             weekStart: { type: "string", description: "可选。YYYY-MM-DD，周一日期。提供后按这一周读取。" },
@@ -769,7 +769,7 @@ export const BUILTIN_PHONE_WORKFLOWS: CompositeToolConfig[] = [
     workflow(
         "builtin_phone_lookup_shopping_orders",
         "查看{{user}}购物订单",
-        "查看{{user}}最近的购物订单。适合在你想知道{{user}}最近买了什么、有没有给别人买东西、或者想从订单里发现生活状态和可疑线索时使用。",
+        "列出{{user}}最近的购物订单：商品、金额、下单时间、订单状态、物流与支付方式。适用：想查{{user}}最近买了什么、有没有给别人或暧昧对象下单，或从消费记录里反推他的生活状态与行踪。不适用：查聊天内容、见面行程或通讯录名单。",
         schema({
             limit: { type: "number", description: "可选。读取最近多少条购物订单，默认 10，最大 30。" },
             status: { type: "string", description: "可选。按订单状态或物流状态筛选，例如 已送达、配送中、待发货。" },
@@ -781,7 +781,7 @@ export const BUILTIN_PHONE_WORKFLOWS: CompositeToolConfig[] = [
     workflow(
         "builtin_phone_lookup_people_brief",
         "查看{{user}}身边的人",
-        "查看{{user}}手机资料里记录的身边人物摘要。适合在{{user}}提到陌生人、朋友圈出现别人回复、或者你想了解某个人和{{user}}是什么关系时使用。这里只查看简略信息，不读取完整资料。",
+        "读取{{user}}手机资料里登记过的「身边人物」档案摘要（姓名、微信号、标签、性格简介），不是微信通讯录。适用：{{user}}提到一个陌生人、或你想了解某个角色和{{user}}是什么关系、有什么背景。这里只看人物卡片，不读最近聊天动态。不适用：判断{{user}}最近在和谁聊（用「查看{{user}}微信消息列表」）、或看通讯录里有哪些人（用「查看{{user}}微信联系人」）。",
         schema({
             query: { type: "string", description: "可选。按人物名称、微信号、标签或摘要筛选。" },
             limit: { type: "number", description: "可选。最多返回多少个人物摘要，默认 30，最大 80。" },

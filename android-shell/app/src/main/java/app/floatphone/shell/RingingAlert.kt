@@ -1,9 +1,6 @@
 package app.floatphone.shell
 
 import android.content.Context
-import android.media.Ringtone
-import android.media.RingtoneManager
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
@@ -11,13 +8,12 @@ import android.os.Vibrator
 import android.os.VibratorManager
 
 /**
- * 来电铃声+震动（微信式提醒）：
- * 播放系统默认来电铃声（循环）+ 循环振动（复用 CallAlert 的振动节奏），
- * 超时或 stopRing() 收场。与 CallAlert（纯振动）并存：ring() 可同时调它。
+ * 来电铃声+震动的测试桥（ring()/stopRing()）。
+ * 铃声循环复用 CallAlert.playRingtone/stopRingtone（真正的来电也走这套，
+ * 不保留第二份铃声逻辑）；这里只额外跑一个振动循环 + 超时收场，供网页测试。
  */
 object RingingAlert {
 
-    private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
     private val handler = Handler(Looper.getMainLooper())
     private var timeoutRunnable: Runnable? = null
@@ -35,21 +31,11 @@ object RingingAlert {
         }
     }.getOrNull()
 
-    /** 开始响铃+震动。timeoutMs 秒后自动收场（默认 30s）。 */
+    /** 开始响铃+震动。timeoutMs 毫秒后自动收场（默认 30s）。 */
     fun start(context: Context, timeoutMs: Long = 30_000L) {
         stop()
         ringing = true
-        runCatching {
-            val uri: Uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            if (uri != null) {
-                val rt = RingtoneManager.getRingtone(context, uri)
-                if (rt != null) {
-                    rt.isLooping = true
-                    rt.play()
-                    ringtone = rt
-                }
-            }
-        }
+        CallAlert.playRingtone(context)
         val pattern = longArrayOf(0, 500, 250, 500, 1400)
         vibrator = systemVibrator(context)?.also { v ->
             runCatching {
@@ -74,8 +60,7 @@ object RingingAlert {
         ringing = false
         timeoutRunnable?.let { handler.removeCallbacks(it) }
         timeoutRunnable = null
-        runCatching { ringtone?.stop() }
-        runCatching { ringtone = null }
+        CallAlert.stopRingtone()
         runCatching { vibrator?.cancel() }
         vibrator = null
     }

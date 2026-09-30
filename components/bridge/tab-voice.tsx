@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getAndroidShell, loadHuaweiShellSettings, parseShellJson } from "@/lib/huawei-shell/storage";
 import type { HuaweiShellBridge, HuaweiWakeWordMode } from "@/lib/huawei-shell/types";
+import { resolveVoiceConfig } from "@/lib/tts-service";
 import {
   ACCENT,
   BTN,
@@ -64,7 +65,19 @@ type TranscriptItem = { ts: number; text: string };
 /** 下发一次 TTS；未提供能力时静默返回 false */
 function doSpeak(shell: HuaweiShellBridge, cfg: VoiceConfig, text: string, queue: boolean): boolean {
   if (typeof shell.speak !== "function") return false;
-  shell.speak(JSON.stringify({ text, queue, rate: cfg.rate, pitch: cfg.pitch }));
+  const payload: Record<string, unknown> = { text, queue, rate: cfg.rate, pitch: cfg.pitch };
+  // 解析当前角色绑定的 MiniMax 音色：有 apiKey 就把在线合成参数带给壳，
+  // 让壳走 MiniMax 在线 TTS 而不是系统 TTS；没配则回退系统 TTS。
+  try {
+    const vc = resolveVoiceConfig("voice-assistant");
+    if (vc && vc.provider === "Minimax" && vc.apiKey) {
+      payload.apiKey = vc.apiKey;
+      payload.voiceId = vc.defaultVoice;
+      if (vc.baseUrl) payload.baseUrl = vc.baseUrl;
+      if (vc.model) payload.model = vc.model;
+    }
+  } catch { /* 音色解析失败回退系统 TTS */ }
+  shell.speak(JSON.stringify(payload));
   return true;
 }
 

@@ -108,6 +108,10 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const sttWarningShownRef = useRef(false);
     const subtitleScrollRef = useRef<HTMLDivElement>(null);
     const messagesRef = useRef<ChatMessage[]>([]);
+    // 已落库字幕 ID 集合：通话中每完成一轮 user/assistant pushChatMessage 就记一笔；
+    // 挂断/卸载时据此把只在字幕状态机里、还没进 store 的真实轮次补齐。
+    const persistedSubIdsRef = useRef<Set<string>>(new Set());
+    const subtitlesRef = useRef<SubtitleEntry[]>([]);
     const _initUi = resolveUserIdentity(session.contactId, "chat");
     const userNameRef = useRef<string>(_initUi?.name || "你");
 
@@ -115,6 +119,29 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     useEffect(() => { stateRef.current = callState; }, [callState]);
     useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
     useEffect(() => { mutedRef.current = isMuted; }, [isMuted]);
+    useEffect(() => { subtitlesRef.current = subtitles; }, [subtitles]);
+
+    // 把只在字幕状态机里、还没进 store 的真实轮次补落库。
+    // 已通过 pushChatMessage 落库的字幕 ID 在 persistedSubIdsRef 里，跳过；
+    // 错误提示（⚠️ 开头）不是真实对话，不补。
+    const flushUnpersistedSubtitles = useCallback(() => {
+        for (const sub of subtitlesRef.current) {
+            if (persistedSubIdsRef.current.has(sub.id)) continue;
+            const text = sub.text.trim();
+            if (!text || text.startsWith("⚠️")) continue;
+            try {
+                const msg = pushChatMessage({
+                    sessionId: session.id,
+                    role: sub.role === "user" ? "user" : "assistant",
+                    content: text,
+                });
+                messagesRef.current = [...messagesRef.current, msg];
+                persistedSubIdsRef.current.add(sub.id);
+            } catch { /* 补落库失败不阻塞挂断 */ }
+        }
+    }, [session.id]);
+    const flushRef = useRef(flushUnpersistedSubtitles);
+    useEffect(() => { flushRef.current = flushUnpersistedSubtitles; }, [flushUnpersistedSubtitles]);
 
     // 缩小为悬浮窗：冻结通话——停止监听、打断在播放的语音
     useEffect(() => {
@@ -164,6 +191,8 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         return () => {
             stateRef.current = "ENDED";
             delete (window as unknown as { __huaweiCallActive?: boolean }).__huaweiCallActive;
+            // 组件被卸载（切会话/返回聊天页而非挂断键）时，补齐没落库的对话轮次
+            try { flushRef.current(); } catch { /* 忽略 */ }
             if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
             if (audioAbortRef.current) { audioAbortRef.current(); audioAbortRef.current = null; }
             try { const sh = getAndroidShell(); if (sh && typeof sh.stopListening === "function") sh.stopListening(); } catch { /* 忽略 */ }
@@ -397,6 +426,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
             // Add user subtitle
             setSubtitles(prev => [...prev, { id: userMsg.id, role: "user", text: userText }]);
+            persistedSubIdsRef.current.add(userMsg.id);
         }
 
         // 2. Switch to PROCESSING
@@ -425,6 +455,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             // 5. Add AI subtitle
             const subtitleId = `ai-${Date.now()}`;
             setSubtitles(prev => [...prev, { id: subtitleId, role: "assistant", text: displayText }]);
+            persistedSubIdsRef.current.add(subtitleId);
 
             // 缩小为悬浮窗期间收到的回复：只静默记录文字，不播放语音
             if (minimizedRef.current) {
@@ -781,6 +812,9 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             window.speechSynthesis.cancel();
         }
 
+        // 挂断前补齐还在字幕状态机里、没落库的真实对话轮次
+        flushUnpersistedSubtitles();
+
         const endMsg = pushChatMessage({
             sessionId: session.id,
             role: "user",
@@ -791,7 +825,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
         // Delay then close
         setTimeout(() => onEnd(), 1500);
-    }, [session.id, callDuration, onEnd]);
+    }, [session.id, callDuration, onEnd, flushUnpersistedSubtitles]);
 
     // ── Render ──────────────────────────────────────
 

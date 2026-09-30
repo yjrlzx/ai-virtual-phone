@@ -104,7 +104,12 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
     const [lockedDraft, setLockedDraft] = useState<string[]>(() => loadHuaweiShellSettings().lockedPackages);
     const [newPackage, setNewPackage] = useState("");
     const [ledger, setLedger] = useState(() => getHuaweiLedgerSummary());
-    const [testOutput, setTestOutput] = useState<{ label: string; text: string; ok: boolean } | null>(null);
+    const [testOutput, setTestOutput] = useState<{
+        label: string;
+        text: string;
+        ok: boolean;
+        notifications?: Array<{ avatar: string; pkg: string; title: string; text: string }>;
+    } | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
     const [permStatus, setPermStatus] = useState("");
     const [ocrPackagesDraft, setOcrPackagesDraft] = useState<string[]>(() => loadHuaweiShellSettings().ocrScanPackages);
@@ -276,12 +281,16 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
         onNotice?.(`已从手机读取 ${list.length} 个门禁锁 App`);
     };
 
-    const runTest = async (label: string, fn: () => string | Promise<string>) => {
+    const runTest = async (label: string, fn: () => string | Promise<string> | { text: string; notifications?: Array<{ avatar: string; pkg: string; title: string; text: string }> }) => {
         setBusy(label);
         setTestOutput(null);
         try {
-            const text = await fn();
-            setTestOutput({ label, text, ok: true });
+            const result = await fn();
+            if (typeof result === "string") {
+                setTestOutput({ label, text: result, ok: true });
+            } else {
+                setTestOutput({ label, text: result.text, ok: true, notifications: result.notifications });
+            }
         } catch (err) {
             setTestOutput({ label, text: err instanceof Error ? err.message : String(err), ok: false });
         } finally {
@@ -320,7 +329,14 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
         if (!r.ok) throw new Error(r.error);
         const list = Array.isArray(r.data) ? r.data : [];
         if (list.length === 0) return "暂无通知（请先在 系统设置 → 通知使用权 开启）";
-        return list.map((item, i) => `${i + 1}. [${item.pkg ?? ""}] ${item.title ?? ""} ${item.text ?? ""}`.trim()).join("\n");
+        const notifications = list.map(item => ({
+            avatar: typeof item.avatar === "string" ? item.avatar : "",
+            pkg: String(item.pkg ?? ""),
+            title: String(item.title ?? ""),
+            text: String(item.text ?? ""),
+        }));
+        const text = notifications.map((n, i) => `${i + 1}. [${n.pkg}] ${n.title} ${n.text}`.trim()).join("\n");
+        return { text, notifications };
     });
 
     const testLedger = () => runTest("同步账本", () => {
@@ -1396,7 +1412,27 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
                 {testOutput && (
                     <div className={`hw-test-output ${testOutput.ok ? "hw-test-ok" : "hw-test-err"}`}>
                         <div className="hw-test-label">{testOutput.label}</div>
-                        <pre className="hw-test-text">{testOutput.text}</pre>
+                        {testOutput.notifications?.length ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
+                                {testOutput.notifications.map((n, i) => (
+                                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, lineHeight: 1.4 }}>
+                                        {n.avatar ? (
+                                            <img
+                                                src={n.avatar}
+                                                alt=""
+                                                style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", flex: "0 0 auto" }}
+                                            />
+                                        ) : null}
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontWeight: 600 }}>{n.title || n.pkg}</div>
+                                            {n.text ? <div style={{ opacity: 0.7 }}>{n.text}</div> : null}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <pre className="hw-test-text">{testOutput.text}</pre>
+                        )}
                     </div>
                 )}
             </div>
