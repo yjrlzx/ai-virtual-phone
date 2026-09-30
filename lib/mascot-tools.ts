@@ -1120,6 +1120,12 @@ export const MASCOT_APP_LOCK_TOOL: MascotSubTool = {
     },
 };
 
+export const MASCOT_OPEN_PEEK_TOOL: MascotSubTool = {
+    name: "打开掌心窗",
+    description: "主动唤起掌心窗（你在窗边陪伴的那个小窗）。适用于你说'我把掌心窗打开了''来窗边陪你一会儿'时。",
+    parameterSchema: { type: "object", properties: {} },
+};
+
 const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
     MASCOT_NAVIGATE_TOOL,
     MASCOT_CALL_TOOL,
@@ -1127,6 +1133,7 @@ const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
     MASCOT_COMPANION_DAYS_TOOL,
     MASCOT_TARGET_APP_TOOL,
     MASCOT_APP_LOCK_TOOL,
+    MASCOT_OPEN_PEEK_TOOL,
 ];
 
 // ── 文本协议下的工具列表渲染 ─────────────────────────────
@@ -1150,6 +1157,7 @@ export function buildMascotToolsListPrompt(): string {
     lines.push("  参数：headline (可选) — 来电时想说的一句话。");
     lines.push("【独立工具】护眼休息 — 触发 5 分钟屏幕休息，让用户歇眼睛。");
     lines.push("【独立工具】读取陪伴天数 — 读取你和用户在一起的天数。");
+    lines.push("【独立工具】打开掌心窗 — 唤起你在窗边陪伴的掌心窗。");
     lines.push("【独立工具】登记目标App — 把 App 加到守护目标列表。参数：name(必填), package(可选)。");
     lines.push("【独立工具】锁定或解锁App — 应用门禁。参数：action(lock/unlock), package(必填)。");
     lines.push("");
@@ -1233,6 +1241,7 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "读取陪伴天数": "mascot_read_companion_days",
     "登记目标App": "mascot_target_app",
     "锁定或解锁App": "mascot_app_lock",
+    "打开掌心窗": "mascot_open_peek",
     "读取CSS": "mascot_read_css",
     "覆写CSS": "mascot_write_css",
     "清除CSS": "mascot_clear_css",
@@ -1488,6 +1497,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "读取陪伴天数": return handleReadCompanionDays();
             case "登记目标App": return handleTargetApp(call.args);
             case "锁定或解锁App": return handleAppLock(call.args);
+            case "打开掌心窗": return handleOpenPeek();
 
             default:
                 return { name: call.name, success: false, error: `未知工具：${call.name}` };
@@ -3016,6 +3026,7 @@ function handleScreenBreak(): ToolResult {
 }
 
 /** 读取陪伴天数：与掌心窗读同一份 companionMeta。 */
+/** 读取陪伴天数：与掌心窗读同一份 companionMeta。 */
 function handleReadCompanionDays(): ToolResult {
     try {
         const meta = readCompanionMeta();
@@ -3026,6 +3037,19 @@ function handleReadCompanionDays(): ToolResult {
         return { name: "读取陪伴天数", success: true, data: `我们在一起的第 ${days} 天（从 ${meta.startDate} 开始）` };
     } catch {
         return { name: "读取陪伴天数", success: false, error: "读取陪伴天数失败" };
+    }
+}
+
+/** 打开掌心窗：走 mascot-navigate 唤起桌面里的 huaweipeek。 */
+function handleOpenPeek(): ToolResult {
+    if (typeof window === "undefined") {
+        return { name: "打开掌心窗", success: false, error: "当前不在手机环境" };
+    }
+    try {
+        window.dispatchEvent(new CustomEvent("mascot-navigate", { detail: { app: "huaweipeek" } }));
+        return { name: "打开掌心窗", success: true, data: "已打开掌心窗，来窗边陪你了" };
+    } catch {
+        return { name: "打开掌心窗", success: false, error: "打开掌心窗失败" };
     }
 }
 
