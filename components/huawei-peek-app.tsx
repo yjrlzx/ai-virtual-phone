@@ -92,8 +92,7 @@ const TITLEBAR: CSSProperties = {
   fontSize: 15,
   fontWeight: 800,
   color: INK,
-  background: "rgba(255,255,255,.55)",
-  backdropFilter: "blur(12px)",
+  background: "rgba(255,255,255,.86)",
   borderBottom: "1px solid rgba(126,200,255,.35)",
 };
 
@@ -112,8 +111,7 @@ const TAB_BTN: CSSProperties = {
   fontWeight: 700,
   fontSize: 13,
   color: INK_SOFT,
-  background: "rgba(255,255,255,.6)",
-  backdropFilter: "blur(8px)",
+  background: "rgba(255,255,255,.9)",
 };
 
 const TAB_BTN_ON: CSSProperties = {
@@ -125,9 +123,7 @@ const TAB_BTN_ON: CSSProperties = {
 };
 
 const CARD: CSSProperties = {
-  background: "rgba(255,255,255,.68)",
-  backdropFilter: "blur(14px)",
-  WebkitBackdropFilter: "blur(14px)",
+  background: "rgba(255,255,255,.9)",
   border: "1px solid rgba(126,200,255,.32)",
   borderRadius: 18,
   padding: "14px 16px",
@@ -241,6 +237,11 @@ function triggerLabel(date: Date, time: string): string {
 
 /* ---------- 主组件 ---------- */
 
+/** 两个小结构是否内容相同；相同就让 React 跳过这次 setState，避免 15s 轮询整树重渲染。 */
+function sameJson(a: unknown, b: unknown): boolean {
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+}
+
 export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNotice?: (t: string) => void }) {
   const [tab, setTab] = useState<"today" | "companion" | "guard">("today");
   const [showSettings, setShowSettings] = useState(false);
@@ -254,9 +255,11 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const [footprint, setFootprint] = useState<HuaweiFootprintEntry[]>(() => loadHuaweiFootprint().slice(0, 5));
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [dots] = useState(() => readPeekCalendarDots());
+  /* 归电全屏来电覆盖层是否展开 */
+  const [callOverlayOpen, setCallOverlayOpen] = useState(false);
 
   /* 设置写入后用来触发三 Tab 重新读 store 的 tick */
-  const [, setStoreTick] = useState(0);
+  const [storeTick, setStoreTick] = useState(0);
   const bump = useCallback(() => setStoreTick(t => t + 1), []);
 
   /* 返回：按钮先渐隐缩小，再真正卸载（与 reality-bridge 同构） */
@@ -267,15 +270,52 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     window.setTimeout(onClose, 200);
   }, [closing, onClose]);
 
-  /* ---- 以下都在每次渲染时从 store 现读，bump 后三 Tab 立即生效 ---- */
-  const companion = loadCharacters()[0];
-  const cname = readCompanionName(companion?.name);
-  const companionMeta = readCompanionMeta();
-  const dayCount = companionDayCount(companionMeta.startDate);
-  const nextAnni = nextAnniversary(companionMeta.anniversaries);
-  const focusGoal = readFocusGoalMin();
-  const companionActions = readCompanionActions();
-  const guardEvents = readPeekGuardEvents();
+  /* ---- 派生数据：只在 storeTick（设置保存）或壳推送状态真正变化时才重读 localStorage。
+     原来每次渲染都现读十几次，切 tab / 打字 / 15s 轮询都会触发，中端 WebView 上明显掉帧。 ---- */
+  const derived = useMemo(() => {
+    const companion = loadCharacters()[0];
+    const cname = readCompanionName(companion?.name);
+    const companionMeta = readCompanionMeta();
+    const dayCount = companionDayCount(companionMeta.startDate);
+    const nextAnni = nextAnniversary(companionMeta.anniversaries);
+    const focusGoal = readFocusGoalMin();
+    const companionActions = readCompanionActions();
+    const guardEvents = readPeekGuardEvents();
+
+    const mConfig = loadMenstrualConfig();
+    const mRecords = loadMenstrualRecords();
+    let menstrualLabel = "未开启周期记录";
+    if (mConfig.enabled) {
+      if (mConfig.currentPeriodStartDate) {
+        const start = new Date(`${mConfig.currentPeriodStartDate}T00:00:00`);
+        const dayIdx = Math.max(1, Math.round((Date.now() - start.getTime()) / 86400000) + 1);
+        menstrualLabel = `经期第 ${dayIdx} 天（自 ${mConfig.currentPeriodStartDate}）`;
+      } else {
+        const next = getNextPredictedPeriodStart(mRecords, mConfig);
+        if (next) {
+          const days = Math.round((new Date(`${next}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86400000);
+          menstrualLabel = `下次预计 ${next}，还有 ${days} 天`;
+        }
+      }
+    }
+
+    const shellSettings = loadHuaweiShellSettings();
+    const targetApps = shellSettings.customActions
+      .filter(a => a.type === "open_app")
+      .map(a => ({ name: a.name, pkg: a.packageName || a.openApp || "" }));
+
+    const customLines = readCustomWindowLines();
+
+    return {
+      companion, cname, companionMeta, dayCount, nextAnni, focusGoal,
+      companionActions, guardEvents, menstrualLabel, targetApps, customLines,
+    };
+  }, [storeTick, status, currentApp, locked, footprint, diaries]);
+
+  const {
+    companion, cname, companionMeta, dayCount, nextAnni, focusGoal,
+    companionActions, guardEvents, menstrualLabel, targetApps, customLines,
+  } = derived;
 
   /* ---- 设置面板草稿 ---- */
   const [nameDraft, setNameDraft] = useState(() => readCompanionName(loadCharacters()[0]?.name));
@@ -305,18 +345,25 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     const shell = getAndroidShell();
     if (!avail || !shell) return;
 
+    /* 以下每个 setState 都先和现值浅比一遍：壳状态没真变就沿用旧引用，
+       React 直接 bail，避免每 15 秒把整屏磨砂卡重渲染一遍。 */
     const st = invokeShellJson<Record<string, unknown>>(s => (s.getStatus ? s.getStatus() : null));
-    if (st.ok) setStatus(st.data);
+    if (st.ok) setStatus(prev => sameJson(prev, st.data) ? prev : st.data);
     const app = invokeShellJson<Record<string, unknown>>(s => (s.getCurrentApp ? s.getCurrentApp() : null));
-    if (app.ok && typeof app.data.currentApp === "string") setCurrentApp(app.data.currentApp);
-    if (typeof shell.isFocusing === "function") {
-      try { setFocusing(!!shell.isFocusing()); } catch { /* 忽略 */ }
+    const currentApp = app.ok && typeof app.data.currentApp === "string" ? app.data.currentApp : "";
+    if (currentApp) setCurrentApp(prev => prev === currentApp ? prev : currentApp);
+    const isFocusingFn = typeof shell.isFocusing === "function" ? shell.isFocusing : null;
+    if (isFocusingFn) {
+      try { setFocusing(prev => { const next = !!isFocusingFn(); return prev === next ? prev : next; }); } catch { /* 忽略 */ }
     }
-    setLocked(readLockedPackagesFromShell());
-    setFootprint(loadHuaweiFootprint().slice(0, 5));
-    setWindowLine(readWindowLine());
+    const lockedNext = readLockedPackagesFromShell();
+    setLocked(prev => sameJson(prev, lockedNext) ? prev : lockedNext);
+    const footprintNext = loadHuaweiFootprint().slice(0, 5);
+    setFootprint(prev => sameJson(prev, footprintNext) ? prev : footprintNext);
+    setWindowLine(prev => prev === readWindowLine() ? prev : readWindowLine());
     const cid = loadCharacters()[0]?.id;
-    setDiaries(cid ? loadDiaryEntries().filter(e => e.characterId === cid).slice(0, 3) : []);
+    const diariesNext = cid ? loadDiaryEntries().filter(e => e.characterId === cid).slice(0, 3) : [];
+    setDiaries(prev => sameJson(prev, diariesNext) ? prev : diariesNext);
   }, []);
 
   useEffect(() => {
@@ -359,46 +406,56 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     onNotice?.(r.ok ? "已帮你息屏" : (r.error || "连接壳后才能息屏"));
   }, [onNotice]);
 
+  /** 立即停掉壳的铃声+震动（壳不可用时静默跳过）。 */
+  const stopRing = useCallback(() => {
+    try {
+      const shell = getAndroidShell();
+      if (shell && typeof shell.stopRing === "function") shell.stopRing();
+    } catch { /* 停震失败不阻断 */ }
+  }, []);
+
+  /* 掌心窗被关掉时兜底停震，避免铃声在后台一直响。 */
+  useEffect(() => {
+    return () => {
+      try {
+        const shell = getAndroidShell();
+        if (shell && typeof shell.stopRing === "function") shell.stopRing();
+      } catch { /* 忽略 */ }
+    };
+  }, []);
+
   const triggerGuidian = useCallback(() => {
-    const shell = getAndroidShell();
-    if (!shell || typeof shell.ring !== "function") {
-      onNotice?.("连接壳后才能归电");
-      return;
-    }
-    try { shell.ring(15); } catch { /* 响铃失败不阻断事件 */ }
-    try { window.dispatchEvent(new CustomEvent("ai-call-trigger", { detail: { type: "voice" } })); } catch { /* 忽略 */ }
-    onNotice?.("归电：电话响起来啦");
-  }, [onNotice]);
+    /* 能连壳就启铃声+循环震动；连不上也照弹来电窗，只是不响铃。 */
+    try {
+      const shell = getAndroidShell();
+      if (shell && typeof shell.ring === "function") shell.ring(15);
+    } catch { /* 响铃失败不阻断弹窗 */ }
+    setCallOverlayOpen(true);
+  }, []);
+
+  /** 挂断：停震、关窗，不再派发通话事件。 */
+  const hangupCall = useCallback(() => {
+    stopRing();
+    setCallOverlayOpen(false);
+  }, [stopRing]);
+
+  /** 接听：停震、关窗，派发带 sessionId 的 ai-call-trigger 让 desktop-shell 接管进对话。 */
+  const acceptCall = useCallback(() => {
+    stopRing();
+    setCallOverlayOpen(false);
+    try {
+      const detail: { sessionId?: string; type: "voice" } = { type: "voice" };
+      const cid = loadCharacters()[0]?.id;
+      if (cid) detail.sessionId = cid;
+      window.dispatchEvent(new CustomEvent("ai-call-trigger", { detail }));
+    } catch { /* 忽略 */ }
+  }, [stopRing]);
 
   const syncLocked = useCallback(() => {
     const list = readLockedPackagesFromShell();
     const r = pushLockedPackagesToShell(list);
     onNotice?.(r.ok ? `门禁列表已同步（${list.length} 个 App）` : (r.error || "门禁同步失败"));
   }, [onNotice]);
-
-  /* 周期提醒 */
-  const mConfig = loadMenstrualConfig();
-  const mRecords = loadMenstrualRecords();
-  let menstrualLabel = "未开启周期记录";
-  if (mConfig.enabled) {
-    if (mConfig.currentPeriodStartDate) {
-      const start = new Date(`${mConfig.currentPeriodStartDate}T00:00:00`);
-      const dayIdx = Math.max(1, Math.round((Date.now() - start.getTime()) / 86400000) + 1);
-      menstrualLabel = `经期第 ${dayIdx} 天（自 ${mConfig.currentPeriodStartDate}）`;
-    } else {
-      const next = getNextPredictedPeriodStart(mRecords, mConfig);
-      if (next) {
-        const days = Math.round((new Date(`${next}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86400000);
-        menstrualLabel = `下次预计 ${next}，还有 ${days} 天`;
-      }
-    }
-  }
-
-  /* 目标 App（web 无编辑入口，只读：登记为 open_app 的自定义动作） */
-  const settings = loadHuaweiShellSettings();
-  const targetApps = settings.customActions
-    .filter(a => a.type === "open_app")
-    .map(a => ({ name: a.name, pkg: a.packageName || a.openApp || "" }));
 
   /* 守护日历矩阵 */
   const nowDate = new Date();
@@ -429,7 +486,6 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
 
   const dateSummary = `${month + 1}月${nowDate.getDate()}日 · ${"日一二三四五六"[nowDate.getDay()]}`;
   const latestFootprint = footprint[0];
-  const customLines = readCustomWindowLines();
 
   return (
     <div style={WINDOW_STYLE}>
@@ -1039,6 +1095,72 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
           </>
         )}
       </div>
+
+      {/* ============ 归电：全屏来电覆盖层 ============ */}
+      {callOverlayOpen && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          display: "flex", flexDirection: "column", alignItems: "center",
+          paddingTop: `calc(${SAFE_TOP} + 26px)`,
+          background: "linear-gradient(180deg,#2c4a6e 0%,#4aa8ef 55%,#7ec8ff 100%)",
+          color: "#fff",
+        }}>
+          <div style={{ fontSize: 12, letterSpacing: 4, fontWeight: 700, opacity: .85 }}>来电中…</div>
+
+          {/* char 头像 */}
+          <div style={{ marginTop: 46 }}>
+            {companion?.avatar ? (
+              <img src={companion.avatar} alt="" style={{
+                width: 108, height: 108, borderRadius: "50%", objectFit: "cover",
+                border: "3px solid rgba(255,255,255,.85)",
+                boxShadow: "0 10px 28px rgba(44,74,110,.4)",
+              }} />
+            ) : (
+              <span style={{
+                width: 108, height: 108, borderRadius: "50%",
+                background: "linear-gradient(135deg,#bfe4ff,#4aa8ef)",
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                fontSize: 44, border: "3px solid rgba(255,255,255,.85)",
+                boxShadow: "0 10px 28px rgba(44,74,110,.4)",
+              }}>🤍</span>
+            )}
+          </div>
+
+          <div style={{ fontSize: 28, fontWeight: 800, marginTop: 20 }}>{cname}</div>
+          <div style={{ fontSize: 13, marginTop: 8, opacity: .9 }}>{cname}想和你说说话</div>
+
+          {/* iOS 风格：左挂断(红) 右接听(绿) */}
+          <div style={{ marginTop: "auto", marginBottom: 64, display: "flex", gap: 84 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+              <button
+                type="button" aria-label="挂断" onClick={hangupCall}
+                style={{
+                  width: 68, height: 68, borderRadius: "50%", border: "none", cursor: "pointer",
+                  fontSize: 28, color: "#fff",
+                  background: "linear-gradient(135deg,#ff8a8a,#e84545)",
+                  boxShadow: "0 8px 20px rgba(180,40,40,.45)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  transform: "rotate(135deg)",
+                }}
+              >📞</button>
+              <span style={{ fontSize: 12, fontWeight: 700, opacity: .95 }}>挂断</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+              <button
+                type="button" aria-label="接听" onClick={acceptCall}
+                style={{
+                  width: 68, height: 68, borderRadius: "50%", border: "none", cursor: "pointer",
+                  fontSize: 28, color: "#fff",
+                  background: "linear-gradient(135deg,#63d68f,#37b568)",
+                  boxShadow: "0 8px 20px rgba(30,140,70,.45)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >📞</button>
+              <span style={{ fontSize: 12, fontWeight: 700, opacity: .95 }}>接听</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

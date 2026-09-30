@@ -21,10 +21,10 @@ const LB_TITLEBAR: CSSProperties = {
   marginTop: SAFE_TOP,
   padding: "10px 14px",
   borderRadius: "14px 14px 0 0",
-  background: "linear-gradient(180deg, rgba(255,255,255,.85), rgba(224,236,250,.55))",
+  /* 去 backdrop-filter：P60 WebView 上顶栏磨砂在开屏动画期间会跟外层重采样导致掉帧/画不全，
+     这里本来就是浅色顶栏，用近不透明渐变即可。 */
+  background: "linear-gradient(180deg, rgba(255,255,255,.97), rgba(224,236,250,.94))",
   borderBottom: "1px solid rgba(150,190,225,.45)",
-  backdropFilter: "blur(10px)",
-  WebkitBackdropFilter: "blur(10px)",
   color: "#2c4a6e",
   fontWeight: 600,
   fontSize: 15,

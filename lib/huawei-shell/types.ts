@@ -47,10 +47,67 @@ export type HuaweiShellBridge = {
     startWakeWord?(configJson: string): string;
     stopWakeWord?(): string;
     enrollWakeWord?(): string;
+    /** 语音合成朗读。configJson: {text, queue?, rate?, pitch?, languageTag?}；事件异步回传 window.__floatBridgeOnTtsEvent */
+    speak?(configJson: string): string;
+    /** 停止当前朗读并清空朗读队列 */
+    stopSpeak?(): string;
+    /** 查询朗读状态 → {ok, speaking, queueLength, engine} */
+    ttsStatus?(): string;
+    /** 列出端上已录制唤醒词模板数 → {ok, count} */
+    listWakeTemplates?(): string;
+    /** 清空端上已录制唤醒词模板 → {ok, cleared} */
+    clearWakeTemplates?(): string;
     ocrPaymentsCapture?(configJson: string): string;
     readGadgetbridgeHealth?(exportPath: string): string;
     getPermissionStatus?(customSuCommand?: string): string;
     openPermissionSettings?(setting: string): string;
+
+    /** Shizuku 执行 shell，返回 {ok, stdout, stderr, exitCode}（照搬 Operit 系统操作核心） */
+    executeShellCommand?(command: string): string;
+    /** 弹窗请求 Shizuku 授权，返回 {ok, message} */
+    requestShizukuPermission?(): string;
+    /** 列出已安装应用，返回 {ok, count, apps:[{pkg,label,isSystem,isEnabled}]} */
+    getInstalledApps?(): string;
+    /** 安装壳内置的 Shizuku APK，返回 {ok, message} */
+    installBundledShizuku?(): string;
+    /** 管理应用：action ∈ force_stop / enable / disable / uninstall，返回 {ok, message} */
+    manageApp?(action: string, packageName: string): string;
+    /** 开关飞行模式（需 Shizuku / 写设置），返回 {ok, message} */
+    setAirplaneMode?(on: boolean): string;
+    /** 拉起安卓悬浮小窗里的速聊 WebView（/chat-float） */
+    openFloatingChat?(): void;
+
+    // ── 补全 Operit 能力：点按 / Toast / 媒体键 / 蓝牙 / 文件 / 设置读写 / 用量 / 文件分享 ──
+    /** 无障碍点按（归一化 0..1000 坐标）→ {ok} */
+    tap?(x: number, y: number): string;
+    /** 弹短 Toast → {ok} */
+    toast?(text: string): string;
+    /** 媒体键：action ∈ play_pause / next / previous / stop → {ok, action, code, viaShizuku} */
+    musicControl?(action: string): string;
+    /** 蓝牙状态 → {ok, available, enabled} */
+    getBluetoothState?(): string;
+    /** 开关蓝牙 → {ok, on, enabled} */
+    setBluetoothEnabled?(on: boolean): string;
+    /** 列已配对蓝牙设备 → {ok, devices:[{name,address}]}（API31+ 需 BLUETOOTH_CONNECT） */
+    listBondedDevices?(): string;
+    /** 写 UTF-8 文本文件（自动建父目录）→ {ok, path, bytes} */
+    writeFile?(path: string, content: string): string;
+    /** 删除文件或目录（目录递归删除）→ {ok, path} */
+    deleteFile?(path: string): string;
+    /** 建目录（含父目录）→ {ok, path} */
+    makeDirectory?(path: string): string;
+    /** 递归查找文件（最多 3 层、100 条）→ {ok, matches:[{path,size,isDir}], count} */
+    findFiles?(rootPath: string, query: string): string;
+    /** 读系统设置：namespace ∈ system / secure / global → {ok, namespace, key, value} */
+    getSystemSetting?(namespace: string, key: string): string;
+    /** 写系统设置：namespace ∈ system / secure / global（写 system 需 WRITE_SETTINGS）→ {ok, namespace, key, value} */
+    setSystemSetting?(namespace: string, key: string, value: string): string;
+    /** 今日应用使用时长 TOP20 → {ok, usages:[{pkg,totalTimeMs}]}（需用量访问权限） */
+    getAppUsageTime?(): string;
+    /** 用系统查看器打开文件（FileProvider 临时授权）→ {ok, path, mime} */
+    openFile?(path: string): string;
+    /** 经系统分享面板发送文件（FileProvider 临时授权）→ {ok} */
+    shareFile?(path: string, mime: string): string;
 };
 
 /** 桥返回的统一 JSON 外壳：{ok:boolean, ...}，失败时带 error 字段 */
@@ -88,18 +145,47 @@ export type HuaweiCustomAction = {
     type: HuaweiCustomActionType;
     /** 告诉角色何时使用 */
     description: string;
-    /** open_app：应用包名（默认值；char 调用时可覆盖） */
+    /** open_app：应用包名（默认值；char 调用时可覆盖，支持 {参数名} 占位） */
     packageName?: string;
-    /** send_notification：标题 / 内容 / 点击后打开的应用包名 */
+    /** send_notification：标题 / 内容 / 点击后打开的应用包名（支持 {参数名} 占位） */
     title?: string;
     content?: string;
     openApp?: string;
     /** read_status：读取哪个内置状态 */
     statusKey?: HuaweiStatusKey;
-    /** shell：要执行的命令 */
+    /** shell：要执行的命令（支持 {参数名} 占位） */
     command?: string;
+    /** 调用动作时需要传入的运行参数（命令/标题/正文里用 {key} 占位） */
+    params?: HuaweiActionParam[];
+    /** 执行完是否把结果回传：none=发完即走，text=把结果摘要送达 */
+    resultMode?: HuaweiActionResultMode;
+    /** 结果摘要的送达方式：notification=系统通知栏，clipboard=写入剪贴板 */
+    deliveryMode?: HuaweiActionDelivery;
     enabled: boolean;
     createdAt: number;
+};
+
+/** 自定义动作的运行参数：调用时收集值，填进命令/标题/正文里的 {key} 占位 */
+export type HuaweiActionParam = {
+    key: string;
+    type: "string" | "number";
+    description: string;
+};
+
+/** 动作执行结果回传模式 */
+export type HuaweiActionResultMode = "none" | "text";
+
+/** 动作结果摘要的送达方式 */
+export type HuaweiActionDelivery = "notification" | "clipboard";
+
+/** 现实桥事件日志：规则命中 / 动作执行 / 主动查询 的逐条记录，历史记录 Tab 展示 */
+export type HuaweiBridgeEvent = {
+    id: string;
+    ts: number;
+    kind: "rule" | "action" | "query";
+    title: string;
+    detail?: string;
+    ok: boolean;
 };
 
 /** 自动联动规则触发方式 */
@@ -131,6 +217,10 @@ export type HuaweiTriggerRule = {
     actionPackageName?: string;
     /** custom_action 动作参数：用户登记的自定义动作名 */
     actionName?: string;
+    /** 通知命中后的内容加工方式：raw=按固定文案发送，template=把命中通知文本填进 {payload} 占位 */
+    processMode?: "raw" | "template";
+    /** template 模式下发送的正文模板，{payload}/{title}/{text} 会被替换成命中通知内容 */
+    contentTemplate?: string;
     /** 上次触发时间（防抖） */
     lastTriggeredAt?: number;
     /** 通知类规则：已处理的最大通知时间戳 */
@@ -186,7 +276,21 @@ export type HuaweiPermissionStatus = {
     standard: { location: boolean; microphone: boolean; storage: boolean };
     accessibility: boolean;
     notificationListener: boolean;
-    debugger: { shell: boolean; file: boolean };
+    debugger: {
+        shell: boolean;
+        file: boolean;
+        shizukuInstalled: boolean;
+        shizukuRunning: boolean;
+        shizukuPermission: boolean;
+    };
     admin: { mediaProjection: boolean; overlay: boolean; writeSettings: boolean };
     root: { available: boolean; granted: boolean; hint: string };
+};
+
+/** getInstalledApps 返回的单个应用条目 */
+export type HuaweiInstalledApp = {
+    pkg: string;
+    label: string;
+    isSystem: boolean;
+    isEnabled: boolean;
 };

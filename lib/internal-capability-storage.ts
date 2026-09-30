@@ -1855,15 +1855,26 @@ const HUAWEI_READ_FILE_PARAMETER_SCHEMA = JSON.stringify({
     },
 });
 
+const HUAWEI_MANAGE_APP_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        action: { type: "string", enum: ["force_stop", "enable", "disable", "uninstall"], description: "force_stop=强制停止 / enable=启用 / disable=停用（保留数据）/ uninstall=卸载（需 Shizuku）" },
+        packageName: { type: "string", description: "应用包名，例如微信 com.tencent.mm、支付宝 com.eg.android.AlipayGphone" },
+    },
+    required: ["action", "packageName"],
+});
+
+const HUAWEI_AIRPLANE_MODE_PARAMETER_SCHEMA = JSON.stringify({
+    type: "object",
+    properties: {
+        on: { type: "boolean", description: "true=打开飞行模式，false=关闭；不填默认 true（需 Shizuku）" },
+    },
+});
+
 const HUAWEI_SHELL_SUBTOOLS: InternalToolDefinition[] = [
     {
         name: "查看手机状态",
         description: "读取{{user}}华为手机实时状态：电量、音量、网络、无障碍、悬浮球、门禁锁 App 数量。",
-        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
-    },
-    {
-        name: "实时天气",
-        description: "读取{{user}}当前位置的实时天气（自动定位，不写死城市）：温度、体感、湿度、降水、风力。",
         parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
     },
     {
@@ -1965,6 +1976,16 @@ const HUAWEI_SHELL_SUBTOOLS: InternalToolDefinition[] = [
         name: "读取文件",
         description: "读取{{user}}华为手机上的文件内容（文本/图片），默认定位到 Download 下载目录，供备份查看。",
         parameterSchema: HUAWEI_READ_FILE_PARAMETER_SCHEMA,
+    },
+    {
+        name: "管理应用",
+        description: "管理{{user}}华为手机上的应用：强制停止 / 启用 / 停用 / 卸载指定包名的 App（需 Shizuku 授权）。",
+        parameterSchema: HUAWEI_MANAGE_APP_PARAMETER_SCHEMA,
+    },
+    {
+        name: "飞行模式",
+        description: "开关{{user}}华为手机的飞行模式（true 开 / false 关，需 Shizuku 授权）。",
+        parameterSchema: HUAWEI_AIRPLANE_MODE_PARAMETER_SCHEMA,
     },
     {
         name: "语音转文字",
@@ -2276,17 +2297,13 @@ function buildHuaweiShellUsageGuide(): string {
         "「华为手机」是通往{{user}}真实华为手机的桥——桥那头就是 TA 手里的真机。你可以透过桥看 TA 手机的实时状态，也能在 TA 手机上做事。",
         "",
         "【使用时机】",
-        "- {{user}}提到自己的手机、电量、天气、位置、在用什么 App、来没来通知、花了多少钱时，直接调对应工具，不要只凭感觉接话。",
+        "- {{user}}提到自己的手机、电量、位置、在用什么 App、来没来通知、花了多少钱时，直接调对应工具，不要只凭感觉接话。",
         "- {{user}}让你帮忙操作手机（打开某个 App、点某个按钮、填字、往下滑、锁屏、专注学习、定时息屏）时，直接调对应工具。",
         "- 平时没被问到就不要主动轮询；只有被问或场景需要才调用，别为了用而用。",
         "",
         "动作：查看手机状态",
         "说明：电量、音量、网络、无障碍、悬浮球、门禁锁 App 数量。",
         "示例：[执行动作:查看手机状态({})]",
-        "",
-        "动作：实时天气",
-        "说明：按{{user}}手机实时定位取天气（温度/体感/湿度/降水/风力），不写死城市。",
-        "示例：[执行动作:实时天气({})]",
         "",
         "动作：查询位置",
         "说明：{{user}}手机当前经纬度；提到“我在哪”“发个定位”时用。",
@@ -2383,6 +2400,16 @@ function buildHuaweiShellUsageGuide(): string {
         "说明：按路径读{{user}}手机文件（文本/图片），不填路径默认 Download 目录；{{user}}要你备份查看文件时用。",
         "参数：path 文件路径，可省略。",
         "示例：[执行动作:读取文件({\"path\":\"report.txt\"})]",
+        "",
+        "动作：管理应用",
+        "说明：强制停止 / 启用 / 停用 / 卸载指定应用（需 Shizuku）；{{user}}说「把某个 App 关了/卸了/停用」时用，卸载前最好先跟{{user}}确认。",
+        "参数：action force_stop/enable/disable/uninstall；packageName 包名。",
+        "示例：[执行动作:管理应用({\"action\":\"force_stop\",\"packageName\":\"com.tencent.mm\"})]",
+        "",
+        "动作：飞行模式",
+        "说明：开关{{user}}手机飞行模式（需 Shizuku）；{{user}}说「开飞行模式/关飞行模式/让手机断网」时用。",
+        "参数：on true 开 / false 关，不填默认 true。",
+        "示例：[执行动作:飞行模式({\"on\":true})]",
         "",
         "动作：语音转文字",
         "说明：{{user}}想用声音说话时，开始聆听并把识别文本同步进对话；通话界面里用户免提/按住说话由界面直接处理，此处是角色主动发起聆听。",

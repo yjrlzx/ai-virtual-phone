@@ -226,6 +226,65 @@ export function CardRow({ title, desc, on, onToggle }: {
   );
 }
 
+/* ---------------- 仪表盘布局原语 ---------------- */
+
+/** 小节标题：加粗小标题 + 可选灰色副文案 */
+export function SectionHeader({ title, desc }: { title: string; desc?: string }) {
+  return (
+    <div style={{ margin: "14px 2px 8px" }}>
+      <b style={{ fontSize: 13.5, fontWeight: 800, color: INK, display: "block" }}>{title}</b>
+      {desc ? <span style={{ fontSize: 11.5, color: FAINT, marginTop: 2, display: "block" }}>{desc}</span> : null}
+    </div>
+  );
+}
+
+/** 仪表盘大卡片入口：左图标块 + 中标题/摘要 + 右箭头，点击跳转对应二级页 */
+export function NavCard({ icon, title, summary, onClick }: {
+  icon: string;
+  title: string;
+  summary: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        ...CARD,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        width: "100%",
+        minHeight: 72,
+        boxSizing: "border-box",
+        textAlign: "left",
+        cursor: "pointer",
+        transition: "transform .15s ease, box-shadow .15s ease",
+      }}
+    >
+      <span style={{
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        flexShrink: 0,
+        background: "rgba(106,176,243,.16)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 20,
+        lineHeight: 1,
+      }}>
+        {icon}
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <b style={{ display: "block", fontSize: 15, fontWeight: 800, color: INK }}>{title}</b>
+        <span style={{ display: "block", fontSize: 11.5, color: FAINT, marginTop: 3 }}>{summary}</span>
+      </span>
+      <span style={{ fontSize: 20, color: FAINT, flexShrink: 0, lineHeight: 1 }}>›</span>
+    </button>
+  );
+}
+
 /* ---------------- 分步向导外壳 ---------------- */
 
 export function WizardShell({ steps, step, title, children, footer }: {

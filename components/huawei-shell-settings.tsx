@@ -7,7 +7,6 @@ import { useCallback, useEffect, useState } from "react";
 import {
     Battery,
     Bell,
-    CloudSun,
     Eye,
     Loader2,
     Lock,
@@ -33,7 +32,6 @@ import {
 } from "lucide-react";
 import {
     PAYMENT_SOURCE_OPTIONS,
-    fetchHuaweiCurrentWeather,
     getAndroidShell,
     getHuaweiLedgerSummary,
     invokeShellJson,
@@ -78,7 +76,7 @@ const HUAWEI_PERMISSION_LEVELS: Array<{
     steps: string;
     setting: string;
 }> = [
-    { key: "standard", label: "标准级", desc: "基础查询与日常操控：状态 / 天气 / 位置 / 当前应用 / 记账 / 语音 / 剪贴板 / 音量 / 网页 / 健康 / 足迹 / 打开应用", risk: "低：常规应用能力", steps: "无需额外授权，随系统弹窗授予（定位 / 麦克风 / 存储）", setting: "" },
+    { key: "standard", label: "标准级", desc: "基础查询与日常操控：状态 / 位置 / 当前应用 / 记账 / 语音 / 剪贴板 / 音量 / 网页 / 健康 / 足迹 / 打开应用", risk: "低：常规应用能力", steps: "无需额外授权，随系统弹窗授予（定位 / 麦克风 / 存储）", setting: "" },
     { key: "accessibility", label: "无障碍级", desc: "屏幕级操控：读屏 / 点击 / 输入 / 滑动 / 按键 / 专注 / 门禁锁 / 通知读取 / 发送提醒", risk: "中：可代你操作屏幕，建议仅信任本应用", steps: "系统设置 → 无障碍 → 辅助功能 → 开启 float 服务", setting: "accessibility" },
     { key: "debugger", label: "调试级", desc: "文件读写与 shell 命令：读取文件 / 运行受限命令", risk: "中高：可访问存储并执行命令", steps: "系统设置 → 开发者选项 → USB/无线调试；文件需授予存储权限", setting: "storage" },
     { key: "admin", label: "管理员级", desc: "系统级能力：截屏识别（媒体投影）/ 悬浮球 / 调节亮度（写设置）", risk: "高：可录制屏幕与修改系统设置", steps: "悬浮窗授权本应用；修改系统设置；截屏时按提示授权媒体投影", setting: "overlay" },
@@ -91,7 +89,6 @@ const COMPANION_TEMPLATE_LABELS: Record<keyof HuaweiShellSettings["companionTemp
     atPlace: "到达地点提醒（占位符 {place}）",
     lowBattery: "低电量提醒（占位符 {level}）",
     sleepShort: "短睡眠提醒（占位符 {minutes}）",
-    severeWeather: "恶劣天气提醒（占位符 {condition}）",
 };
 
 export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => void }) {
@@ -229,7 +226,6 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
                 lastPlaceDate: "",
                 lastLowBatteryLevel: null,
                 lastSleepDate: "",
-                lastWeatherAlert: "",
             },
         });
         onNotice?.("陪伴提醒的防重复标记已清零，下次将重新提醒");
@@ -307,12 +303,6 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
         return parts.join("，") || "（无状态数据）";
     });
 
-    const testWeather = () => runTest("实时天气", async () => {
-        const r = await fetchHuaweiCurrentWeather();
-        if (!r.ok) throw new Error(r.error ?? "天气获取失败");
-        return r.data ?? "";
-    });
-
     const testLocation = () => runTest("查询位置", () => {
         const r = invokeShellJson<Record<string, unknown>>(s => (s.getLocation ? s.getLocation() : null));
         if (!r.ok) throw new Error(r.error);
@@ -348,9 +338,10 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
 
     /* ---------- 自定义快捷动作 ---------- */
     const HUAWEI_BUILTIN_TOOL_NAMES = new Set([
-        "查看手机状态", "实时天气", "查询位置", "查看当前应用", "查看通知", "查看记账", "读取微信消息",
+        "查看手机状态", "查询位置", "查看当前应用", "查看通知", "查看记账", "读取微信消息",
         "打开应用", "点击文字", "输入文字", "滑动屏幕", "按键操作", "专注模式", "定时息屏", "发送提醒",
         "查看设备详情", "调节音量", "调节亮度", "读取剪贴板", "写入剪贴板", "打开网页", "读取文件",
+        "管理应用", "飞行模式",
         "语音转文字", "发起语音通话", "识别屏幕交易", "查询行踪足迹", "查看健康数据",
     ]);
     const [actions, setActions] = useState<HuaweiCustomAction[]>(() => loadHuaweiCustomActions());
@@ -573,7 +564,7 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
                         <span className="hw-perm-icon"><MapPin size={15} /></span>
                         <span className="hw-perm-label">位置权限</span>
                         <span className="hw-chip hw-chip-unknown">首次自动弹窗</span>
-                        <span className="hw-perm-hint">实时天气 / 查询位置需要；未授权时工具会提示重试</span>
+                        <span className="hw-perm-hint">查询位置 / 足迹 geofence 需要；未授权时工具会提示重试</span>
                         {shellAvailable && (
                             <button type="button" className="hw-btn hw-btn-mini" onClick={testLocation}>
                                 检查
@@ -617,49 +608,6 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
                             </button>
                         )}
                     </div>
-                </div>
-            </div>
-
-            {/* 天气配置 */}
-            <div className="hw-shell-card">
-                <div className="hw-win-dots"><i /><i /><i /></div>
-                <div className="hw-card-title"><CloudSun size={16} /> 实时天气接口</div>
-                <div className="hw-field">
-                    <label className="hw-field-label">天气接口地址（支持 {"{lat}"} {"{lng}"} {"{key}"} 占位符）</label>
-                    <input
-                        className="hw-input"
-                        value={settings.weatherForecastUrl}
-                        onChange={e => updateSettings({ weatherForecastUrl: e.target.value })}
-                        placeholder="默认 Open-Meteo（免费无需 Key）"
-                        spellCheck={false}
-                    />
-                </div>
-                <div className="hw-field">
-                    <label className="hw-field-label">逆地理接口（坐标 → 城市名）</label>
-                    <input
-                        className="hw-input"
-                        value={settings.weatherReverseUrl}
-                        onChange={e => updateSettings({ weatherReverseUrl: e.target.value })}
-                        placeholder="默认 Open-Meteo 逆地理"
-                        spellCheck={false}
-                    />
-                </div>
-                <div className="hw-field">
-                    <label className="hw-field-label">天气服务 Key（可选，替换 {"{key}"}）</label>
-                    <input
-                        className="hw-input"
-                        value={settings.weatherApiKey}
-                        onChange={e => updateSettings({ weatherApiKey: e.target.value })}
-                        placeholder="需要鉴权的天气服务才填"
-                        spellCheck={false}
-                    />
-                </div>
-                <div className="hw-field-row">
-                    <button type="button" className="hw-btn hw-btn-primary" onClick={testWeather} disabled={busy !== null}>
-                        {busy === "实时天气" ? <Loader2 size={14} className="hw-spin" /> : <CloudSun size={14} />}
-                        测试实时天气（自动定位）
-                    </button>
-                    <span className="hw-field-hint">不写死城市：天气永远跟随手机实时定位</span>
                 </div>
             </div>
 
@@ -1399,16 +1347,6 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
                                 <input className="hw-input hw-input-num" type="number" min={60} max={720} value={settings.companionSleepThresholdMinutes} onChange={e => updateSettings({ companionSleepThresholdMinutes: Math.round(Number(e.target.value) || 420) })} />
                             </div>
                         </div>
-                        <div className="hw-field-row hw-field-row-gap">
-                            <label className="hw-field-label hw-toggle-line">
-                                <input type="checkbox" className="hw-check" checked={settings.companionSevereWeather} onChange={e => updateSettings({ companionSevereWeather: e.target.checked })} />
-                                恶劣天气提醒
-                            </label>
-                            <div className="hw-field">
-                                <label className="hw-field-label">天气判定正则（命中即提醒）</label>
-                                <input className="hw-input" value={settings.companionWeatherPattern} onChange={e => updateSettings({ companionWeatherPattern: e.target.value })} placeholder="雨|雪|雷|暴" spellCheck={false} />
-                            </div>
-                        </div>
                         <div className="hw-field">
                             <label className="hw-field-label">推送标题</label>
                             <input className="hw-input" value={settings.companionTitle} onChange={e => updateSettings({ companionTitle: e.target.value })} placeholder="小浮" spellCheck={false} />
@@ -1449,10 +1387,6 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
                     <button type="button" className="hw-btn" onClick={testNotifications} disabled={busy !== null}>
                         {busy === "查看通知" ? <Loader2 size={14} className="hw-spin" /> : <Bell size={14} />}
                         通知
-                    </button>
-                    <button type="button" className="hw-btn" onClick={testWeather} disabled={busy !== null}>
-                        {busy === "实时天气" ? <Loader2 size={14} className="hw-spin" /> : <CloudSun size={14} />}
-                        天气
                     </button>
                     <button type="button" className="hw-btn" onClick={testLedger} disabled={busy !== null}>
                         {busy === "同步账本" ? <Loader2 size={14} className="hw-spin" /> : <Volume2 size={14} />}

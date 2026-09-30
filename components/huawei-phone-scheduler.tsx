@@ -15,7 +15,6 @@ import { useEffect, useRef } from "react";
 import {
     addHuaweiLedgerRecordFromOcr,
     appendHuaweiFootprint,
-    fetchHuaweiCurrentWeather,
     getAndroidShell,
     invokeShellJson,
     loadHuaweiHealthSnapshot,
@@ -368,22 +367,6 @@ export function HuaweiPhoneScheduler() {
                 latch.lastSleepDate = today;
                 changed = true;
             }
-        }
-
-        // 恶劣天气
-        if (settings.companionSevereWeather && settings.companionWeatherPattern) {
-            try {
-                const weather = await fetchHuaweiCurrentWeather();
-                if (weather.ok && weather.data && new RegExp(settings.companionWeatherPattern).test(weather.data)) {
-                    if (latch.lastWeatherAlert !== today) {
-                        sendCompanion(fillTemplate(settings.companionTemplates.severeWeather, {
-                            condition: weather.data.slice(0, 40),
-                        }));
-                        latch.lastWeatherAlert = today;
-                        changed = true;
-                    }
-                }
-            } catch { /* 天气服务失败不阻断 */ }
         }
 
         if (changed) saveHuaweiShellSettings(settings);

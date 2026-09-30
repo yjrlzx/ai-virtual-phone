@@ -4,7 +4,7 @@
  *  与 iOS 现实桥并行，走同一套本地 kv 存储，不依赖 Supabase / iPhone 快捷指令。 */
 
 import { kvGet, kvSet, registerKvMigration } from "../kv-db";
-import type { HuaweiCustomAction, HuaweiHealthSnapshot, HuaweiOcrEngine, HuaweiPlace, HuaweiShellBridge, HuaweiStatusKey, HuaweiSttMode, HuaweiTriggerRule, HuaweiFootprintEntry, HuaweiWakeWordAction, HuaweiWakeWordMode, HuaweiWhereaboutsPrivacy, HuaweiHealthSource, PaymentSource, ShellJsonResult } from "./types";
+import type { HuaweiCustomAction, HuaweiHealthSnapshot, HuaweiOcrEngine, HuaweiPlace, HuaweiShellBridge, HuaweiStatusKey, HuaweiSttMode, HuaweiTriggerRule, HuaweiFootprintEntry, HuaweiWakeWordAction, HuaweiWakeWordMode, HuaweiWhereaboutsPrivacy, HuaweiHealthSource, PaymentSource, ShellJsonResult, HuaweiActionParam, HuaweiActionResultMode, HuaweiActionDelivery, HuaweiBridgeEvent } from "./types";
 export type { HuaweiHealthSnapshot, HuaweiPlace, HuaweiFootprintEntry } from "./types";
 import { ALIPAY_PACKAGE, WECHAT_PACKAGE } from "./types";
 import { getInstalledCustomApp, readCustomAppCollection, writeCustomAppCollection } from "../custom-app-storage";
@@ -197,16 +197,6 @@ export function getHuaweiLedgerSummary(): { total: number; wechat: number; alipa
     }
     return summary;
 }
-export const DEFAULT_WEATHER_FORECAST_URL =
-    "https://api.open-meteo.com/v1/forecast"
-    + "?latitude={lat}&longitude={lng}"
-    + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m"
-    + "&timezone=auto&forecast_days=1";
-
-export const DEFAULT_WEATHER_REVERSE_URL =
-    "https://geocoding-api.open-meteo.com/v1/reverse"
-    + "?latitude={lat}&longitude={lng}&language=zh&format=json";
-
 export const PAYMENT_SOURCE_OPTIONS: Array<{ value: PaymentSource; label: string }> = [
     { value: "all", label: "全部" },
     { value: "wechat", label: "微信" },
@@ -214,12 +204,6 @@ export const PAYMENT_SOURCE_OPTIONS: Array<{ value: PaymentSource; label: string
 ];
 
 export type HuaweiShellSettings = {
-    /** 天气接口地址模板，支持 {lat} {lng} {key} 占位符 */
-    weatherForecastUrl: string;
-    /** 逆地理（坐标→城市名）接口地址模板，支持 {lat} {lng} {key} 占位符 */
-    weatherReverseUrl: string;
-    /** 可选天气服务 Key；填入后替换地址里的 {key} 占位符 */
-    weatherApiKey: string;
     /** 专注模式默认时长（分钟） */
     focusDefaultMinutes: number;
     /** 定时息屏默认秒数 */
@@ -238,6 +222,10 @@ export type HuaweiShellSettings = {
     triggerRules: HuaweiTriggerRule[];
     /** 联动规则检查间隔（秒），10-300，默认 30 */
     ruleCheckIntervalSec: number;
+    /** 桥接总开关：关闭后全局调度器不再检查任何联动规则 */
+    bridgeEnabled: boolean;
+    /** 命中通知时是否向页面广播 huawei.bridge.data 事件（供订阅的自定义 APP 接收信号） */
+    bridgeBroadcast: boolean;
 
     /* ---------- 权限层级（照搬 Operit 五级体系，逐级可配） ---------- */
     permissionLevels: {
@@ -301,9 +289,6 @@ export type HuaweiShellSettings = {
     companionLowBatteryThreshold: number;
     companionSleepShort: boolean;
     companionSleepThresholdMinutes: number;
-    companionSevereWeather: boolean;
-    companionWeatherCodeMin: number;
-    companionWeatherPattern: string;
     companionTitle: string;
     companionTemplates: {
         arrivedHome: string;
@@ -311,7 +296,6 @@ export type HuaweiShellSettings = {
         atPlace: string;
         lowBattery: string;
         sleepShort: string;
-        severeWeather: string;
     };
     companionLatched: {
         lastArrivedDate: string;
@@ -319,14 +303,10 @@ export type HuaweiShellSettings = {
         lastPlaceDate: string;
         lastLowBatteryLevel: number | null;
         lastSleepDate: string;
-        lastWeatherAlert: string;
     };
 };
 
 const DEFAULT_SETTINGS: HuaweiShellSettings = {
-    weatherForecastUrl: DEFAULT_WEATHER_FORECAST_URL,
-    weatherReverseUrl: DEFAULT_WEATHER_REVERSE_URL,
-    weatherApiKey: "",
     focusDefaultMinutes: 25,
     screenBreakDefaultSeconds: 60,
     lockedPackages: [],
@@ -336,6 +316,8 @@ const DEFAULT_SETTINGS: HuaweiShellSettings = {
     customActions: [],
     triggerRules: [],
     ruleCheckIntervalSec: 30,
+    bridgeEnabled: true,
+    bridgeBroadcast: false,
 
     permissionLevels: { standard: true, accessibility: true, debugger: false, admin: false, root: false },
     rootSuCommand: "su",
@@ -386,9 +368,6 @@ const DEFAULT_SETTINGS: HuaweiShellSettings = {
     companionLowBatteryThreshold: 20,
     companionSleepShort: true,
     companionSleepThresholdMinutes: 420,
-    companionSevereWeather: true,
-    companionWeatherCodeMin: 60,
-    companionWeatherPattern: "雨|雪|雷|暴",
     companionTitle: "小浮",
     companionTemplates: {
         arrivedHome: "你到家啦，辛苦啦。",
@@ -396,7 +375,6 @@ const DEFAULT_SETTINGS: HuaweiShellSettings = {
         atPlace: "你到「{place}」了。",
         lowBattery: "手机快没电了（剩 {level}%），记得充电。",
         sleepShort: "昨晚只睡了 {minutes}，记得补觉。",
-        severeWeather: "{condition}，出门注意安全。",
     },
     companionLatched: {
         lastArrivedDate: "",
@@ -404,7 +382,6 @@ const DEFAULT_SETTINGS: HuaweiShellSettings = {
         lastPlaceDate: "",
         lastLowBatteryLevel: null,
         lastSleepDate: "",
-        lastWeatherAlert: "",
     },
 };
 
@@ -425,13 +402,6 @@ export function loadHuaweiShellSettings(): HuaweiShellSettings {
             ? (parsed.lockedPackages as unknown[]).filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 30)
             : [];
         return {
-            weatherForecastUrl: typeof parsed.weatherForecastUrl === "string" && parsed.weatherForecastUrl.trim()
-                ? parsed.weatherForecastUrl.trim().slice(0, 2000)
-                : DEFAULT_SETTINGS.weatherForecastUrl,
-            weatherReverseUrl: typeof parsed.weatherReverseUrl === "string" && parsed.weatherReverseUrl.trim()
-                ? parsed.weatherReverseUrl.trim().slice(0, 2000)
-                : DEFAULT_SETTINGS.weatherReverseUrl,
-            weatherApiKey: typeof parsed.weatherApiKey === "string" ? parsed.weatherApiKey.trim().slice(0, 500) : "",
             focusDefaultMinutes: clampInt(parsed.focusDefaultMinutes, 1, 240, DEFAULT_SETTINGS.focusDefaultMinutes),
             screenBreakDefaultSeconds: clampInt(parsed.screenBreakDefaultSeconds, 5, 3600, DEFAULT_SETTINGS.screenBreakDefaultSeconds),
             lockedPackages: packages,
@@ -441,6 +411,8 @@ export function loadHuaweiShellSettings(): HuaweiShellSettings {
             customActions: normalizeCustomActions(parsed.customActions),
             triggerRules: normalizeTriggerRules(parsed.triggerRules),
             ruleCheckIntervalSec: clampInt(parsed.ruleCheckIntervalSec, 10, 300, DEFAULT_SETTINGS.ruleCheckIntervalSec),
+            bridgeEnabled: parsed.bridgeEnabled !== false,
+            bridgeBroadcast: parsed.bridgeBroadcast === true,
 
             permissionLevels: {
                 standard: parsed.permissionLevels?.standard !== false,
@@ -501,9 +473,6 @@ export function loadHuaweiShellSettings(): HuaweiShellSettings {
             companionLowBatteryThreshold: clampInt(parsed.companionLowBatteryThreshold, 5, 50, DEFAULT_SETTINGS.companionLowBatteryThreshold),
             companionSleepShort: parsed.companionSleepShort !== false,
             companionSleepThresholdMinutes: clampInt(parsed.companionSleepThresholdMinutes, 60, 720, DEFAULT_SETTINGS.companionSleepThresholdMinutes),
-            companionSevereWeather: parsed.companionSevereWeather !== false,
-            companionWeatherCodeMin: clampInt(parsed.companionWeatherCodeMin, 0, 99, DEFAULT_SETTINGS.companionWeatherCodeMin),
-            companionWeatherPattern: typeof parsed.companionWeatherPattern === "string" && parsed.companionWeatherPattern.trim() ? parsed.companionWeatherPattern.trim().slice(0, 200) : DEFAULT_SETTINGS.companionWeatherPattern,
             companionTitle: typeof parsed.companionTitle === "string" && parsed.companionTitle.trim() ? parsed.companionTitle.trim().slice(0, 30) : DEFAULT_SETTINGS.companionTitle,
             companionTemplates: normalizeCompanionTemplates(parsed.companionTemplates),
             companionLatched: normalizeCompanionLatched(parsed.companionLatched),
@@ -553,12 +522,36 @@ function normalizeCustomActions(raw: unknown): HuaweiCustomAction[] {
             openApp: typeof r.openApp === "string" ? r.openApp.trim().slice(0, 200) : undefined,
             statusKey: typeof r.statusKey === "string" && HUAWEI_STATUS_KEYS.has(r.statusKey) ? r.statusKey as HuaweiStatusKey : undefined,
             command: typeof r.command === "string" ? r.command.trim().slice(0, 2000) : undefined,
+            params: normalizeActionParams(r.params),
+            resultMode: r.resultMode === "text" ? "text" as HuaweiActionResultMode : undefined,
+            deliveryMode: r.deliveryMode === "clipboard" ? "clipboard" as HuaweiActionDelivery : undefined,
             enabled: r.enabled !== false,
             createdAt: Number(r.createdAt) || Date.now(),
         });
         if (list.length >= 30) break;
     }
     return list;
+}
+
+/** 规范化动作运行参数：key 非空、type 限定 string/number、描述截断 200、最多 10 个。 */
+function normalizeActionParams(raw: unknown): HuaweiActionParam[] | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const seen = new Set<string>();
+    const out: HuaweiActionParam[] = [];
+    for (const item of raw) {
+        if (!item || typeof item !== "object") continue;
+        const r = item as Record<string, unknown>;
+        const key = typeof r.key === "string" ? r.key.trim().slice(0, 40) : "";
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+            key,
+            type: r.type === "number" ? "number" : "string",
+            description: String(r.description ?? "").trim().slice(0, 200),
+        });
+        if (out.length >= 10) break;
+    }
+    return out.length > 0 ? out : undefined;
 }
 
 /** 读用户登记的自定义快捷动作（自动生成 char 工具用）。 */
@@ -607,6 +600,10 @@ function normalizeTriggerRules(raw: unknown): HuaweiTriggerRule[] {
             openApp: typeof r.openApp === "string" ? r.openApp.trim().slice(0, 200) : undefined,
             actionPackageName: typeof r.actionPackageName === "string" ? r.actionPackageName.trim().slice(0, 200) : undefined,
             actionName: typeof r.actionName === "string" ? r.actionName.trim().slice(0, 100) : undefined,
+            processMode: r.processMode === "template" ? "template" : undefined,
+            contentTemplate: typeof r.contentTemplate === "string" && r.contentTemplate.trim()
+                ? r.contentTemplate.trim().slice(0, 500)
+                : undefined,
             lastTriggeredAt: Number(r.lastTriggeredAt) || undefined,
             lastSeenTs: Number(r.lastSeenTs) || undefined,
             triggerCount: Number(r.triggerCount) || undefined,
@@ -631,6 +628,63 @@ export function saveHuaweiTriggerRules(rules: HuaweiTriggerRule[]): void {
 /** 联动规则检查间隔（秒），供调度器读取。 */
 export function getHuaweiRuleCheckIntervalSec(): number {
     return loadHuaweiShellSettings().ruleCheckIntervalSec;
+}
+
+/* ---------- 现实桥事件日志（规则命中 / 动作执行 / 主动查询） ---------- */
+
+const HUAWEI_BRIDGE_EVENTS_KEY = "ai_phone_huawei_bridge_events_v1";
+registerKvMigration(HUAWEI_BRIDGE_EVENTS_KEY);
+const HUAWEI_BRIDGE_EVENTS_CAP = 200;
+
+/** 追加一条事件日志（最新在最前），最多保留 200 条。 */
+export function appendHuaweiBridgeEvent(e: Omit<HuaweiBridgeEvent, "id" | "ts">): void {
+    const entry: HuaweiBridgeEvent = {
+        id: `ev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+        ts: Date.now(),
+        kind: e.kind,
+        title: e.title.slice(0, 80),
+        detail: e.detail ? e.detail.slice(0, 500) : undefined,
+        ok: e.ok,
+    };
+    const current = loadHuaweiBridgeEvents(HUAWEI_BRIDGE_EVENTS_CAP);
+    kvSet(HUAWEI_BRIDGE_EVENTS_KEY, JSON.stringify([entry, ...current].slice(0, HUAWEI_BRIDGE_EVENTS_CAP)));
+}
+
+/** 读事件日志（最新在前）。 */
+export function loadHuaweiBridgeEvents(limit = 100): HuaweiBridgeEvent[] {
+    try {
+        const raw = kvGet(HUAWEI_BRIDGE_EVENTS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return (parsed as HuaweiBridgeEvent[]).filter((e): e is HuaweiBridgeEvent => {
+            if (!e || typeof e !== "object") return false;
+            const r = e as Record<string, unknown>;
+            return typeof r.id === "string" && typeof r.title === "string"
+                && (r.kind === "rule" || r.kind === "action" || r.kind === "query")
+                && Number.isFinite(Number(r.ts));
+        }).slice(0, Math.max(1, limit));
+    } catch {
+        return [];
+    }
+}
+
+/** 清空事件日志。 */
+export function clearHuaweiBridgeEvents(): void {
+    kvSet(HUAWEI_BRIDGE_EVENTS_KEY, "[]");
+}
+
+/**
+ * 模板插值：把字符串里的 {key} 占位替换成 values 里对应的值；
+ * 缺省 key 替换为空串；没有占位符时原样返回。
+ */
+export function interpolateHuaweiTemplate(template: string, values: Record<string, unknown>): string {
+    if (!template || template.indexOf("{") < 0) return template || "";
+    return template.replace(/\{(\w+)\}/g, (match, key: string) => {
+        const v = values[key];
+        if (v === undefined || v === null) return "";
+        return String(v);
+    });
 }
 
 /* ---------- window.AndroidShell 安全访问 ---------- */
@@ -702,102 +756,6 @@ export function readLockedPackagesFromShell(): string[] {
     if (!shell || typeof shell.getLockedPackages !== "function") return [];
     const parsed = parseShellJson<string[]>(shell.getLockedPackages());
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-}
-
-/* ---------- 天气（实时定位 + 可配接口模板，设置页预览与角色工具共用） ---------- */
-
-/** WMO 天气码 → 中文描述 */
-export const HUAWEI_WEATHER_CODES: Record<number, string> = {
-    0: "晴",
-    1: "大部晴朗",
-    2: "多云",
-    3: "阴",
-    45: "雾",
-    48: "雾凇",
-    51: "小毛毛雨",
-    53: "毛毛雨",
-    55: "浓毛毛雨",
-    56: "冻毛毛雨",
-    57: "强冻毛毛雨",
-    61: "小雨",
-    63: "中雨",
-    65: "大雨",
-    66: "冻雨",
-    67: "强冻雨",
-    71: "小雪",
-    73: "中雪",
-    75: "大雪",
-    77: "雪粒",
-    80: "小阵雨",
-    81: "阵雨",
-    82: "强阵雨",
-    85: "小阵雪",
-    86: "大阵雪",
-    95: "雷暴",
-    96: "雷暴伴小冰雹",
-    99: "雷暴伴大冰雹",
-};
-
-export function huaweiWeatherCodeLabel(code: number): string {
-    return HUAWEI_WEATHER_CODES[code] || `天气码 ${code}`;
-}
-
-/** 渲染接口地址模板：{lat} {lng} {key} 占位符；没填 Key 时 {key} 替换为空。 */
-export function renderHuaweiUrl(template: string, lat: number, lng: number, apiKey: string): string {
-    return template
-        .replace(/\{lat\}/g, String(lat))
-        .replace(/\{lng\}/g, String(lng))
-        .replace(/\{key\}/g, apiKey ? encodeURIComponent(apiKey) : "");
-}
-
-async function huaweiFetchText(url: string, timeoutMs: number): Promise<string> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.text();
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-/** 实时天气（当前定位 + 逆地理城市名 + 天气），供角色工具与设置页预览共用。 */
-export async function fetchHuaweiCurrentWeather(): Promise<{ ok: boolean; data?: string; error?: string }> {
-    const loc = invokeShellJson<Record<string, unknown>>(shell => (shell.getLocation ? shell.getLocation() : null));
-    if (!loc.ok) return { ok: false, error: `拿不到定位：${loc.error}` };
-    const lat = Number(loc.data.lat);
-    const lng = Number(loc.data.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        return { ok: false, error: "定位结果缺少经纬度" };
-    }
-    const settings = loadHuaweiShellSettings();
-    let city = "";
-    try {
-        const reverseText = await huaweiFetchText(renderHuaweiUrl(settings.weatherReverseUrl, lat, lng, settings.weatherApiKey), 4000);
-        const reverse = JSON.parse(reverseText) as { results?: Array<{ name?: string; country?: string }> };
-        const result = reverse.results?.[0];
-        if (result?.name) city = `${result.name}${result.country && result.country !== "CN" ? `，${result.country}` : ""}`;
-    } catch { /* 逆地理失败不阻塞天气 */ }
-
-    let forecast: unknown;
-    try {
-        forecast = JSON.parse(await huaweiFetchText(renderHuaweiUrl(settings.weatherForecastUrl, lat, lng, settings.weatherApiKey), 8000));
-    } catch (err) {
-        return { ok: false, error: `天气服务请求失败：${err instanceof Error ? err.message : String(err)}` };
-    }
-    const current = (forecast as { current?: Record<string, unknown> })?.current;
-    if (!current) return { ok: false, error: "天气服务返回了无法识别的数据" };
-    const parts: string[] = [];
-    const code = Number(current.weather_code);
-    if (Number.isFinite(code)) parts.push(huaweiWeatherCodeLabel(code));
-    if (typeof current.temperature_2m === "number") parts.push(`${Math.round(current.temperature_2m)}°`);
-    if (typeof current.apparent_temperature === "number") parts.push(`体感 ${Math.round(current.apparent_temperature)}°`);
-    if (typeof current.relative_humidity_2m === "number") parts.push(`湿度 ${Math.round(current.relative_humidity_2m)}%`);
-    if (typeof current.precipitation === "number" && current.precipitation > 0) parts.push(`降水 ${current.precipitation}mm`);
-    if (typeof current.wind_speed_10m === "number") parts.push(`风速 ${current.wind_speed_10m}m/s`);
-    const where = city || `坐标 ${lat.toFixed(3)}, ${lng.toFixed(3)}`;
-    return { ok: true, data: `${where}：${parts.join("，")}` };
 }
 
 /* ---------- 语义行踪与足迹 ---------- */
@@ -875,7 +833,6 @@ const COMPANION_TEMPLATE_DEFAULTS = {
     atPlace: "你到「{place}」了。",
     lowBattery: "手机快没电了（剩 {level}%），记得充电。",
     sleepShort: "昨晚只睡了 {minutes}，记得补觉。",
-    severeWeather: "{condition}，出门注意安全。",
 };
 
 function normalizeCompanionTemplates(raw: unknown): HuaweiShellSettings["companionTemplates"] {
@@ -895,7 +852,6 @@ function normalizeCompanionLatched(raw: unknown): HuaweiShellSettings["companion
         lastPlaceDate: typeof r.lastPlaceDate === "string" ? r.lastPlaceDate : "",
         lastLowBatteryLevel: Number.isFinite(Number(r.lastLowBatteryLevel)) ? Number(r.lastLowBatteryLevel) : null,
         lastSleepDate: typeof r.lastSleepDate === "string" ? r.lastSleepDate : "",
-        lastWeatherAlert: typeof r.lastWeatherAlert === "string" ? r.lastWeatherAlert : "",
     };
 }
 

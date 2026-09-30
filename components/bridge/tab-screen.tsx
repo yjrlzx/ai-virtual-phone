@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { loadCharacters } from "@/lib/character-storage";
+import { getAndroidShell } from "@/lib/huawei-shell/storage";
 import {
   ACCENT,
   BTN,
@@ -67,6 +68,11 @@ export function TabScreen({ onNotice }: BridgeTabProps) {
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
 
+  // 悬浮球速聊入口卡：壳连接态 + 悬浮窗权限（getStatus().floating）+ 球是否在跑（乐观本地态）
+  const [shellConnected, setShellConnected] = useState(false);
+  const [overlayPerm, setOverlayPerm] = useState<boolean | null>(null);
+  const [ballOn, setBallOn] = useState<boolean>(cfg.floating);
+
   const configured = Boolean(cfg.characterId);
 
   // 读取已创建角色，供选择对话对象
@@ -76,6 +82,27 @@ export function TabScreen({ onNotice }: BridgeTabProps) {
     } catch {
       setChars([]);
     }
+  }, []);
+
+  // 每 5 秒拉一次壳状态：是否连接 + 悬浮窗权限（桥不直接查球是否在跑，球态靠乐观更新）
+  useEffect(() => {
+    const refresh = () => {
+      const shell = getAndroidShell();
+      setShellConnected(shell !== null);
+      if (shell?.getStatus) {
+        try {
+          const st = JSON.parse(shell.getStatus()) as { floating?: boolean };
+          setOverlayPerm(st.floating === true);
+        } catch {
+          setOverlayPerm(null);
+        }
+      } else {
+        setOverlayPerm(null);
+      }
+    };
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
   }, []);
 
   const persist = (next: ScreenChatCfg) => {
@@ -94,8 +121,43 @@ export function TabScreen({ onNotice }: BridgeTabProps) {
     const res = runShellAction("悬浮球", shell => shell.setFloating?.(next.floating));
     onNotice?.(res.ok ? (next.floating ? "悬浮球已开启，双击它截屏速聊" : "悬浮球已关闭") : res.detail);
     // 原生调用成功才落盘开关态；失败回滚提示
-    if (res.ok) persist(next);
-    else onNotice?.(res.detail);
+    if (res.ok) {
+      persist(next);
+      setBallOn(next.floating);
+    } else onNotice?.(res.detail);
+  };
+
+  // 悬浮球速聊卡开关：未授悬浮窗权限时跳授权页，否则乐观开/关并 5 秒后随 tick 复核
+  const toggleBallCard = () => {
+    if (!shellConnected) {
+      onNotice?.("需在安卓壳 WebView 内使用");
+      return;
+    }
+    if (overlayPerm === false) {
+      const res = runShellAction("悬浮窗权限", s => s.openPermissionSettings?.("overlay"));
+      onNotice?.(res.ok ? "请在系统设置里允许本应用悬浮窗" : res.detail);
+      return;
+    }
+    const next = !ballOn;
+    setBallOn(next); // 乐观更新；桥不直接查球态，靠下次 tick / 重启校对
+    const res = runShellAction("悬浮球", s => s.setFloating?.(next));
+    if (res.ok) {
+      onNotice?.(next ? "悬浮球已开启，双击屏幕边缘的球截屏速聊" : "悬浮球已关闭");
+      persist({ ...cfg, floating: next });
+    } else {
+      setBallOn(!next);
+      onNotice?.(res.detail);
+    }
+  };
+
+  // 一键打开悬浮聊天小窗
+  const openQuickChat = () => {
+    if (!shellConnected) {
+      onNotice?.("需在安卓壳 WebView 内使用");
+      return;
+    }
+    const res = runShellAction("打开快速聊天", s => s.openFloatingChat?.());
+    onNotice?.(res.ok ? "已拉起悬浮聊天小窗" : res.detail);
   };
 
   // 收到安卓截屏：弹出连续聊天气泡窗
@@ -139,6 +201,72 @@ export function TabScreen({ onNotice }: BridgeTabProps) {
 
   return (
     <div style={{ marginTop: 14 }}>
+      {/* 悬浮球速聊入口卡：开关悬浮球 + 一键打开快速聊天 + 华为 P60 权限引导 */}
+      <div style={{ ...CARD, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <b style={{ fontSize: 14, color: INK }}>悬浮球速聊</b>
+            <div style={{ fontSize: 11.5, color: SUB, marginTop: 3 }}>
+              {shellConnected
+                ? overlayPerm === false
+                  ? "缺悬浮窗权限，先授权再开球"
+                  : ballOn ? "悬浮球已在屏幕边缘运行" : "悬浮球已关闭"
+                : "需在安卓壳 WebView 内使用"}
+            </div>
+          </div>
+          <Switch on={ballOn && overlayPerm !== false} onChange={toggleBallCard} label="悬浮球" />
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <button type="button" style={{ ...BTN, opacity: shellConnected ? 1 : .5 }} disabled={!shellConnected} onClick={openQuickChat}>
+            打开快速聊天
+          </button>
+          {overlayPerm === false ? (
+            <button type="button" style={BTN_GHOST} disabled={!shellConnected}
+              onClick={() => {
+                const res = runShellAction("悬浮窗权限", s => s.openPermissionSettings?.("overlay"));
+                onNotice?.(res.ok ? "请在系统设置里允许本应用悬浮窗" : res.detail);
+              }}>
+              去开悬浮窗权限
+            </button>
+          ) : null}
+        </div>
+
+        {overlayPerm === false ? (
+          <div style={GUIDE_BOX}>
+            <b style={{ color: INK }}>华为 P60 / HarmonyOS 3.1 授权路径：</b>
+            <div style={{ marginTop: 4 }}>设置 → 应用和服务 → 权限管理 → 悬浮窗 → 找到本应用 → 允许；</div>
+            <div style={{ marginTop: 4 }}>或：手机管家 → 应用启动管理 → 找到本应用，关闭「自动管理」，手动允许「自启动」和「关联启动」。</div>
+            <div style={{ marginTop: 4 }}>
+              电池别杀后台：设置 → 电池 → 应用启动管理 → 本应用选「不限制」
+              （或点下方按钮直接请求忽略电池优化）。
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              <button type="button" style={BTN_GHOST}
+                onClick={() => {
+                  const res = runShellAction("电池优化", s => s.requestIgnoreBatteryOptimization?.());
+                  onNotice?.(res.ok ? "已弹出电池优化白名单请求" : res.detail);
+                }}>
+                请求电池不限制
+              </button>
+              <button type="button" style={BTN_GHOST}
+                onClick={() => {
+                  const res = runShellAction("应用详情", s => s.openAppSettings?.());
+                  onNotice?.(res.ok ? "已打开本应用系统详情页" : res.detail);
+                }}>
+                应用详情页
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {!shellConnected ? (
+          <div style={{ ...GUIDE_BOX, marginTop: 10 }}>
+            需在安卓壳 WebView 内使用：悬浮球与快速聊天小窗由安卓壳提供，浏览器里按钮已禁用。
+          </div>
+        ) : null}
+      </div>
+
       {!configured ? (
         <div style={{ ...CARD, padding: "6px 0" }}>
           <EmptyState

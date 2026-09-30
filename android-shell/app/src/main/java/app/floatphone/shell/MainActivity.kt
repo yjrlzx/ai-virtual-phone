@@ -74,12 +74,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        /** 唤醒词命中回传网页（WakeWordService → window.__floatBridgeOnWakeWord）。 */
+        /** 唤醒词命中回传网页（WakeWordService → window.__floatBridgeOnWakeWord）。
+         *  命中成功时顺带拉起悬浮对话小窗，让用户直接对角色说话。 */
         fun deliverWakeWordToWeb(json: String) {
             val act = activeActivity ?: return
+            val matched = runCatching { org.json.JSONObject(json).optBoolean("ok", false) }.getOrDefault(false)
             val b64 = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             act.runOnUiThread {
                 act.webView.evaluateJavascript("window.__floatBridgeOnWakeWord && window.__floatBridgeOnWakeWord(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))", null)
+                if (matched) runCatching { FloatingChatWindowService.show(act) }
             }
         }
 
@@ -89,6 +92,15 @@ class MainActivity : AppCompatActivity() {
             val b64 = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             act.runOnUiThread {
                 act.webView.evaluateJavascript("window.__floatBridgeOnOcrResult && window.__floatBridgeOnOcrResult(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))", null)
+            }
+        }
+
+        /** TTS 朗读事件回传网页（ShellTts → window.__floatBridgeOnTtsEvent）。 */
+        fun deliverTtsEventToWeb(json: String) {
+            val act = activeActivity ?: return
+            val b64 = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+            act.runOnUiThread {
+                act.webView.evaluateJavascript("window.__floatBridgeOnTtsEvent && window.__floatBridgeOnTtsEvent(new TextDecoder('utf-8').decode(Uint8Array.from(atob('$b64'), function(c){return c.charCodeAt(0)})))", null)
             }
         }
     }
@@ -322,6 +334,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         if (Companion.activeActivity === this) Companion.activeActivity = null
+        ShellTts.destroy()
         CookieManager.getInstance().flush()
         webView.destroy()
         super.onDestroy()
@@ -904,6 +917,47 @@ class MainActivity : AppCompatActivity() {
             org.json.JSONObject().put("ok", true).put("templates", templates.size).toString()
         }.getOrElse { errJson(it.message) }
 
+        /** 文本朗读（TTS 队列）。configJson: {text, queue?, rate?, pitch?, languageTag?}；事件异步回传 window.__floatBridgeOnTtsEvent。 */
+        @JavascriptInterface
+        fun speak(configJson: String): String = runCatching {
+            val cfg = org.json.JSONObject(configJson)
+            val text = cfg.optString("text", "")
+            if (text.isBlank()) return@runCatching """{"ok":false,"error":"朗读内容为空"}"""
+            val queue = cfg.optBoolean("queue", true)
+            val rate = cfg.optDouble("rate", 1.0).toFloat()
+            val pitch = cfg.optDouble("pitch", 1.0).toFloat()
+            val lang = cfg.optString("languageTag", "zh-CN")
+            ShellTts.attach(this@MainActivity) { json -> deliverTtsEventToWeb(json) }
+            ShellTts.speak(text, interrupt = !queue, rate = rate, pitch = pitch, languageTag = lang)
+            """{"ok":true}"""
+        }.getOrElse { errJson(it.message) }
+
+        /** 停止朗读：清空队列并立即停止当前朗读。 */
+        @JavascriptInterface
+        fun stopSpeak(): String {
+            ShellTts.stop()
+            return """{"ok":true}"""
+        }
+
+        /** TTS 状态：是否朗读中、队列长度、当前引擎包名（未初始化为空串）。 */
+        @JavascriptInterface
+        fun ttsStatus(): String = ShellTts.status().toString()
+
+        /** 端上唤醒词模板数量。 */
+        @JavascriptInterface
+        fun listWakeTemplates(): String = runCatching {
+            val n = WakeWordDetector.loadTemplates(this@MainActivity).size
+            org.json.JSONObject().put("ok", true).put("count", n).toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 清空端上唤醒词模板。 */
+        @JavascriptInterface
+        fun clearWakeTemplates(): String = runCatching {
+            val before = WakeWordDetector.loadTemplates(this@MainActivity).size
+            WakeWordDetector.saveTemplates(this@MainActivity, emptyList())
+            org.json.JSONObject().put("ok", true).put("cleared", before).toString()
+        }.getOrElse { errJson(it.message) }
+
         /** 触发 OCR 记账截屏识别。configJson: {engine:"mlkit"|"online"|"web", url, key}；结果回传 window.__floatBridgeOnOcrResult。 */
         @JavascriptInterface
         fun ocrPaymentsCapture(configJson: String): String {
@@ -1025,6 +1079,372 @@ class MainActivity : AppCompatActivity() {
                 .put("stderr", result.stderr)
                 .put("exitCode", result.exitCode)
                 .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 列出已安装应用（照搬 Operit 应用管理）：包名 / 展示名 / 是否系统应用 / 是否启用。 */
+        @JavascriptInterface
+        fun getInstalledApps(): String = runCatching {
+            val pm = packageManager
+            val apps = pm.getInstalledApplications(0)
+                .filter { it.packageName != packageName }
+                .sortedWith(compareBy(
+                    { (it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0 },
+                    { pm.getApplicationLabel(it).toString() },
+                ))
+            val arr = org.json.JSONArray()
+            for (app in apps) {
+                val enabled = runCatching {
+                    pm.getApplicationEnabledSetting(app.packageName) ==
+                        android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                }.getOrDefault(true)
+                arr.put(org.json.JSONObject()
+                    .put("pkg", app.packageName)
+                    .put("label", pm.getApplicationLabel(app).toString())
+                    .put("isSystem", (app.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0)
+                    .put("isEnabled", enabled))
+            }
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("count", apps.size)
+                .put("apps", arr)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 打开悬浮角色对话小窗（网页/球都可调用）。 */
+        @JavascriptInterface
+        fun openFloatingChat() {
+            runOnUiThread { runCatching { FloatingChatWindowService.show(this@MainActivity) } }
+        }
+
+        /** 安装内置 Shizuku APK：已装直接返回；否则拷到 cacheDir 用 FileProvider 唤起系统安装弹窗。 */
+        @JavascriptInterface
+        fun installBundledShizuku(): String = runCatching {
+            if (ShizukuAuthorizer.isShizukuInstalled(this@MainActivity)) {
+                return@runCatching """{"ok":true,"status":"already"}"""
+            }
+            val apk = java.io.File(cacheDir, "shizuku.apk")
+            assets.open("shizuku.apk").use { input ->
+                apk.outputStream().use { output -> input.copyTo(output) }
+            }
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this@MainActivity, "$packageName.fileprovider", apk,
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            runOnUiThread { runCatching { startActivity(intent) } }
+            """{"ok":true,"status":"installer_launched","message":"已唤起安装，请在系统弹窗完成安装（华为手机请允许「未知来源」安装）"}"""
+        }.getOrElse { errJson(it.message) }
+
+        /** 经 Shizuku 管理应用：force_stop / enable / disable / uninstall。 */
+        @JavascriptInterface
+        fun manageApp(action: String, packageName: String): String {
+            if (!ShizukuAuthorizer.hasPermission()) return """{"ok":false,"error":"Shizuku 未授权"}"""
+            val pkg = packageName.trim()
+            if (pkg.isBlank()) return """{"ok":false,"error":"packageName 为空"}"""
+            val cmd = when (action) {
+                "force_stop" -> "am force-stop $pkg"
+                "enable" -> "pm enable $pkg"
+                "disable" -> "pm disable-user $pkg"
+                "uninstall" -> "pm uninstall $pkg"
+                else -> return """{"ok":false,"error":"未知 action：$action"}"""
+            }
+            val r = ShizukuAuthorizer.executeShell(cmd)
+            org.json.JSONObject()
+                .put("ok", r.success)
+                .put("action", action)
+                .put("packageName", pkg)
+                .put("output", r.stdout.ifBlank { r.stderr })
+                .toString()
+        }
+
+        /** 经 Shizuku 开关飞行模式（写 global 设置 + 发系统广播）。 */
+        @JavascriptInterface
+        fun setAirplaneMode(on: Boolean): String {
+            if (!ShizukuAuthorizer.hasPermission()) return """{"ok":false,"error":"Shizuku 未授权"}"""
+            val v = if (on) 1 else 0
+            val state = if (on) "true" else "false"
+            val r1 = ShizukuAuthorizer.executeShell("settings put global airplane_mode_on $v")
+            val r2 = ShizukuAuthorizer.executeShell("am broadcast -a android.intent.action.AIRPLANE_MODE --ez state $state")
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("on", on)
+                .put("settings", r1.stdout)
+                .put("broadcast", r2.stdout)
+                .toString()
+        }
+
+        // ── 现实桥·补全 Operit 能力（点按 / Toast / 媒体键 / 蓝牙 / 文件 / 设置读写 / 用量 / 文件分享） ──
+
+        /** 无障碍点按（归一化 0..1000 坐标）。 */
+        @JavascriptInterface
+        fun tap(x: Int, y: Int): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.tapCoordinate(x, y)
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r as Map<*, *>).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 弹一个短 Toast。 */
+        @JavascriptInterface
+        fun toast(text: String): String = runCatching {
+            runOnUiThread { Toast.makeText(this@MainActivity, text, Toast.LENGTH_SHORT).show() }
+            """{"ok":true}"""
+        }.getOrElse { errJson(it.message) }
+
+        /** 媒体键控制：play_pause / next / previous / stop（优先 Shizuku，退回 Runtime）。 */
+        @JavascriptInterface
+        fun musicControl(action: String): String = runCatching {
+            val code = when (action) {
+                "play_pause" -> 85
+                "next" -> 87
+                "previous" -> 88
+                "stop" -> 86
+                else -> return@runCatching """{"ok":false,"error":"未知 action：$action"}"""
+            }
+            val usedShizuku = if (ShizukuAuthorizer.hasPermission()) {
+                ShizukuAuthorizer.executeShell("input keyevent $code")
+                true
+            } else {
+                Runtime.getRuntime().exec(arrayOf("input", "keyevent", code.toString())).waitFor()
+                false
+            }
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("action", action)
+                .put("code", code)
+                .put("viaShizuku", usedShizuku)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 蓝牙开关状态。 */
+        @JavascriptInterface
+        fun getBluetoothState(): String = runCatching {
+            val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("available", adapter != null)
+                .put("enabled", adapter?.isEnabled ?: false)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 开关蓝牙（走 Shizuku svc，无 Shizuku 退回 adapter.enable/disable）。 */
+        @JavascriptInterface
+        fun setBluetoothEnabled(on: Boolean): String = runCatching {
+            val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+                ?: return@runCatching """{"ok":false,"error":"本机无蓝牙模块"}"""
+            if (ShizukuAuthorizer.hasPermission()) {
+                ShizukuAuthorizer.executeShell(if (on) "svc bluetooth enable" else "svc bluetooth disable")
+            } else {
+                @Suppress("DEPRECATION")
+                if (on) adapter.enable() else adapter.disable()
+            }
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("on", on)
+                .put("enabled", adapter.isEnabled)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 列已配对蓝牙设备（API31+ 需 BLUETOOTH_CONNECT）。 */
+        @JavascriptInterface
+        fun listBondedDevices(): String = runCatching {
+            if (Build.VERSION.SDK_INT >= 31) {
+                val granted = ContextCompat.checkSelfPermission(
+                    this@MainActivity, android.Manifest.permission.BLUETOOTH_CONNECT,
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!granted) return@runCatching """{"ok":false,"error":"需要蓝牙权限"}"""
+            }
+            val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+                ?: return@runCatching """{"ok":false,"error":"本机无蓝牙模块"}"""
+            val arr = org.json.JSONArray()
+            for (d in adapter.bondedDevices) {
+                arr.put(org.json.JSONObject()
+                    .put("name", runCatching { d.name }.getOrDefault(""))
+                    .put("address", d.address))
+            }
+            org.json.JSONObject().put("ok", true).put("devices", arr).toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 写 UTF-8 文本文件。 */
+        @JavascriptInterface
+        fun writeFile(path: String, content: String): String = runCatching {
+            if (path.isBlank()) return@runCatching """{"ok":false,"error":"path 为空"}"""
+            val f = java.io.File(path)
+            f.parentFile?.mkdirs()
+            f.writeText(content, Charsets.UTF_8)
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("path", f.absolutePath)
+                .put("bytes", f.length())
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 删除文件或目录（目录递归删除）。 */
+        @JavascriptInterface
+        fun deleteFile(path: String): String = runCatching {
+            if (path.isBlank()) return@runCatching """{"ok":false,"error":"path 为空"}"""
+            val f = java.io.File(path)
+            val ok = if (f.isDirectory) f.deleteRecursively() else f.delete()
+            org.json.JSONObject().put("ok", ok).put("path", f.absolutePath).toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 建目录（含父目录）。 */
+        @JavascriptInterface
+        fun makeDirectory(path: String): String = runCatching {
+            if (path.isBlank()) return@runCatching """{"ok":false,"error":"path 为空"}"""
+            val f = java.io.File(path)
+            val ok = f.mkdirs()
+            org.json.JSONObject().put("ok", ok).put("path", f.absolutePath).toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 递归查找文件（最多 3 层、最多 100 条）。 */
+        @JavascriptInterface
+        fun findFiles(rootPath: String, query: String): String = runCatching {
+            val root = java.io.File(rootPath)
+            if (!root.exists() || !root.isDirectory) {
+                return@runCatching """{"ok":false,"error":"根路径不是目录：$rootPath"}"""
+            }
+            val q = query.trim()
+            val matches = org.json.JSONArray()
+            var count = 0
+            fun walk(dir: java.io.File, depth: Int) {
+                if (depth > 3 || count >= 100) return
+                val list = dir.listFiles() ?: return
+                for (f in list) {
+                    if (count >= 100) return
+                    val hit = q.isEmpty() || f.name.contains(q, ignoreCase = true)
+                    if (hit) {
+                        matches.put(org.json.JSONObject()
+                            .put("path", f.absolutePath)
+                            .put("size", f.length())
+                            .put("isDir", f.isDirectory))
+                        count++
+                    }
+                    if (f.isDirectory) walk(f, depth + 1)
+                }
+            }
+            walk(root, 0)
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("matches", matches)
+                .put("count", count)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 读系统设置：namespace ∈ system/secure/global。 */
+        @JavascriptInterface
+        fun getSystemSetting(namespace: String, key: String): String = runCatching {
+            val v: String? = when (namespace) {
+                "system" -> Settings.System.getString(contentResolver, key)
+                "secure" -> Settings.Secure.getString(contentResolver, key)
+                "global" -> Settings.Global.getString(contentResolver, key)
+                else -> return@runCatching """{"ok":false,"error":"未知 namespace：$namespace"}"""
+            }
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("namespace", namespace)
+                .put("key", key)
+                .put("value", v ?: "")
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 写系统设置：namespace ∈ system/secure/global（写 system 需 WRITE_SETTINGS 权限）。 */
+        @JavascriptInterface
+        fun setSystemSetting(namespace: String, key: String, value: String): String = runCatching {
+            if (namespace == "system" && !Settings.System.canWrite(this@MainActivity)) {
+                return@runCatching """{"ok":false,"error":"需要「修改系统设置」权限"}"""
+            }
+            val ok: Boolean = when (namespace) {
+                "system" -> Settings.System.putString(contentResolver, key, value)
+                "secure" -> Settings.Secure.putString(contentResolver, key, value)
+                "global" -> Settings.Global.putString(contentResolver, key, value)
+                else -> return@runCatching """{"ok":false,"error":"未知 namespace：$namespace"}"""
+            }
+            org.json.JSONObject()
+                .put("ok", ok)
+                .put("namespace", namespace)
+                .put("key", key)
+                .put("value", value)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 今日应用使用时长 TOP20（需 PACKAGE_USAGE_STATS 权限，系统设置→应用→特殊权限里授予）。 */
+        @JavascriptInterface
+        fun getAppUsageTime(): String = runCatching {
+            val usm = getSystemService(USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+            val cal = java.util.Calendar.getInstance()
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            val stats = usm.queryUsageStats(
+                android.app.usage.UsageStatsManager.INTERVAL_BEST,
+                cal.timeInMillis,
+                System.currentTimeMillis(),
+            )
+            val agg = HashMap<String, Long>()
+            if (stats != null) {
+                for (s in stats) {
+                    agg[s.packageName] = (agg[s.packageName] ?: 0L) + s.totalTimeInForeground
+                }
+            }
+            val arr = org.json.JSONArray()
+            agg.entries.sortedByDescending { it.value }.take(20).forEach { (pkg, ms) ->
+                arr.put(org.json.JSONObject().put("pkg", pkg).put("totalTimeMs", ms))
+            }
+            org.json.JSONObject().put("ok", true).put("usages", arr).toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 用系统查看器打开文件（FileProvider 临时授权读 URI）。 */
+        @JavascriptInterface
+        fun openFile(path: String): String = runCatching {
+            val f = java.io.File(path)
+            if (!f.exists()) return@runCatching """{"ok":false,"error":"文件不存在：$path"}"""
+            val ext = android.webkit.MimeTypeMap.getFileExtensionFromUrl(f.name).lowercase()
+            val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this@MainActivity, "$packageName.fileprovider", f,
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            runOnUiThread { runCatching { startActivity(intent) } }
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("path", f.absolutePath)
+                .put("mime", mime)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 通过系统分享面板发送文件（FileProvider 临时授权读 URI）。 */
+        @JavascriptInterface
+        fun shareFile(path: String, mime: String): String = runCatching {
+            val f = java.io.File(path)
+            if (!f.exists()) return@runCatching """{"ok":false,"error":"文件不存在：$path"}"""
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this@MainActivity, "$packageName.fileprovider", f,
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                setType(mime.ifBlank { "*/*" })
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            runOnUiThread {
+                runCatching {
+                    startActivity(Intent.createChooser(send, "分享").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
+            """{"ok":true}"""
         }.getOrElse { errJson(it.message) }
 
         private fun scaleBitmapForOcr(bitmap: android.graphics.Bitmap): android.graphics.Bitmap {

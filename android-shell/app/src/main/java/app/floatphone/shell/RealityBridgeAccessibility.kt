@@ -117,47 +117,49 @@ class RealityBridgeAccessibility : AccessibilityService() {
         super.onDestroy()
     }
 
-    /** 返回当前前台窗口的可读节点树 JSON（掌心窗 getScreenNodes 的华为端实现）。 */
-    fun dumpScreenTree(limit: Int = 200): String {
+    /** 返回当前前台窗口的可读节点树 JSON（掌心窗 getScreenNodes 的华为端实现）。
+     *  每个节点带 text / content-desc / class / packageName / clickable / 可点击中心坐标 bounds，
+     *  成功时直接返回 JSON 数组（保持既有网页契约）。 */
+    fun dumpScreenTree(limit: Int = 300): String {
         return try {
             val root = rootInActiveWindow ?: return """{"ok":false,"error":"无障碍已开但取不到当前窗口"}"""
-            val nodes = ArrayList<Map<String, Any?>>()
-            collectNodes(root, nodes, limit)
-            val json = StringBuilder().append("[")
-            for (i in nodes.indices) {
-                if (i > 0) json.append(",")
-                val n = nodes[i]
-                json.append("{")
-                json.append("\"text\":").append(jsonStr(n["text"]?.toString()))
-                json.append(",\"desc\":").append(jsonStr(n["desc"]?.toString()))
-                json.append(",\"id\":").append(jsonStr(n["id"]?.toString()))
-                json.append(",\"class\":").append(jsonStr(n["class"]?.toString()))
-                json.append(",\"clickable\":").append(n["clickable"])
-                json.append(",\"rect\":").append(jsonStr(n["rect"]?.toString()))
-                json.append("}")
-            }
-            json.append("]").toString()
+            val arr = org.json.JSONArray()
+            collectNodes(root, arr, limit)
+            arr.toString()
         } catch (t: Throwable) {
-            """{"ok":false,"error":"${jsonStr(t.message)}"}"""
+            """{"ok":false,"error":${jsonStr(t.message)}}"""
         }
     }
 
-    private fun collectNodes(node: AccessibilityNodeInfo, out: MutableList<Map<String, Any?>>, limit: Int) {
-        if (out.size >= limit) return
+    private fun collectNodes(node: AccessibilityNodeInfo, out: org.json.JSONArray, limit: Int) {
+        if (out.length() >= limit) return
         val text = node.text?.toString()
         val desc = node.contentDescription?.toString()
-        if (!text.isNullOrBlank() || !desc.isNullOrBlank() || node.isClickable) {
+        // 可见且"有意义"的节点：带文字/描述、可点击、可编辑、可勾选、可滚动——其余纯布局容器跳过
+        val interesting = !text.isNullOrBlank() || !desc.isNullOrBlank() ||
+            node.isClickable || node.isEditable || node.isCheckable || node.isScrollable
+        if (interesting) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
-            out.add(
-                mapOf(
-                    "text" to text,
-                    "desc" to desc,
-                    "id" to node.viewIdResourceName,
-                    "class" to node.className?.toString(),
-                    "clickable" to node.isClickable,
-                    "rect" to "$rect",
-                ),
+            val bounds = org.json.JSONObject()
+                .put("l", rect.left)
+                .put("t", rect.top)
+                .put("r", rect.right)
+                .put("b", rect.bottom)
+                .put("cx", rect.centerX())
+                .put("cy", rect.centerY())
+            out.put(
+                org.json.JSONObject()
+                    .put("text", text ?: org.json.JSONObject.NULL)
+                    .put("desc", desc ?: org.json.JSONObject.NULL)
+                    .put("id", node.viewIdResourceName ?: org.json.JSONObject.NULL)
+                    .put("class", node.className?.toString() ?: org.json.JSONObject.NULL)
+                    .put("pkg", node.packageName?.toString() ?: org.json.JSONObject.NULL)
+                    .put("clickable", node.isClickable)
+                    .put("editable", node.isEditable)
+                    .put("checkable", node.isCheckable)
+                    .put("rect", rect.flattenToString())
+                    .put("bounds", bounds),
             )
         }
         for (i in 0 until node.childCount) {

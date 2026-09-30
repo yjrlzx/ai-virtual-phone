@@ -73,7 +73,6 @@
     + '<h3>各板块正确入口</h3>'
     + '<table class="llhelp-table">'
     + '<tr><th>数据类型</th><th>进入页面</th><th>点击按钮</th></tr>'
-    + '<tr><td>记账</td><td>请打开独立记账应用</td><td>账目按微信/支付宝来源分账</td></tr>'
     + '<tr><td>每日任务</td><td>今日安排</td><td>添加任务</td></tr>'
     + '<tr><td>一周任务</td><td>周视图</td><td>添加任务</td></tr>'
     + '<tr><td>习惯打卡</td><td>习惯打卡</td><td>加习惯</td></tr>'
@@ -97,8 +96,6 @@
     + '<div class="llhelp-quote">请把下面数据加到 Life Line 网页，用页面表单入口，不要改 localStorage，加完确认右上角已同步，然后回复我每条数据的添加结果。</div>'
     + '<p class="llhelp-sub">任务类：</p>'
     + '<span class="llhelp-code">日期 2026-09-26\n上午 背单词200个 英语 30分钟\n下午 2013年阅读Text1 英语 60分钟\n晚上 逻辑第2讲 逻辑 90分钟</span>'
-    + '<p class="llhelp-sub">账目类：</p>'
-    + '<span class="llhelp-code">支出 28.8 微信 餐饮 晚餐汉堡\n收入 100 微信 转账 沈老师</span>'
 
     + '<h3>禁止操作清单</h3>'
     + '<ol>'

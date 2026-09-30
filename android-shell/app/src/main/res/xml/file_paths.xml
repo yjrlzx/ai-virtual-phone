@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 暴露 cacheDir 根目录：installBundledShizuku 把 assets/shizuku.apk 拷到这里再交给系统安装器 -->
+    <cache-path name="internal_cache" path="." />
+</paths>

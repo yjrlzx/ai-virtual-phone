@@ -25,7 +25,7 @@ import { executeCustomAppToolCall } from "./custom-app-tool-runtime";
 import { characterWorkspace, agentComputerRequest, isAgentComputerConfigured } from "./agent-computer";
 import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, HUAWEI_SHELL_CAPABILITY_ID, LIFELINE_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
 import { bridgeConnection, loadBridgeDataItems, loadBridgeShortcutActions, readAllBridgeStateSnapshots, readBridgeStateSnapshot } from "./reality-bridge/storage";
-import { fetchHuaweiCurrentWeather, getAndroidShell, invokeShellJson, loadHuaweiCustomActions, loadHuaweiFootprint, loadHuaweiHealthSnapshot, loadHuaweiShellSettings, loadHuaweiTriggerRules, pushLockedPackagesToShell, readHuaweiLedger, readLockedPackagesFromShell, saveHuaweiTriggerRules, syncHuaweiLedgerFromShell } from "./huawei-shell/storage";
+import { getAndroidShell, invokeShellJson, loadHuaweiCustomActions, loadHuaweiFootprint, loadHuaweiHealthSnapshot, loadHuaweiShellSettings, loadHuaweiTriggerRules, pushLockedPackagesToShell, readHuaweiLedger, readLockedPackagesFromShell, saveHuaweiTriggerRules, syncHuaweiLedgerFromShell } from "./huawei-shell/storage";
 import type { HuaweiLedgerRecord } from "./huawei-shell/storage";
 import type { HuaweiCustomAction, HuaweiTriggerRule } from "./huawei-shell/types";
 import { WECHAT_PACKAGE, type PaymentSource } from "./huawei-shell/types";
@@ -1049,7 +1049,6 @@ async function executeRealityBridgeTool(call: ToolCall, context?: ToolExecutionC
 
 function isHuaweiShellToolName(name: string): boolean {
     return name === "查看手机状态"
-        || name === "实时天气"
         || name === "查询位置"
         || name === "查看当前应用"
         || name === "查看通知"
@@ -1070,6 +1069,8 @@ function isHuaweiShellToolName(name: string): boolean {
         || name === "写入剪贴板"
         || name === "打开网页"
         || name === "读取文件"
+        || name === "管理应用"
+        || name === "飞行模式"
         || name === "语音转文字"
         || name === "发起语音通话"
         || name === "识别屏幕交易"
@@ -1157,13 +1158,6 @@ function huaweiStatusTool(): ToolResult {
     parts.push(r.floating ? "悬浮球已开启" : "悬浮球未开启");
     if (typeof r.lockedApps === "number") parts.push(`门禁锁 ${r.lockedApps} 个 App`);
     return huaweiToolOk("查看手机状态", parts.length > 0 ? parts.join("，") : "未获取到状态信息");
-}
-
-async function huaweiWeatherTool(): Promise<ToolResult> {
-    const result = await fetchHuaweiCurrentWeather();
-    return result.ok
-        ? huaweiToolOk("实时天气", result.data || "")
-        : huaweiToolFail("实时天气", result.error || "天气获取失败");
 }
 
 function huaweiLocationTool(): ToolResult {
@@ -1414,6 +1408,33 @@ function huaweiReadFileTool(args: Record<string, unknown>): ToolResult {
     return huaweiToolOk("读取文件", `文件 ${String(result.data.path ?? "")}：\n${truncate(content)}`);
 }
 
+const HUAWEI_MANAGE_APP_ACTIONS = new Set(["force_stop", "enable", "disable", "uninstall"]);
+
+function huaweiManageAppTool(args: Record<string, unknown>): ToolResult {
+    const action = typeof args.action === "string" ? args.action.trim() : "";
+    if (!HUAWEI_MANAGE_APP_ACTIONS.has(action)) {
+        return huaweiToolFail("管理应用", "action 必须是 force_stop / enable / disable / uninstall 之一");
+    }
+    const packageName = typeof args.packageName === "string" ? args.packageName.trim() : "";
+    if (!packageName) return huaweiToolFail("管理应用", "缺少 packageName 参数（要管理的应用包名）");
+    const result = invokeShellJson(shell => (shell.manageApp ? shell.manageApp(action, packageName) : null));
+    if (!result.ok) return huaweiToolFail("管理应用", result.error);
+    const actionLabel: Record<string, string> = {
+        force_stop: "已强制停止",
+        enable: "已启用",
+        disable: "已停用",
+        uninstall: "已卸载",
+    };
+    return huaweiToolOk("管理应用", `${actionLabel[action]} ${huaweiAppLabel(packageName)}（${packageName}）`);
+}
+
+function huaweiAirplaneModeTool(args: Record<string, unknown>): ToolResult {
+    const on = args.on !== false;
+    const result = invokeShellJson(shell => (shell.setAirplaneMode ? shell.setAirplaneMode(on) : null));
+    if (!result.ok) return huaweiToolFail("飞行模式", result.error);
+    return huaweiToolOk("飞行模式", on ? "已打开飞行模式" : "已关闭飞行模式");
+}
+
 /** 纯本地掌心窗工具：只读写本机 kv（窗语/专注/陪伴/日记/守护日历/定时提醒规则），
  *  不依赖真机壳连接——掌心窗在没连壳时也能看窗语、陪伴天数与守护日历。 */
 const PEEK_LOCAL_TOOLS = new Set([
@@ -1445,7 +1466,6 @@ async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
     const args = call.args || {};
     switch (call.name) {
         case "查看手机状态": return huaweiStatusTool();
-        case "实时天气": return await huaweiWeatherTool();
         case "查询位置": return huaweiLocationTool();
         case "查看当前应用": return huaweiCurrentAppTool();
         case "查看通知": return huaweiNotificationsTool(args);
@@ -1466,6 +1486,8 @@ async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
         case "写入剪贴板": return huaweiClipboardWriteTool(args);
         case "打开网页": return huaweiOpenUrlTool(args);
         case "读取文件": return huaweiReadFileTool(args);
+        case "管理应用": return huaweiManageAppTool(args);
+        case "飞行模式": return huaweiAirplaneModeTool(args);
         case "语音转文字": return huaweiVoiceToTextTool();
         case "发起语音通话": return huaweiStartVoiceCallTool();
         case "识别屏幕交易": return huaweiOcrScreenTool();
@@ -1506,7 +1528,6 @@ async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
  *  每个内置工具归属一个层级，用户在设置页权限中心逐级开关；关闭的层级对应工具被门拦并提示去开启。 */
 const HUAWEI_TOOL_PERMISSION_LEVEL: Record<string, "standard" | "accessibility" | "debugger" | "admin" | "root"> = {
     "查看手机状态": "standard",
-    "实时天气": "standard",
     "查询位置": "standard",
     "查看当前应用": "standard",
     "查看记账": "standard",
@@ -1545,6 +1566,8 @@ const HUAWEI_TOOL_PERMISSION_LEVEL: Record<string, "standard" | "accessibility" 
     "设置定时提醒": "accessibility",
     "识别屏幕内容": "accessibility",
     "读取文件": "debugger",
+    "管理应用": "debugger",
+    "飞行模式": "debugger",
     "写手机日历": "debugger",
     "识别屏幕交易": "admin",
     "调节亮度": "admin",

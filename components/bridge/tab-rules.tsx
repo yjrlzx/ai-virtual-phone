@@ -10,7 +10,7 @@ import {
 import type { BridgeTabProps } from "./shared";
 import {
   loadHuaweiTriggerRules, saveHuaweiTriggerRules,
-  loadHuaweiCustomActions, getAndroidShell,
+  loadHuaweiCustomActions, getAndroidShell, appendHuaweiBridgeEvent,
 } from "@/lib/huawei-shell/storage";
 import { ALIPAY_PACKAGE, WECHAT_PACKAGE } from "@/lib/huawei-shell/types";
 import type {
@@ -38,6 +38,7 @@ const SHIZUKU_PACKAGE = "moe.shizuku.privileged.api";
 const QUICK_PKGS = [
   { pkg: WECHAT_PACKAGE, label: "微信" },
   { pkg: ALIPAY_PACKAGE, label: "支付宝" },
+  { pkg: "payment", label: "支付到账" },
 ] as const;
 
 const chipBase: CSSProperties = {
@@ -69,6 +70,8 @@ type Draft = {
   openApp: string;
   actionPackageName: string;
   actionName: string;
+  processMode: "raw" | "template";
+  contentTemplate: string;
 };
 
 function blankDraft(): Draft {
@@ -87,6 +90,8 @@ function blankDraft(): Draft {
     openApp: "",
     actionPackageName: "",
     actionName: "",
+    processMode: "raw",
+    contentTemplate: "",
   };
 }
 
@@ -106,6 +111,8 @@ function draftFromRule(r: HuaweiTriggerRule): Draft {
     openApp: r.openApp ?? "",
     actionPackageName: r.actionPackageName ?? "",
     actionName: r.actionName ?? "",
+    processMode: r.processMode === "template" ? "template" : "raw",
+    contentTemplate: r.contentTemplate ?? "",
   };
 }
 
@@ -229,6 +236,12 @@ function RuleWizard({
       res = { ok: true, detail: `保存后将调用已登记动作「${draft.actionName.trim() || "未选择"}」` };
     }
     setTestResult(`${res.ok ? "✓ " : "✗ "}${res.detail}`);
+    appendHuaweiBridgeEvent({
+      kind: "action",
+      title: `测试联动 · ${draft.name.trim() || "未命名"}`,
+      detail: res.detail,
+      ok: res.ok,
+    });
     onNotice?.(res.ok ? "测试已执行" : `测试失败：${res.detail}`);
     // 通知类规则：拉最近通知预览，帮助确认信号能命中
     if (draft.trigger === "notification") {
@@ -398,13 +411,41 @@ function RuleWizard({
       {/* ---------- 第 4 步 加工内容 ---------- */}
       {step === 4 ? (
         <div>
-          <p style={{ fontSize: 12, color: SUB, lineHeight: 1.7, margin: 0 }}>
-            通知文本会<strong>原样透传</strong>给后续动作，不做改写。
+          <p style={{ fontSize: 12, color: SUB, lineHeight: 1.7, margin: "0 0 8px" }}>
+            命中通知后，怎么组织要发出去的内容？
           </p>
-          <div style={GUIDE_BOX}>
-            例如选了「微信」+ 关键词「支付成功」，命中后就按上一步选的动作执行；不需要额外加工。
-            定时触发不依赖通知内容，直接按时间执行。
+          <div style={{ display: "flex", gap: 8 }}>
+            {([
+              { v: "raw" as const, t: "原样固定文案" },
+              { v: "template" as const, t: "模板加工" },
+            ]).map(opt => {
+              const on = draft.processMode === opt.v;
+              return (
+                <button key={opt.v} type="button" onClick={() => set({ processMode: opt.v })}
+                  style={{ ...chipBase, background: on ? ACCENT : "rgba(150,190,230,.15)", color: on ? "#fff" : SUB }}>
+                  {opt.t}
+                </button>
+              );
+            })}
           </div>
+          {draft.processMode === "template" ? (
+            <>
+              <label style={fieldLabel}>正文模板</label>
+              <textarea
+                style={{ ...INPUT, minHeight: 84, resize: "vertical", fontFamily: "inherit" }}
+                placeholder="如 到账提醒：{payload}"
+                value={draft.contentTemplate}
+                onChange={e => set({ contentTemplate: e.target.value })}
+              />
+              <div style={GUIDE_BOX}>
+                {`{payload} 会替换成命中通知的标题与正文`}；{`{title}`} 仅标题、{`{text}`} 仅正文。定时触发没有通知内容，占位会替换为空。
+              </div>
+            </>
+          ) : (
+            <div style={GUIDE_BOX}>
+              按下一步填好的固定标题与正文发送，不引用通知里的内容。定时触发走这种方式。
+            </div>
+          )}
         </div>
       ) : null}
 
@@ -415,8 +456,13 @@ function RuleWizard({
             <>
               <label style={fieldLabel}>通知标题</label>
               <input style={INPUT} value={draft.title} onChange={e => set({ title: e.target.value })} placeholder="如 该喝水了" />
-              <label style={fieldLabel}>通知正文</label>
+              <label style={fieldLabel}>通知正文{draft.processMode === "template" ? "（兜底固定文案，模板未命中占位时使用）" : ""}</label>
               <input style={INPUT} value={draft.content} onChange={e => set({ content: e.target.value })} placeholder="如 定时提醒" />
+              {draft.processMode === "template" ? (
+                <div style={{ ...GUIDE_BOX, marginTop: 8 }}>
+                  当前为模板加工：实际发送的正文来自第 4 步模板，这里的固定文案只作兜底。
+                </div>
+              ) : null}
               <label style={fieldLabel}>点击通知打开的包名（可空）</label>
               <input style={INPUT} value={draft.openApp} onChange={e => set({ openApp: e.target.value })} placeholder="如 com.tencent.mm" />
             </>
@@ -549,6 +595,8 @@ export function TabRules({ onNotice }: BridgeTabProps) {
       openApp: d.action === "send_notification" ? d.openApp.trim() || undefined : undefined,
       actionPackageName: d.action === "open_app" ? d.actionPackageName.trim() || undefined : undefined,
       actionName: d.action === "custom_action" ? d.actionName.trim() || undefined : undefined,
+      processMode: d.processMode === "template" ? "template" : undefined,
+      contentTemplate: d.processMode === "template" ? d.contentTemplate.trim() || undefined : undefined,
       lastTriggeredAt: orig?.lastTriggeredAt,
       lastSeenTs: orig?.lastSeenTs,
       triggerCount: orig?.triggerCount,

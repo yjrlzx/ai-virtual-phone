@@ -251,7 +251,7 @@
       width: 100% !important;
       box-shadow: 0 2px 8px rgba(100,170,220,0.15) !important;
     }
-    #finance-trend .stat-card, #finance-clients .stat-card { width: auto !important; }
+    #finance-clients .stat-card { width: auto !important; }
     .stat-card { width: 100% !important; }
     .week-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
     .month-grid { grid-template-columns: repeat(7, 1fr) !important; gap: 3px !important; }
@@ -259,21 +259,6 @@
     .book-grid { grid-template-columns: 1fr !important; gap: 10px !important; }
     .mood-pick { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)) !important; }
     
-    /* 鏀舵敮瓒嬪娍椤甸潰 - 绉诲姩绔竷灞€ */
-    #finance-trend .grid.grid-3 {
-      display: grid !important;
-      grid-template-columns: repeat(3, 1fr) !important;
-      gap: 8px !important;
-    }
-    #finance-trend .stat-card {
-      width: 100% !important;
-    }
-    #finance-trend .stat-card:nth-child(3n) {
-      margin-right: 0 !important;
-    }
-    #finance-trend .stat-card .stat-number {
-      font-size: 16px !important;
-    }
     
     /* 鏈堣鍥?- 绉诲姩绔紭鍖栵紙鏃ュ巻app鏍峰紡锛?*/
     #schedule-month .month-stats .stat-mini {
@@ -376,21 +361,6 @@
       display: none !important;
     }
     
-    /* 璐㈠姟璐︽埛鍗＄墖瀵归綈 */
-    #finance-today .grid.grid-3 .acct-card {
-      display: flex !important;
-      flex-direction: column !important;
-      justify-content: center !important;
-      align-items: center !important;
-      text-align: center !important;
-    }
-    #finance-today .grid.grid-3 .acct-card div {
-      white-space: nowrap !important;
-      font-size: 13px !important;
-    }
-    #finance-today .grid.grid-3 .acct-card div[style*="font-size"] {
-      font-size: 16px !important;
-    }
     
     /* 瀹㈡埛绠＄悊 - 鍔犳柊鍗曟寜閽悓涓€琛?*/
     #finance-clients .soft-card > div:first-child {
@@ -500,24 +470,6 @@
       margin-right: 0 !important;
     }
     
-    /* 璐㈠姟椤甸潰 - 绉诲姩绔竷灞€ */
-    #finance-today .grid.grid-3 {
-      display: grid !important;
-      grid-template-columns: repeat(3, 1fr) !important;
-      gap: 8px !important;
-    }
-    #finance-today .grid.grid-3 .acct-card {
-      width: 100% !important;
-      padding: 10px 8px !important;
-    }
-    #finance-today .grid.grid-3 .acct-card div[style*="font-size:22px"] {
-      font-size: 16px !important;
-    }
-    #finance-today .grid.grid-2 {
-      display: grid !important;
-      grid-template-columns: repeat(2, 1fr) !important;
-      gap: 10px !important;
-    }
     
     /* 鏈堣鍥?- 绉诲姩绔竷灞€ */
     #schedule-month .month-stats {
@@ -677,10 +629,7 @@
     '<div class="ll-grid">' +
     '<div class="ll-action" onclick="llOCRError()"><div class="ll-action-icon">📷</div><div class="ll-action-label">拍题录错题</div></div>' +
     '<div class="ll-action" onclick="llOCRKnowledge()"><div class="ll-action-icon">📖</div><div class="ll-action-label">拍知识点</div></div>' +
-    '<div class="ll-action" onclick="llOCRFinance()"><div class="ll-action-icon">🧾</div><div class="ll-action-label">拍小票记账</div></div>' +
-    '<div class="ll-action" onclick="llVoiceFinance()"><div class="ll-action-icon">🎤</div><div class="ll-action-label">语音记账</div></div>' +
     '<div class="ll-action" onclick="llOpenJournal()"><div class="ll-action-icon">📝</div><div class="ll-action-label">写日记</div></div>' +
-    '<div class="ll-action" onclick="llOpenFinance()"><div class="ll-action-icon">💰</div><div class="ll-action-label">记一笔账</div></div>' +
     '</div>' +
     '<button class="ll-btn-ghost" onclick="llCloseOverlay()">鍙栨秷</button></div>';
   document.body.appendChild(captureSheet);
@@ -692,7 +641,6 @@
     document.querySelectorAll('.ll-overlay.show').forEach(function (el) { el.classList.remove('show'); });
   };
   window.llOpenJournal = function () { window.llCloseOverlay(); if (typeof switchPage === 'function') switchPage('journal-write'); };
-  window.llOpenFinance = function () { window.llCloseOverlay(); if (typeof switchPage === 'function') switchPage('finance-today'); };
 
   // OCR
   var Tesseract;
@@ -726,7 +674,6 @@
   }
   window.llOCRError = function () { openOCR('error', '拍照识别错题'); };
   window.llOCRKnowledge = function () { openOCR('knowledge', '拍照识别知识点'); };
-  window.llOCRFinance = function () { openOCR('finance', '拍照识别小票记账'); };
 
   window.llTakePhoto = function () {
     var fi = document.getElementById('llOCRFile');
@@ -781,11 +728,6 @@
       }
     }).then(function (result) {
       document.getElementById('llOCRText').value = result.data.text.trim();
-      if (ocrMode === 'finance') {
-        var m = result.data.text.match(/(\d+\.?\d*)/);
-        document.getElementById('llOCRExtra').innerHTML =
-          '<input class="ll-input" id="llOCRAmount" placeholder="金额（元）" value="' + (m ? m[1] : '') + '">';
-      }
     }).catch(function () { document.getElementById('llOCRText').value = '识别失败，请重试'; });
   }
 
@@ -800,55 +742,10 @@
       state.knowledge.push({ id: Date.now().toString(36), title: text.slice(0, 50), content: text, date: new Date().toISOString().slice(0, 10) });
       if (typeof saveDB === 'function') saveDB();
       alert('鐭ヨ瘑鐐瑰凡淇濆瓨');
-    } else if (ocrMode === 'finance' && typeof state !== 'undefined') {
-      var amount = parseFloat(document.getElementById('llOCRAmount').value) || 0;
-      state.finances.records.push({ id: Date.now().toString(36), date: new Date().toISOString().slice(0, 10), type: 'expense', amount: amount, method: 'wechat', category: '椁愰ギ', note: text.slice(0, 30) });
-      if (typeof saveDB === 'function') saveDB();
-      alert('已记账 ¥' + amount);
     }
     window.llCloseOverlay();
   };
 
-  // 璇煶璁拌处
-  var voiceSheet = document.createElement('div');
-  voiceSheet.className = 'll-overlay';
-  voiceSheet.innerHTML =
-    '<div class="ll-sheet"><div class="ll-sheet-title">🎤 语音记账</div>' +
-    '<div style="text-align:center;padding:20px"><div style="font-size:24px">🎤 正在聆听...</div></div>' +
-    '<textarea class="ll-textarea" id="llVoiceResult" placeholder="璇村嚭姣斿锛氬崍椁?15 鍧?></textarea>' +
-    '<button class="ll-btn" onclick="llConfirmVoice()">纭璁拌处</button>' +
-    '<button class="ll-btn-ghost" onclick="llCloseOverlay()">鍙栨秷</button></div>';
-  document.body.appendChild(voiceSheet);
-
-  window.llVoiceFinance = function () {
-    window.llCloseOverlay();
-    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert('璇风敤Chrome鎵撳紑'); return; }
-    voiceSheet.classList.add('show');
-    var rec = new SR();
-    rec.lang = 'zh-CN'; rec.continuous = false; rec.interimResults = true;
-    rec.onresult = function (e) {
-      var txt = '';
-      for (var i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
-      document.getElementById('llVoiceResult').value = txt;
-    };
-    rec.onerror = function (e) { alert('识别失败: ' + e.error); };
-    try { rec.start(); } catch (e) {}
-  };
-
-  window.llConfirmVoice = function () {
-    var text = document.getElementById('llVoiceResult').value.trim();
-    if (!text) { alert('璇峰厛璇磋瘽'); return; }
-    var m = text.match(/(\d+\.?\d*)\s*(鍏億鍧梶鍧楅挶|绫硘楼)/);
-    var amount = m ? parseFloat(m[1]) : 0;
-    var note = text.replace(/(\d+\.?\d*)\s*(元|块|毛|角|钱|块)/g, '').replace(/[，。！？]/g, '').trim();
-    if (typeof state !== 'undefined' && state.finances) {
-      state.finances.records.push({ id: Date.now().toString(36), date: new Date().toISOString().slice(0, 10), type: 'expense', amount: amount || 0, method: 'wechat', category: '椁愰ギ', note: note });
-      if (typeof saveDB === 'function') saveDB();
-      alert('已记账 ¥' + (amount || 0));
-    }
-    window.llCloseOverlay();
-  };
 
   // 日记拍照
   function setupJournalCamera() {

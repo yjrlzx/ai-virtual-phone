@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import type { CSSProperties } from "react";
-import { loadHuaweiCustomActions, saveHuaweiCustomActions } from "@/lib/huawei-shell/storage";
+import { loadHuaweiCustomActions, saveHuaweiCustomActions, appendHuaweiBridgeEvent, interpolateHuaweiTemplate } from "@/lib/huawei-shell/storage";
 import type {
   HuaweiCustomAction,
   HuaweiCustomActionType,
   HuaweiStatusKey,
+  HuaweiActionParam,
+  HuaweiActionResultMode,
+  HuaweiActionDelivery,
 } from "@/lib/huawei-shell/types";
 import {
   CARD,
@@ -118,19 +121,23 @@ function explainResult(type: HuaweiCustomActionType, statusKey?: HuaweiStatusKey
   }
 }
 
-/** 真实跑一次动作，返回解析后的结果文案。 */
-function runAction(a: HuaweiCustomAction): { ok: boolean; text: string } {
+/** 真实跑一次动作，返回解析后的结果文案；values 会填进命令/标题/正文里的 {参数名} 占位。 */
+function runAction(a: HuaweiCustomAction, values: Record<string, string>): { ok: boolean; text: string } {
+  const pkg = interpolateHuaweiTemplate(a.packageName ?? "", values);
+  const title = interpolateHuaweiTemplate(a.title ?? "", values);
+  const content = interpolateHuaweiTemplate(a.content ?? "", values);
+  const cmd = interpolateHuaweiTemplate(a.command ?? "", values);
   let res: { ok: boolean; detail: string };
   switch (a.type) {
     case "open_app":
-      res = runShellAction("打开应用", s => s.openApp?.(a.packageName ?? ""));
+      res = runShellAction("打开应用", s => s.openApp?.(pkg));
       break;
     case "send_notification":
       res = runShellAction("推送通知", s =>
-        s.sendNotification?.(a.title ?? "", a.content ?? "", a.openApp || undefined));
+        s.sendNotification?.(title, content, a.openApp || undefined));
       break;
     case "shell":
-      res = runShellAction("执行 Shell", s => s.runShellCommand?.(a.command ?? ""));
+      res = runShellAction("执行 Shell", s => s.runShellCommand?.(cmd));
       break;
     case "read_status":
       res = runShellAction("读取状态", s => {
@@ -154,6 +161,9 @@ type Draft = {
   openApp: string;
   statusKey: HuaweiStatusKey;
   command: string;
+  params: HuaweiActionParam[];
+  resultMode: HuaweiActionResultMode;
+  deliveryMode: HuaweiActionDelivery;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -166,6 +176,9 @@ const EMPTY_DRAFT: Draft = {
   openApp: "",
   statusKey: "battery",
   command: "",
+  params: [],
+  resultMode: "none",
+  deliveryMode: "notification",
 };
 
 const labelStyle: CSSProperties = { fontSize: 12, fontWeight: 700, color: SUB, display: "block", margin: "10px 0 5px" };
@@ -174,6 +187,7 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
   const [actions, setActions] = useState<HuaweiCustomAction[]>(() => loadHuaweiCustomActions());
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tests, setTests] = useState<Record<string, { ok: boolean; text: string; at: number }>>({});
+  const [paramValues, setParamValues] = useState<Record<string, Record<string, string>>>({});
 
   const persist = (list: HuaweiCustomAction[]) => {
     setActions(list);
@@ -197,6 +211,9 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
       openApp: a.openApp ?? "",
       statusKey: a.statusKey ?? "battery",
       command: a.command ?? "",
+      params: a.params ? a.params.map(p => ({ ...p })) : [],
+      resultMode: a.resultMode === "text" ? "text" : "none",
+      deliveryMode: a.deliveryMode === "clipboard" ? "clipboard" : "notification",
     });
 
   const save = () => {
@@ -208,6 +225,17 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
     if (draft.type === "shell" && !draft.command.trim()) { onNotice?.("请填写要执行的 Shell 命令"); return; }
 
     const existing = draft.id ? actions.find(a => a.id === draft.id) : undefined;
+    // 规范化参数行：key 非空才保留，去重
+    const seenKeys = new Set<string>();
+    const params = draft.params
+      .map(p => ({ key: p.key.trim(), type: p.type, description: p.description.trim() }))
+      .filter(p => {
+        if (!p.key || seenKeys.has(p.key)) return false;
+        seenKeys.add(p.key);
+        return true;
+      })
+      .slice(0, 10);
+
     const record: HuaweiCustomAction = {
       id: draft.id ?? `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
       name,
@@ -219,6 +247,9 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
       openApp: draft.type === "send_notification" && draft.openApp.trim() ? draft.openApp.trim() : undefined,
       statusKey: draft.type === "read_status" ? draft.statusKey : undefined,
       command: draft.type === "shell" ? draft.command.trim().slice(0, 2000) : undefined,
+      params: params.length > 0 ? params : undefined,
+      resultMode: draft.resultMode === "text" ? "text" : undefined,
+      deliveryMode: draft.resultMode === "text" && draft.deliveryMode === "clipboard" ? "clipboard" : undefined,
       enabled: existing ? existing.enabled : true,
       createdAt: existing ? existing.createdAt : Date.now(),
     };
@@ -229,7 +260,17 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
   };
 
   const test = (a: HuaweiCustomAction) => {
-    const r = runAction(a);
+    const values = paramValues[a.id] ?? {};
+    const r = runAction(a, values);
+    // 声明了结果回传时，按送达方式把摘要送到通知栏或剪贴板
+    if (r.ok && a.resultMode === "text") {
+      if (a.deliveryMode === "clipboard") {
+        runShellAction("写入剪贴板", s => s.writeClipboard?.(r.text));
+      } else {
+        runShellAction("推送结果通知", s => s.sendNotification?.(`[结果] ${a.name}`, r.text, ""));
+      }
+    }
+    appendHuaweiBridgeEvent({ kind: "action", title: a.name, detail: r.text, ok: r.ok });
     setTests(m => ({ ...m, [a.id]: { ok: r.ok, text: r.text, at: Date.now() } }));
     onNotice?.(`${a.name} · ${r.text}`);
   };
@@ -301,8 +342,62 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
               <label style={labelStyle}>adb shell 命令（Shizuku 执行）</label>
               <input style={INPUT} placeholder="例如 dumpsys battery | grep level" value={draft.command}
                 onChange={e => setDraft({ ...draft, command: e.target.value })} />
+              <div style={{ fontSize: 11, color: FAINT, marginTop: 4 }}>
+                命令里可写 {`{参数名}`} 占位，调用时会被替换成实际参数值。
+              </div>
             </>
           ) : null}
+
+          {/* 运行参数：命令 / 标题 / 正文里用 {key} 占位 */}
+          <label style={labelStyle}>运行参数（可空）</label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {draft.params.map((p, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input style={{ ...INPUT, flex: 1.2 }} placeholder="参数名 key" value={p.key}
+                  onChange={e => {
+                    const params = draft.params.map((x, j) => j === i ? { ...x, key: e.target.value } : x);
+                    setDraft({ ...draft, params });
+                  }} />
+                <select style={{ ...INPUT, flex: 0.8 }} value={p.type}
+                  onChange={e => {
+                    const params = draft.params.map((x, j) => j === i ? { ...x, type: e.target.value as "string" | "number" } : x);
+                    setDraft({ ...draft, params });
+                  }}>
+                  <option value="string">文本</option>
+                  <option value="number">数字</option>
+                </select>
+                <input style={{ ...INPUT, flex: 1.4 }} placeholder="描述" value={p.description}
+                  onChange={e => {
+                    const params = draft.params.map((x, j) => j === i ? { ...x, description: e.target.value } : x);
+                    setDraft({ ...draft, params });
+                  }} />
+                <button type="button" style={{ ...BTN_RED, padding: "6px 10px" }} aria-label="删除参数"
+                  onClick={() => setDraft({ ...draft, params: draft.params.filter((_, j) => j !== i) })}>
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+          <button type="button" style={{ ...BTN_GHOST, marginTop: 8, padding: "6px 14px" }}
+            onClick={() => setDraft({ ...draft, params: [...draft.params, { key: "", type: "string", description: "" }] })}>
+            ＋ 添加参数
+          </button>
+
+          {/* 结果回传 */}
+          <label style={labelStyle}>返回模式</label>
+          <select style={INPUT} value={draft.resultMode}
+            onChange={e => setDraft({ ...draft, resultMode: e.target.value as HuaweiActionResultMode })}>
+            <option value="none">不等待结果</option>
+            <option value="text">执行后回传文本结果</option>
+          </select>
+          <label style={labelStyle}>结果送达方式</label>
+          <select style={{ ...INPUT, opacity: draft.resultMode === "text" ? 1 : 0.5 }}
+            disabled={draft.resultMode !== "text"}
+            value={draft.deliveryMode}
+            onChange={e => setDraft({ ...draft, deliveryMode: e.target.value as HuaweiActionDelivery })}>
+            <option value="notification">系统通知栏</option>
+            <option value="clipboard">写入剪贴板</option>
+          </select>
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
             <button type="button" style={BTN} onClick={save}>保存动作</button>
@@ -339,6 +434,12 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
                     {a.enabled ? <Badge tone="ok" text="已启用" /> : <Badge tone="gray" text="已停用" />}
                   </div>
                   <div style={{ fontSize: 11.5, color: FAINT, marginTop: 4, lineHeight: 1.5 }}>{actionSummary(a)}</div>
+                  {a.params && a.params.length > 0 ? (
+                    <div style={{ fontSize: 11, color: FAINT, marginTop: 4 }}>
+                      参数：{a.params.map(p => `${p.key}:${p.type === "number" ? "数字" : "文本"}`).join("，")}
+                      {a.resultMode === "text" ? ` · 结果回传（${a.deliveryMode === "clipboard" ? "剪贴板" : "通知栏"}）` : ""}
+                    </div>
+                  ) : null}
                   {a.description ? (
                     <div style={{ fontSize: 12, color: SUB, marginTop: 4, lineHeight: 1.6 }}>{a.description}</div>
                   ) : null}
@@ -350,6 +451,26 @@ export function TabShortcuts({ onNotice }: BridgeTabProps) {
                 <div style={{ ...GUIDE_BOX, marginTop: 10, marginBottom: 0, color: t.ok ? SUB : RED }}>
                   {t.text}
                   <span style={{ float: "right", color: FAINT }}>{fmtTime(t.at)}</span>
+                </div>
+              ) : null}
+
+              {a.params && a.params.length > 0 ? (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {a.params.map(p => (
+                    <div key={p.key} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span style={{ fontSize: 11.5, color: SUB, width: 84, flexShrink: 0 }}>{p.key}</span>
+                      <input
+                        style={{ ...INPUT, padding: "7px 10px" }}
+                        type={p.type === "number" ? "number" : "text"}
+                        placeholder={p.description || p.key}
+                        value={(paramValues[a.id] ?? {})[p.key] ?? ""}
+                        onChange={e => setParamValues(m => ({
+                          ...m,
+                          [a.id]: { ...(m[a.id] ?? {}), [p.key]: e.target.value },
+                        }))}
+                      />
+                    </div>
+                  ))}
                 </div>
               ) : null}
 

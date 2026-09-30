@@ -20,9 +20,28 @@ import {
   fmtTime,
   runShellAction,
 } from "./shared";
+import { appendHuaweiBridgeEvent } from "@/lib/huawei-shell/storage";
+import type { HuaweiShellBridge } from "@/lib/huawei-shell/types";
 import type { BridgeTabProps } from "./shared";
 
 /** 主动查询 Tab：定义数据项，角色按需实时查询手机状态（电量 / 位置 / 前台 App / 设备 / 自定义 Shell）。 */
+
+/** char 当前可读的手机数据项清单（全部走真实桥，不写死）。 */
+const READABLE_DATA_ITEMS: Array<{
+  id: string;
+  name: string;
+  hint: string;
+  invoke: (s: HuaweiShellBridge) => unknown;
+}> = [
+  { id: "notifications", name: "通知", hint: "getNotifications", invoke: s => s.getNotifications?.(5) },
+  { id: "payments", name: "支付", hint: "getPayments", invoke: s => s.getPayments?.(5) },
+  { id: "clipboard", name: "剪贴板", hint: "readClipboard", invoke: s => s.readClipboard?.() },
+  { id: "screen", name: "屏幕树", hint: "dumpScreen", invoke: s => s.dumpScreen?.() },
+  { id: "currentApp", name: "当前应用", hint: "getCurrentApp", invoke: s => s.getCurrentApp?.() },
+  { id: "device", name: "设备信息", hint: "getDeviceInfo", invoke: s => s.getDeviceInfo?.() },
+  { id: "location", name: "位置", hint: "getLocation", invoke: s => s.getLocation?.() },
+  { id: "health", name: "健康", hint: "readGadgetbridgeHealth", invoke: s => s.readGadgetbridgeHealth?.("") },
+];
 
 type QuerySource = "battery" | "location" | "current_app" | "device" | "shell";
 
@@ -151,6 +170,12 @@ export function TabQueries({ onNotice }: BridgeTabProps) {
   const [items, setItems] = useState<QueryItem[]>(() => loadItems());
   const [draft, setDraft] = useState<Draft | null>(null);
   const [querying, setQuerying] = useState<Record<string, boolean>>({});
+  const [dataItemResult, setDataItemResult] = useState<{ name: string; text: string } | null>(null);
+
+  const tryDataItem = (it: (typeof READABLE_DATA_ITEMS)[number]) => {
+    const res = runShellAction(it.name, it.invoke);
+    setDataItemResult({ name: it.name, text: res.ok ? res.detail : `失败：${res.detail}` });
+  };
 
   const persist = (list: QueryItem[]) => {
     setItems(list);
@@ -202,6 +227,7 @@ export function TabQueries({ onNotice }: BridgeTabProps) {
   const queryOnce = (it: QueryItem) => {
     setQuerying(m => ({ ...m, [it.id]: true }));
     const r = runQuery(it);
+    appendHuaweiBridgeEvent({ kind: "query", title: it.name, detail: r.text, ok: r.ok });
     const updated: QueryItem = { ...it, updatedAt: Date.now(), lastValue: r.text };
     persist(items.map(x => (x.id === it.id ? updated : x)));
     setQuerying(m => ({ ...m, [it.id]: false }));
@@ -210,6 +236,28 @@ export function TabQueries({ onNotice }: BridgeTabProps) {
 
   return (
     <div style={{ paddingTop: 6 }}>
+      {/* char 当前可读的手机数据项（全部走真实桥，试一下即时返回） */}
+      <div style={{ ...CARD, marginTop: 8 }}>
+        <b style={{ fontSize: 13.5, color: INK, display: "block" }}>手机数据项</b>
+        <span style={{ fontSize: 11, color: FAINT }}>char 在对话里能直接读的手机数据，点「试一下」实时调桥返回。</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          {READABLE_DATA_ITEMS.map(it => (
+            <button key={it.id} type="button" onClick={() => tryDataItem(it)}
+              style={{ ...BTN_GHOST, padding: "6px 12px", fontSize: 11.5 }}>
+              {it.name}
+            </button>
+          ))}
+        </div>
+        {dataItemResult ? (
+          <div style={{ ...GUIDE_BOX, marginBottom: 0 }}>
+            <div style={{ color: INK, fontWeight: 700 }}>{dataItemResult.name}</div>
+            <pre style={{ margin: "6px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 11.5, color: SUB, fontFamily: "inherit", maxHeight: 220, overflow: "auto" }}>
+              {dataItemResult.text.slice(0, 2000)}
+            </pre>
+          </div>
+        ) : null}
+      </div>
+
       {/* 新建 / 编辑向导 */}
       {draft ? (
         <div style={{ ...CARD, marginTop: 12 }}>
