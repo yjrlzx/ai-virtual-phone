@@ -22,7 +22,7 @@ import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHi
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
-import { resolveCallAvatar } from "@/lib/call-settings";
+import { resolveCallAvatar, resolveCallRingtoneUrl, playIncomingRingtone } from "@/lib/call-settings";
 
 // ── Types ───────────────────────────────────────────
 
@@ -125,12 +125,13 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         if (window.speechSynthesis) window.speechSynthesis.cancel();
     }, [minimized]);
 
-    // 来电等待接听：循环振动（开关在聊天主页，iOS 网页不支持自动无效果）
+    // 来电等待接听：循环振动 + 网页铃声（角色配置优先）
     useEffect(() => {
         if (initiator !== "character" || callState !== "CONNECTING") return;
-        const stop = startIncomingCallVibration();
-        return stop;
-    }, [initiator, callState]);
+        const stopVib = startIncomingCallVibration();
+        const ring = playIncomingRingtone(resolveCallRingtoneUrl(session.contactId));
+        return () => { stopVib(); ring.stop(); };
+    }, [initiator, callState, session.contactId]);
 
     // Pause WeChat keep-alive while the call holds the mic/audio; restore on exit.
     useEffect(() => {
@@ -709,7 +710,10 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                     />
                 ) : (
                     <div className="w-[150px] h-[150px] rounded-full bg-[#333] flex items-center justify-center">
-                        <span className="ts-60 text-[var(--c-icon)]">{character.name?.[0] || "?"}</span>
+                        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                            <circle cx="12" cy="7" r="4" />
+                        </svg>
                     </div>
                 )}
             </div>
@@ -726,7 +730,10 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                     callAvatar ? (
                         <img src={callAvatar} alt={character.name} className="w-full h-full object-cover" />
                     ) : (
-                        <span className="ts-18 text-[var(--c-icon)]">{character.name?.[0] || "?"}</span>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                            <circle cx="12" cy="7" r="4" />
+                        </svg>
                     )
                 ) : cameraEnabled ? (
                     <video

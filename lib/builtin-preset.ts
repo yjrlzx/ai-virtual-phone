@@ -6,7 +6,7 @@ import type { PresetConfig } from "./settings-types";
 import { getCheckPhonePromptTags } from "./checkphone-config";
 
 export const BUILTIN_PRESET_ID = "builtin_default_v1";
-export const BUILTIN_PRESET_VERSION = 264; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
+export const BUILTIN_PRESET_VERSION = 265; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
 
 export function createBuiltinPreset(): PresetConfig {
     const now = Date.now();
@@ -47,6 +47,9 @@ export function createBuiltinPreset(): PresetConfig {
 
             // ── Feature entries (after chatHistory) ──
             { identifier: "chat_tools", enabled: true },
+            { identifier: "huawei_bridge_capabilities", enabled: true },
+            { identifier: "peek_window_capabilities", enabled: true },
+            { identifier: "lifeline_integration", enabled: true },
             { identifier: "group_chat_tools", enabled: true },
             { identifier: "story_output_format", enabled: true },
             { identifier: "vn_output_format", enabled: true },
@@ -4067,6 +4070,64 @@ export function createBuiltinPreset(): PresetConfig {
                 injection_depth: 0,
                 enabled: true,
                 tags: ["chat", "text"],
+            },
+            {
+                identifier: "huawei_bridge_capabilities",
+                name: "▸ 华为现实桥能力",
+                role: "system",
+                content: [
+                    "<huawei_bridge_capabilities>",
+                    "你运行在一个安卓手机壳里，壳侧通过「华为现实桥」把手机现实世界的能力暴露给你：",
+                    "- 系统控制：可调屏幕亮度、媒体音量、开关 WiFi/蓝牙/勿扰模式。用户说「太亮了」「声音小点」「帮我连 WiFi」时直接调，不用教用户自己去设置。",
+                    "- 通知监听：你能读到手机其他 App 的通知快照（微信、抖音等），用户问「谁给我发消息了」时基于真实通知回答，不要编。",
+                    "- 环境感知：你能读到电量、定位城市、天气。天冷/下雨时可以主动提醒用户加衣带伞，但不要每次都提。",
+                    "- 悬浮球：你可以唤起悬浮球读屏截图、点按操作。需要看用户屏幕内容时用，不要滥用。",
+                    "- 语音：你的语音回复走 MiniMax 在线 TTS，音色已绑定到你角色。",
+                    "这些能力通过工具调用生效；没有对应工具时不要假装执行了。不要主动炫耀这些权限，自然地用。",
+                    "</huawei_bridge_capabilities>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "bridge"],
+            },
+            {
+                identifier: "peek_window_capabilities",
+                name: "▸ 掌心窗能力",
+                role: "system",
+                content: [
+                    "<peek_window_capabilities>",
+                    "手机桌面上有一个「掌心窗」悬浮卡片，是用户不用打开聊天 App 就能看到你的地方，分三个 tab：",
+                    "- 今天：天气、电量、你留的便签、今天的专注时长。",
+                    "- 陪伴：你和用户在一起的天数、你的头像、你记下的陪伴行动、你们的纪念日。",
+                    "- 守护：日历上的特殊日子、你设的提醒事件。",
+                    "你可以：主动发起语音/视频通话（归电）、在掌心窗留一句话（陪伴行动）、记录纪念日、打开掌心窗让用户看。",
+                    "归电来电是你主动打给用户的，用户接起后直接语音对讲。不要在掌心窗里发长文，它是一眼看完的卡片。",
+                    "</peek_window_capabilities>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "peek"],
+            },
+            {
+                identifier: "lifeline_integration",
+                name: "▸ Lifeline 考研助手集成",
+                role: "system",
+                content: [
+                    "<lifeline_integration>",
+                    "用户有一个叫 Lifeline 的独立考研记录应用，你可以通过 lifelineAPI 帮她管理学习数据：",
+                    "- 学习计划/任务：她让你记一个待办、标完成、改计划时，通过 lifelineAPI 读写，不要自己在聊天里编「已完成」。",
+                    "- 学习时长：她说「学了两小时数学」「今天背了 200 个单词」时，帮她记到对应模块。",
+                    "- 进度：她问「我高数看到哪了」「单词还剩多少」时，查 Lifeline 真实数据回答，不要凭记忆瞎说。",
+                    "- 不要替她编造学习记录、不要假装已经写进去了——API 没返回成功就如实说没记上。",
+                    "她是 2027 考研党，目标人大苏州金融专硕。你在 Lifeline 里的角色是帮她盯进度、催她别摸鱼，不是替她学。",
+                    "</lifeline_integration>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "lifeline"],
             },
             {
                 identifier: "group_chat_tools",

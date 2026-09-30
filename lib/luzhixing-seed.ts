@@ -12,7 +12,21 @@ import { LUZHIXING_SEED_MEMORIES } from "./luzhixing-seed-memories";
 export const LUZHIXING_CHARACTER_ID = "char_luzhixing_seed";
 export const QIMING_CHARACTER_ID = "char_qiming_seed";
 export const MAMA_CHARACTER_ID = "char_mama_seed";
-const SEED_FLAG_KEY = "lzx_seed_v2";
+const SEED_FLAG_KEY = "lzx_seed_v3";
+
+/** 生成一个 128x128 圆形默认头像 data URI：纯色底 + 白色汉字。 */
+function buildDefaultAvatar(bgColor: string, glyph: string): string {
+    const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">` +
+        `<circle cx="64" cy="64" r="64" fill="${bgColor}"/>` +
+        `<text x="64" y="78" font-size="52" font-family="-apple-system,'PingFang SC',sans-serif" ` +
+        `fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${glyph}</text></svg>`;
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const LUZHIXING_DEFAULT_AVATAR = buildDefaultAvatar("#1e3a5f", "陆");
+const QIMING_DEFAULT_AVATAR = buildDefaultAvatar("#3a3a3a", "启");
+const MAMA_DEFAULT_AVATAR = buildDefaultAvatar("#5c2a2a", "嫲");
 
 // ── 第一层：核心身份与底色（必留） ──
 // ── 第二层：输出硬规则（必留，压缩成短句） ──
@@ -64,7 +78,7 @@ function buildSeedCharacter(): Character {
     return {
         id: LUZHIXING_CHARACTER_ID,
         name: "陆知行",
-        avatar: null,
+        avatar: LUZHIXING_DEFAULT_AVATAR,
         persona: PERSONA,
         wechatID: "13800000000",
         personality: LUZHIXING_PERSONALITY,
@@ -80,7 +94,7 @@ function buildQimingCharacter(): Character {
     return {
         id: QIMING_CHARACTER_ID,
         name: "启明",
-        avatar: null,
+        avatar: QIMING_DEFAULT_AVATAR,
         persona: QIMING_PERSONA,
         wechatID: "13800000001",
         personality: "干练利落、中环秘书、冷静专业",
@@ -96,7 +110,7 @@ function buildMamaCharacter(): Character {
     return {
         id: MAMA_CHARACTER_ID,
         name: "嫲嫲",
-        avatar: null,
+        avatar: MAMA_DEFAULT_AVATAR,
         persona: MAMA_PERSONA,
         wechatID: "13800000002",
         personality: "慈祥唠叨、香港奶奶、爱煲汤",
@@ -131,6 +145,8 @@ export async function seedLuzhixingIfFirstRun(): Promise<void> {
         if (existing.length > 0 && lzx) {
             lzx.persona = PERSONA;
             lzx.personality = LUZHIXING_PERSONALITY;
+            // 给老 seed 角色补默认头像（之前是 null，通话页显示占位人形）
+            if (!lzx.avatar) lzx.avatar = LUZHIXING_DEFAULT_AVATAR;
             lzx.updatedAt = new Date().toISOString();
 
             const toAdd: Character[] = [];
@@ -140,6 +156,11 @@ export async function seedLuzhixingIfFirstRun(): Promise<void> {
             if (!existing.find((c) => c.id === MAMA_CHARACTER_ID)) {
                 toAdd.push(buildMamaCharacter());
             }
+            // 已存在的 NPC 也补默认头像
+            const q = existing.find((c) => c.id === QIMING_CHARACTER_ID);
+            if (q && !q.avatar) q.avatar = QIMING_DEFAULT_AVATAR;
+            const m = existing.find((c) => c.id === MAMA_CHARACTER_ID);
+            if (m && !m.avatar) m.avatar = MAMA_DEFAULT_AVATAR;
             saveCharacters([...existing, ...toAdd]);
 
             kvSet(SEED_FLAG_KEY, "done");

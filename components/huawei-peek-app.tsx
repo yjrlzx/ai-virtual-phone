@@ -14,6 +14,7 @@ import {
 } from "@/lib/huawei-shell/storage";
 import type { HuaweiFootprintEntry, HuaweiTriggerRule } from "@/lib/huawei-shell/types";
 import { loadCharacters } from "@/lib/character-storage";
+import { resolveCallAvatar } from "@/lib/call-settings";
 import {
   loadMenstrualConfig,
   loadMenstrualRecords,
@@ -639,8 +640,8 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     onNotice?.(avatarUrlDraft.trim() ? "陪伴头像已更新" : "已清除陪伴头像");
   }, [avatarUrlDraft, bump, onNotice]);
 
-  /* 来电页实际展示的头像/名字/文案：头像单源 = companionMeta.avatar → 角色 avatar → 心形 */
-  const callCharAvatar = companionMeta.avatar || companion?.avatar || "";
+  /* 来电页实际展示的头像/名字/文案：单源 = call appearance override → companionMeta.avatar → 角色 avatar → 人形图标 */
+  const callCharAvatar = resolveCallAvatar(companion?.id || "", companionMeta.avatar || companion?.avatar || "");
   const callCharName = callSettings.charName || cname;
   const callHeadline = (callSettings.headline || "{name}想和你说说话").replaceAll("{name}", callCharName);
   const callBackground = callSettings.background.startsWith("preset:")
@@ -1476,66 +1477,65 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
         )}
       </div>
 
-      {/* ============ 归电：全屏来电覆盖层 ============ */}
+      {/* ============ 归电：居中卡片式来电覆盖层 ============ */}
       {callOverlayOpen && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 9999,
-          display: "flex", flexDirection: "column", alignItems: "center",
-          paddingTop: "calc(env(safe-area-inset-top, 0px) + 20px)",
-          paddingLeft: 16, paddingRight: 16,
-          ...callBackgroundStyle,
-          color: "#fff",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: 16,
+          background: "rgba(0,0,0,0.35)",
         }}>
+          <div style={{
+            width: "100%", maxWidth: 380,
+            borderRadius: 28, padding: "calc(env(safe-area-inset-top, 0px) + 28px) 24px calc(env(safe-area-inset-bottom, 0px) + 28px)",
+            display: "flex", flexDirection: "column", alignItems: "center",
+            ...callBackgroundStyle,
+            background: undefined,
+            backgroundColor: "rgba(20,30,50,0.55)",
+            backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
+            boxShadow: "0 24px 60px rgba(0,0,0,0.35)",
+            color: "#fff",
+          }}>
           <div style={{ fontSize: "clamp(11px,3vw,13px)", letterSpacing: 4, fontWeight: 700, opacity: .85 }}>来电中…</div>
 
-          {/* char 头像（可配置 URL，空则回退角色 avatar）；小屏用 clamp 自动缩小 */}
-          <div style={{ marginTop: "calc(env(safe-area-inset-top, 0px) + 22px)" }}>
+          {/* char 头像（可配置 URL，空则回退角色 avatar） */}
+          <div style={{ marginTop: 22 }}>
             {callCharAvatar ? (
               <img src={callCharAvatar} alt="" style={{
-                width: "clamp(88px,30vw,116px)", height: "clamp(88px,30vw,116px)", borderRadius: "50%", objectFit: "cover",
+                width: 96, height: 96, borderRadius: "50%", objectFit: "cover",
                 border: "3px solid rgba(255,255,255,.85)",
                 boxShadow: "0 10px 28px rgba(44,74,110,.4)",
               }} />
             ) : (
               <span style={{
-                width: "clamp(88px,30vw,116px)", height: "clamp(88px,30vw,116px)", borderRadius: "50%",
+                width: 96, height: 96, borderRadius: "50%",
                 background: "linear-gradient(135deg,#bfe4ff,#4aa8ef)",
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
-                fontSize: "clamp(36px,12vw,46px)", border: "3px solid rgba(255,255,255,.85)",
+                border: "3px solid rgba(255,255,255,.85)",
                 boxShadow: "0 10px 28px rgba(44,74,110,.4)",
-              }}>🤍</span>
+              }}>
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+              </span>
             )}
           </div>
 
-          <div style={{ fontSize: "clamp(22px,7vw,30px)", fontWeight: 800, marginTop: 20, textAlign: "center" }}>{callCharName}</div>
-          <div style={{ fontSize: "clamp(12px,3.6vw,14px)", marginTop: 8, opacity: .9, textAlign: "center" }}>{callHeadline}</div>
+          <div style={{ fontSize: 24, fontWeight: 800, marginTop: 18, textAlign: "center" }}>{callCharName}</div>
+          <div style={{ fontSize: 13, marginTop: 6, opacity: .9, textAlign: "center" }}>{callHeadline}</div>
 
-          {/* 可选：用户头像小圈 */}
-          {callSettings.showUserAvatar && (
-            <div style={{
-              marginTop: 18, display: "flex", alignItems: "center", gap: 8,
-              background: "rgba(255,255,255,.18)", borderRadius: 999, padding: "4px 12px 4px 5px",
-            }}>
-              <span style={{
-                width: 26, height: 26, borderRadius: "50%", background: "rgba(255,255,255,.6)",
-                display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 14,
-              }}>🙂</span>
-              <span style={{ fontSize: 11, fontWeight: 700, opacity: .95 }}>你</span>
-            </div>
-          )}
-
-          {/* iOS 风格：左挂断 右接听；按钮 ≥64px 触控热区，抬到 Home 手势条之上 */}
+          {/* 接听/挂断按钮 */}
           <div style={{
-            marginTop: "auto",
-            marginBottom: "calc(env(safe-area-inset-bottom, 0px) + 40px)",
-            display: "flex", gap: "clamp(48px,20vw,88px)",
+            marginTop: 28,
+            display: "flex", gap: 48,
           }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
               <button
                 type="button" aria-label="挂断" onClick={hangupCall}
                 style={{
-                  width: "clamp(64px,20vw,76px)", height: "clamp(64px,20vw,76px)", borderRadius: "50%", border: "none", cursor: "pointer",
-                  fontSize: "clamp(24px,7vw,30px)", color: "#fff",
+                  width: 68, height: 68, borderRadius: "50%", border: "none", cursor: "pointer",
+                  fontSize: 26, color: "#fff",
                   background: callSettings.hangupColor,
                   boxShadow: "0 8px 20px rgba(120,40,40,.4)",
                   display: "flex", alignItems: "center", justifyContent: "center",
@@ -1544,12 +1544,12 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               >📞</button>
               <span style={{ fontSize: 12, fontWeight: 700, opacity: .95 }}>挂断</span>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
               <button
                 type="button" aria-label="接听" onClick={acceptCall}
                 style={{
-                  width: "clamp(64px,20vw,76px)", height: "clamp(64px,20vw,76px)", borderRadius: "50%", border: "none", cursor: "pointer",
-                  fontSize: "clamp(24px,7vw,30px)", color: "#fff",
+                  width: 68, height: 68, borderRadius: "50%", border: "none", cursor: "pointer",
+                  fontSize: 26, color: "#fff",
                   background: callSettings.acceptColor,
                   boxShadow: "0 8px 20px rgba(30,120,70,.4)",
                   display: "flex", alignItems: "center", justifyContent: "center",
@@ -1557,6 +1557,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               >📞</button>
               <span style={{ fontSize: 12, fontWeight: 700, opacity: .95 }}>接听</span>
             </div>
+          </div>
           </div>
         </div>
       )}
