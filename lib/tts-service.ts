@@ -2,6 +2,12 @@
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
+import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+
+const TTS_VOLUME_KEY = "ai_phone_tts_volume_v1";
+if (typeof window !== "undefined") {
+    registerKvMigration(TTS_VOLUME_KEY);
+}
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
@@ -190,27 +196,28 @@ let _unlockListenerInstalled = false;
 
 // ── In-app TTS volume (0..1) ──
 // iOS plays Web Audio on the ringer/voice stream, so the hardware volume keys
-// don't control character speech. This in-app gain does. Synced to localStorage.
-const TTS_VOLUME_KEY = "ai_phone_tts_volume_v1";
-let _ttsVolume = ((): number => {
-    if (typeof window === "undefined") return 1;
-    try {
-        const raw = window.localStorage.getItem(TTS_VOLUME_KEY);
-        const v = raw == null ? 1 : Number(raw);
-        return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
-    } catch { return 1; }
-})();
+// don't control character speech. This in-app gain does. Persisted to cloud KV.
+// 懒加载：首次 getTtsVolume() 时（运行期，kv 已水合）才读，避免模块顶层水合前读到默认值。
+let _ttsVolume: number | null = null;
 // Live gain node of the currently-playing AudioContext clip, so the slider can
 // adjust volume mid-sentence.
 let _activeGain: GainNode | null = null;
 
 export function getTtsVolume(): number {
+    if (_ttsVolume === null) {
+        if (typeof window === "undefined") return 1;
+        try {
+            const raw = kvGet(TTS_VOLUME_KEY);
+            const v = raw == null ? 1 : Number(raw);
+            _ttsVolume = Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+        } catch { _ttsVolume = 1; }
+    }
     return _ttsVolume;
 }
 
 export function setTtsVolume(volume: number): void {
     _ttsVolume = Math.min(1, Math.max(0, volume));
-    try { window.localStorage.setItem(TTS_VOLUME_KEY, String(_ttsVolume)); } catch { /* ignore */ }
+    try { kvSet(TTS_VOLUME_KEY, String(_ttsVolume)); } catch { /* ignore */ }
     if (_activeGain) { try { _activeGain.gain.value = _ttsVolume; } catch { /* ignore */ } }
     if (_sharedAudio) { try { _sharedAudio.volume = _ttsVolume; } catch { /* ignore */ } }
 }
@@ -356,7 +363,7 @@ function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () =
     const url = URL.createObjectURL(blob);
     const audio = getSharedAudio();
     audio.muted = false;
-    audio.volume = _ttsVolume;
+    audio.volume = _ttsVolume ?? 1;
     audio.src = url;
 
     let settled = false;
@@ -439,7 +446,7 @@ export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () =
                 source.buffer = audioBuffer;
                 // Route through a gain node so the in-app volume slider applies.
                 gain = ctx.createGain();
-                gain.gain.value = _ttsVolume;
+                gain.gain.value = _ttsVolume ?? 1;
                 source.connect(gain);
                 gain.connect(ctx.destination);
                 _activeGain = gain;

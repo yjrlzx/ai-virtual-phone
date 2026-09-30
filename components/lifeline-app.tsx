@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 
 /**
  * Lifeline —— float 桌面独立 App 入口。
@@ -10,10 +10,15 @@ import type { CSSProperties } from "react";
  * 只做增量：不动 float 壳、素材集市、内置 AI 对话与 char 主流程。
  */
 
+/* 顶栏必须让到虚拟状态栏下方：.phone-status-bar 绝对定位 z-index:10，会盖住屏幕顶部
+   约 48px 并拦截触摸，返回按钮压在其下就点不动。与 reality-bridge 的 .rb-header 同值。 */
+const SAFE_TOP = "var(--page-header-safe-top, max(48px, env(safe-area-inset-top, 48px)))";
+
 const LB_TITLEBAR: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 10,
+  marginTop: SAFE_TOP,
   padding: "10px 14px",
   borderRadius: "14px 14px 0 0",
   background: "linear-gradient(180deg, rgba(255,255,255,.85), rgba(224,236,250,.55))",
@@ -48,6 +53,15 @@ const LB_BODY: CSSProperties = {
 export function LifelineApp({ onClose }: {
   onClose: () => void;
 }) {
+  const [closing, setClosing] = useState(false);
+
+  /* 返回：按钮先渐隐缩小，再真正卸载（与 reality-bridge 同构） */
+  const handleClose = () => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, 200);
+  };
+
   return (
     <div
       style={{
@@ -71,7 +85,7 @@ export function LifelineApp({ onClose }: {
         <span style={{ flex: 1 }} />
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           aria-label="返回桌面"
           style={{
             border: "none",
@@ -83,6 +97,9 @@ export function LifelineApp({ onClose }: {
             padding: 4,
             pointerEvents: "auto",
             zIndex: 10,
+            opacity: closing ? 0 : 1,
+            transform: closing ? "scale(0.78)" : "none",
+            transition: "opacity .2s ease, transform .2s ease",
           }}
         >
           ←

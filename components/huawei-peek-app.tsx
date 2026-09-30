@@ -3,7 +3,6 @@ import {
   getAndroidShell,
   isHuaweiShellAvailable,
   invokeShellJson,
-  fetchHuaweiCurrentWeather,
   pushLockedPackagesToShell,
   readLockedPackagesFromShell,
   loadHuaweiFootprint,
@@ -29,12 +28,25 @@ import {
   companionDayCount,
   nextAnniversary,
   readPeekCalendarDots,
+  readCompanionName,
+  setCompanionName,
+  readCustomWindowLines,
+  setCustomWindowLines,
+  readFocusGoalMin,
+  setFocusGoalMin,
+  setCompanionStartDate,
+  addCompanionAnniversary,
+  removeCompanionAnniversary,
+  readCompanionActions,
+  readPeekGuardEvents,
+  removePeekGuardEvent,
 } from "@/lib/huawei-shell/peek-store";
 
 /**
  * 掌心窗 —— float 桌面独立 App，严格还原安卓 linjian-peek 三页杂志式卡片：
- *   今天 buildTodayMagazine / 陪伴 buildCompanionMagazine / 守护 buildGuardMagazine
- * Y2K 冰蓝磨砂玻璃风。数据全部来自 window.AndroidShell 或既有 kv 本地存储，无假按钮。
+ *   今天 / 陪伴 / 守护。Y2K 冰蓝磨砂玻璃风。
+ * 天气、电量、定位由「现实桥」负责，本窗不重复展示；数据全部来自
+ * 壳桥或既有本地 kv 存储，无假按钮。
  */
 
 const ICE = "#7ec8ff";
@@ -43,8 +55,6 @@ const ICE_LIGHT = "#bfe4ff";
 const INK = "#2c4a6e";
 const INK_SOFT = "#5a7ea6";
 const INK_FAINT = "#8aa8c8";
-
-const FOCUS_GOAL_MIN = 120; // 今日专注目标（用于细进度条比例）
 
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
@@ -69,10 +79,15 @@ const WINDOW_STYLE: CSSProperties = {
   color: INK,
 };
 
+/* 顶栏必须让到虚拟状态栏下方：.phone-status-bar 绝对定位 z-index:10，会盖住屏幕顶部
+   约 48px 并拦截触摸，返回按钮压在其下就点不动。与 reality-bridge 的 .rb-header 同值。 */
+const SAFE_TOP = "var(--page-header-safe-top, max(48px, env(safe-area-inset-top, 48px)))";
+
 const TITLEBAR: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 10,
+  marginTop: SAFE_TOP,
   padding: "10px 14px",
   fontSize: 15,
   fontWeight: 800,
@@ -162,39 +177,34 @@ const ACTION_BTN_GHOST: CSSProperties = {
   boxShadow: "none",
 };
 
+const INPUT: CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  border: "1px solid rgba(126,200,255,.6)",
+  borderRadius: 10,
+  padding: "7px 10px",
+  fontSize: 13,
+  color: INK,
+  background: "rgba(255,255,255,.85)",
+  outline: "none",
+};
+
+const MARK: CSSProperties = {
+  fontSize: 10,
+  padding: "2px 8px",
+  borderRadius: 999,
+  background: "rgba(126,200,255,.2)",
+  color: INK_SOFT,
+  whiteSpace: "nowrap",
+};
+
 /* ---------- 小部件 ---------- */
 
 type StatusData = Record<string, unknown>;
 
-function statusNum(s: StatusData | null, key: string): number | null {
-  const v = Number(s?.[key]);
-  return Number.isFinite(v) ? v : null;
-}
 function statusBool(s: StatusData | null, key: string): boolean | null {
   const v = s?.[key];
   return typeof v === "boolean" ? v : null;
-}
-
-function BatteryIcon({ level }: { level: number | null }) {
-  const pct = level == null ? 0 : Math.max(0, Math.min(100, level));
-  const color = pct >= 50 ? "#5fc98a" : pct >= 20 ? "#f2b866" : "#ff8a8a";
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <span style={{
-        position: "relative", width: 26, height: 12, borderRadius: 3,
-        border: `1.5px solid ${color}`, display: "inline-block",
-      }}>
-        <span style={{
-          position: "absolute", inset: 1, width: `${pct}%`, borderRadius: 2,
-          background: color, transition: "width .3s",
-        }} />
-        <span style={{
-          position: "absolute", right: -4, top: 3, width: 2, height: 6,
-          background: color, borderRadius: 1,
-        }} />
-      </span>
-    </span>
-  );
 }
 
 function FootprintTime(ts: number): string {
@@ -233,11 +243,10 @@ function triggerLabel(date: Date, time: string): string {
 
 export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNotice?: (t: string) => void }) {
   const [tab, setTab] = useState<"today" | "companion" | "guard">("today");
+  const [showSettings, setShowSettings] = useState(false);
   const [shellAvailable, setShellAvailable] = useState(false);
   const [status, setStatus] = useState<StatusData | null>(null);
   const [currentApp, setCurrentApp] = useState("");
-  const [weather, setWeather] = useState("");
-  const [hasLocation, setHasLocation] = useState(false);
   const [locked, setLocked] = useState<string[]>([]);
   const [focusing, setFocusing] = useState(false);
   const [focusMinutes, setFocusMinutes] = useState(() => readTodayFocusMinutes());
@@ -246,11 +255,36 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [dots] = useState(() => readPeekCalendarDots());
 
+  /* 设置写入后用来触发三 Tab 重新读 store 的 tick */
+  const [, setStoreTick] = useState(0);
+  const bump = useCallback(() => setStoreTick(t => t + 1), []);
+
+  /* 返回：按钮先渐隐缩小，再真正卸载（与 reality-bridge 同构） */
+  const [closing, setClosing] = useState(false);
+  const handleClose = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, 200);
+  }, [closing, onClose]);
+
+  /* ---- 以下都在每次渲染时从 store 现读，bump 后三 Tab 立即生效 ---- */
   const companion = loadCharacters()[0];
-  const cname = companion?.name || "TA";
+  const cname = readCompanionName(companion?.name);
   const companionMeta = readCompanionMeta();
   const dayCount = companionDayCount(companionMeta.startDate);
   const nextAnni = nextAnniversary(companionMeta.anniversaries);
+  const focusGoal = readFocusGoalMin();
+  const companionActions = readCompanionActions();
+  const guardEvents = readPeekGuardEvents();
+
+  /* ---- 设置面板草稿 ---- */
+  const [nameDraft, setNameDraft] = useState(() => readCompanionName(loadCharacters()[0]?.name));
+  const [startDateDraft, setStartDateDraft] = useState(() => readCompanionMeta().startDate ?? "");
+  const [goalDraft, setGoalDraft] = useState(() => String(readFocusGoalMin()));
+  const [newAnniName, setNewAnniName] = useState("");
+  const [newAnniDate, setNewAnniDate] = useState("");
+  const [newLineDraft, setNewLineDraft] = useState("");
+
   const timeRules = useMemo(
     () => loadHuaweiTriggerRules().filter(r => r.trigger === "time" && r.enabled && !!r.time),
     [],
@@ -275,8 +309,6 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     if (st.ok) setStatus(st.data);
     const app = invokeShellJson<Record<string, unknown>>(s => (s.getCurrentApp ? s.getCurrentApp() : null));
     if (app.ok && typeof app.data.currentApp === "string") setCurrentApp(app.data.currentApp);
-    const loc = invokeShellJson<Record<string, unknown>>(s => (s.getLocation ? s.getLocation() : null));
-    setHasLocation(loc.ok && Number.isFinite(Number(loc.data.lat)) && Number.isFinite(Number(loc.data.lng)));
     if (typeof shell.isFocusing === "function") {
       try { setFocusing(!!shell.isFocusing()); } catch { /* 忽略 */ }
     }
@@ -289,15 +321,10 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
 
   useEffect(() => {
     refresh();
-    void fetchHuaweiCurrentWeather().then(r => { if (r.ok) setWeather(r.data ?? ""); });
-    const timer = setInterval(() => {
-      refresh();
-      void fetchHuaweiCurrentWeather().then(r => { if (r.ok) setWeather(r.data ?? ""); });
-    }, 15000);
+    const timer = setInterval(refresh, 15000);
     return () => clearInterval(timer);
   }, [refresh]);
 
-  const battery = statusNum(status, "battery");
   const network = statusBool(status, "network");
   const accessibility = statusBool(status, "accessibility");
   const floating = statusBool(status, "floating");
@@ -316,6 +343,20 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const takeScreenBreak = useCallback(() => {
     const r = invokeShellJson(s => (s.screenBreak ? s.screenBreak(300) : null));
     onNotice?.(r.ok ? "护眼 5 分钟" : (r.error || "护眼休息启动失败"));
+  }, [onNotice]);
+
+  /** 息屏：调壳的 screenOff / phone_screen_off，连不上时提示。 */
+  const screenOff = useCallback(() => {
+    const r = invokeShellJson<Record<string, unknown>>(s => {
+      const br = s as unknown as Record<string, unknown>;
+      const fn = (typeof br.screenOff === "function"
+        ? br.screenOff
+        : br.phone_screen_off) as (() => unknown) | undefined;
+      if (typeof fn !== "function") return null;
+      const out = fn();
+      return typeof out === "string" ? out : "{}";
+    });
+    onNotice?.(r.ok ? "已帮你息屏" : (r.error || "连接壳后才能息屏"));
   }, [onNotice]);
 
   const triggerGuidian = useCallback(() => {
@@ -370,6 +411,9 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     ...Array.from({ length: firstWeekday }, () => null),
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ];
+  /* 这个月的守护日子 */
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const monthEvents = guardEvents.filter(e => e.date.startsWith(monthPrefix));
 
   /* 此刻状态：一段连贯文案，不是 key-value 表 */
   const nowSentence = useMemo(() => {
@@ -380,48 +424,202 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     if (accessibility != null) sys.push(accessibility ? "无障碍开着" : "无障碍关着");
     if (floating != null) sys.push(floating ? "悬浮球在窗边" : "悬浮球收起来了");
     if (sys.length) parts.push(sys.join("，") + "。");
-    if (hasLocation) parts.push("定位开着，她知道你走到哪儿了。");
-    if (battery != null && battery < 20) parts.push("电量有点低，记得找个充电器。");
     return parts.join(" ");
-  }, [currentApp, network, accessibility, floating, hasLocation, battery]);
+  }, [currentApp, network, accessibility, floating]);
 
   const dateSummary = `${month + 1}月${nowDate.getDate()}日 · ${"日一二三四五六"[nowDate.getDay()]}`;
   const latestFootprint = footprint[0];
+  const customLines = readCustomWindowLines();
 
   return (
     <div style={WINDOW_STYLE}>
-      {/* 顶栏：左返回 + 标题 */}
+      {/* 顶栏：左返回 + 标题 + 右设置 */}
       <div style={TITLEBAR}>
-        <button type="button" onClick={onClose} aria-label="返回桌面" style={{
+        <button type="button" onClick={handleClose} aria-label="返回桌面" style={{
           border: "none", background: "transparent", color: INK,
           cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 2,
           pointerEvents: "auto", zIndex: 10,
+          opacity: closing ? 0 : 1,
+          transform: closing ? "scale(0.78)" : "none",
+          transition: "opacity .2s ease, transform .2s ease",
         }}>←</button>
         <span style={{ fontSize: 15 }}>🪟</span>
         <span>掌心窗</span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          aria-label={showSettings ? "返回" : "设置"}
+          onClick={() => setShowSettings(v => !v)}
+          style={{
+            border: "none", background: "transparent", color: INK,
+            cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 4,
+          }}
+        >
+          {showSettings ? "×" : "⚙"}
+        </button>
       </div>
 
-      {/* 三 Tab */}
-      <div style={TABBAR}>
-        {([["today", "今天"], ["companion", "陪伴"], ["guard", "守护"]] as const).map(([id, label]) => (
-          <button key={id} type="button" onClick={() => setTab(id)} style={tab === id ? TAB_BTN_ON : TAB_BTN}>
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* 三 Tab（设置视图打开时隐藏） */}
+      {!showSettings && (
+        <div style={TABBAR}>
+          {([["today", "今天"], ["companion", "陪伴"], ["guard", "守护"]] as const).map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setTab(id)} style={tab === id ? TAB_BTN_ON : TAB_BTN}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {!shellAvailable && (
           <div style={{ ...CARD, background: "rgba(255,244,228,.9)", borderColor: "rgba(240,180,110,.55)" }}>
             <div style={{ fontWeight: 800, color: "#9a6a2a", fontSize: 13 }}>未连接真机壳</div>
             <div style={{ fontSize: 12, color: "#8a6a40", marginTop: 4, lineHeight: 1.55 }}>
-              请用壳 App 打开本站。连上 window.AndroidShell 后，电量、前台应用、天气、门禁会自动接入；窗语、陪伴天数、守护日历现在就能看。
+              请用壳 App 打开本站。连上 window.AndroidShell 后，前台应用、门禁会自动接入；窗语、陪伴天数、守护日历现在就能看。
             </div>
           </div>
         )}
 
+        {/* ============ 设置视图 ============ */}
+        {showSettings && (
+          <>
+            <div style={GROUP_TITLE}>掌心窗设置</div>
+
+            {/* 陪伴称呼 */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: INK }}>陪伴称呼</div>
+              <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 3 }}>覆盖角色默认名，窗内所有 TA 都用它。</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <input
+                  value={nameDraft}
+                  onChange={e => setNameDraft(e.target.value)}
+                  placeholder={companion?.name || "TA"}
+                  style={{ ...INPUT, flex: 1 }}
+                />
+                <button
+                  type="button"
+                  style={{ ...ACTION_BTN_GHOST, whiteSpace: "nowrap" }}
+                  onClick={() => { setCompanionName(nameDraft); bump(); }}
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+
+            {/* 陪伴起始日 */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: INK }}>陪伴起始日</div>
+              <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 3 }}>用于计算「和 TA 一起第几天」。</div>
+              <input
+                type="date"
+                value={startDateDraft}
+                onChange={e => {
+                  const v = e.target.value;
+                  setStartDateDraft(v);
+                  setCompanionStartDate(v || null);
+                  bump();
+                }}
+                style={{ ...INPUT, marginTop: 10 }}
+              />
+            </div>
+
+            {/* 纪念日 */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: INK }}>纪念日</div>
+              <div style={{ marginTop: 10 }}>
+                {companionMeta.anniversaries.length === 0 ? (
+                  <div style={{ fontSize: 12, color: INK_FAINT }}>还没有纪念日。</div>
+                ) : companionMeta.anniversaries.map(a => (
+                  <div key={`${a.name}-${a.date}`} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 0",
+                    borderTop: "1px dashed rgba(126,200,255,.3)", fontSize: 12.5,
+                  }}>
+                    <span style={{ color: INK, flex: 1 }}>{a.name}</span>
+                    <span style={MARK}>{a.date}</span>
+                    <button
+                      type="button" aria-label="删除纪念日"
+                      onClick={() => { removeCompanionAnniversary(a.name, a.date); bump(); }}
+                      style={{ border: "none", background: "transparent", color: "#ff8a8a", cursor: "pointer", fontSize: 13 }}
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                <input value={newAnniName} onChange={e => setNewAnniName(e.target.value)} placeholder="名字" style={{ ...INPUT, flex: 1.2 }} />
+                <input value={newAnniDate} onChange={e => setNewAnniDate(e.target.value)} placeholder="MM-DD" style={{ ...INPUT, flex: 1 }} />
+                <button
+                  type="button" style={{ ...ACTION_BTN_GHOST, whiteSpace: "nowrap" }}
+                  onClick={() => {
+                    addCompanionAnniversary(newAnniName, newAnniDate);
+                    setNewAnniName(""); setNewAnniDate("");
+                    bump();
+                  }}
+                >加一个</button>
+              </div>
+            </div>
+
+            {/* 窗语语料 */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: INK }}>自定义窗语语料</div>
+              <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 3 }}>与内置语料合并后轮换。</div>
+              <div style={{ marginTop: 10 }}>
+                {customLines.length === 0 ? (
+                  <div style={{ fontSize: 12, color: INK_FAINT }}>只在用内置语料。</div>
+                ) : customLines.map((line, i) => (
+                  <div key={`${line}-${i}`} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 0",
+                    borderTop: "1px dashed rgba(126,200,255,.3)", fontSize: 12.5,
+                  }}>
+                    <span style={{ color: INK, flex: 1 }}>{line}</span>
+                    <button
+                      type="button" aria-label="删除窗语"
+                      onClick={() => { setCustomWindowLines(customLines.filter((_, j) => j !== i)); bump(); }}
+                      style={{ border: "none", background: "transparent", color: "#ff8a8a", cursor: "pointer", fontSize: 13 }}
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <input
+                  value={newLineDraft}
+                  onChange={e => setNewLineDraft(e.target.value)}
+                  placeholder="加一句窗语"
+                  style={{ ...INPUT, flex: 1 }}
+                />
+                <button
+                  type="button" style={{ ...ACTION_BTN_GHOST, whiteSpace: "nowrap" }}
+                  onClick={() => {
+                    if (newLineDraft.trim()) setCustomWindowLines([...customLines, newLineDraft.trim()]);
+                    setNewLineDraft("");
+                    bump();
+                  }}
+                >加一行</button>
+              </div>
+            </div>
+
+            {/* 专注目标 */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: INK }}>今日专注目标（分钟）</div>
+              <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 3 }}>进度条分母，范围 15–960。</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <input
+                  type="number" min={15} max={960}
+                  value={goalDraft}
+                  onChange={e => setGoalDraft(e.target.value)}
+                  onBlur={() => { setFocusGoalMin(Number(goalDraft)); bump(); }}
+                  style={{ ...INPUT, flex: 1 }}
+                />
+                <button
+                  type="button" style={{ ...ACTION_BTN_GHOST, whiteSpace: "nowrap" }}
+                  onClick={() => { setFocusGoalMin(Number(goalDraft)); bump(); }}
+                >保存</button>
+              </div>
+            </div>
+          </>
+        )}
+
         {/* ============ Tab 1 今天 ============ */}
-        {tab === "today" && (
+        {!showSettings && tab === "today" && (
           <>
             {/* Hero 今日窗语 */}
             <div style={HERO}>
@@ -432,11 +630,8 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               <div style={{ fontSize: 12, color: INK_SOFT, marginTop: 8, lineHeight: 1.6 }}>
                 晚风会替你放下没有完成的事。
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, fontSize: 11.5, color: INK_FAINT }}>
-                <span>☁️</span>
-                <span>{dateSummary}</span>
-                <span>·</span>
-                <span>{weather || (shellAvailable ? "天气加载中…" : "连接壳后显示实时天气")}</span>
+              <div style={{ marginTop: 12, fontSize: 11.5, color: INK_FAINT }}>
+                {dateSummary}
               </div>
               <button type="button" style={{ ...ACTION_BTN_GHOST, marginTop: 12 }}
                 onClick={() => setWindowLine(nextWindowLine())}>
@@ -444,7 +639,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               </button>
             </div>
 
-            {/* 左右 mosaic：左宽 今日专注 / 右窄 窗外天气 + 下一件事 */}
+            {/* mosaic：左宽 今日专注 / 右窄 下一件事 */}
             <div style={{ display: "flex", gap: 9, marginBottom: 12 }}>
               <div style={{ ...CARD, flex: "1.25 1 0", marginBottom: 0, display: "flex", flexDirection: "column" }}>
                 <div style={LABEL}>今日专注</div>
@@ -452,14 +647,14 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                   {focusMinutes}<span style={{ fontSize: 13, color: INK_SOFT, fontWeight: 600 }}> 分</span>
                 </div>
                 <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 4 }}>
-                  {focusing ? "专注中 · 今日累计" : "今日累计"} · 目标 {FOCUS_GOAL_MIN} 分钟
+                  {focusing ? "专注中 · 今日累计" : "今日累计"} · 目标 {focusGoal} 分钟
                 </div>
                 <div style={{
                   marginTop: "auto", height: 4, borderRadius: 2,
                   background: "rgba(126,200,255,.25)", overflow: "hidden",
                 }}>
                   <div style={{
-                    width: `${Math.min((focusMinutes / FOCUS_GOAL_MIN) * 100, 100)}%`,
+                    width: `${Math.min((focusMinutes / focusGoal) * 100, 100)}%`,
                     height: "100%", borderRadius: 2,
                     background: `linear-gradient(90deg,${ICE},${ICE_DEEP})`,
                     transition: "width .4s",
@@ -467,38 +662,14 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                 </div>
               </div>
 
-              <div style={{ flex: "1 1 0", display: "flex", flexDirection: "column", gap: 9 }}>
-                <div style={{ ...CARD, marginBottom: 0, flex: 1 }}>
-                  <div style={{ ...LABEL, display: "flex", alignItems: "center", gap: 4 }}>☁️ 窗外</div>
-                  <div style={{ fontSize: 11.5, color: INK, lineHeight: 1.5, marginTop: 6 }}>
-                    {weather || (shellAvailable ? "加载中…" : "连壳后显示")}
-                  </div>
+              <div style={{ ...CARD, flex: "1 1 0", marginBottom: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                <div style={LABEL}>下一件事</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: INK, marginTop: 5 }}>
+                  {nextRule ? nextRule.r.name : "晚间无安排"}
                 </div>
-                <div style={{ ...CARD, marginBottom: 0, flex: 1 }}>
-                  <div style={LABEL}>下一件事</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: INK, marginTop: 5 }}>
-                    {nextRule ? nextRule.r.name : "晚间无安排"}
-                  </div>
-                  <div style={{ fontSize: 10.5, color: INK_FAINT, marginTop: 3 }}>
-                    {nextRule ? triggerLabel(nextRule.d, nextRule.r.time!) : "把时间留给自己"}
-                  </div>
+                <div style={{ fontSize: 10.5, color: INK_FAINT, marginTop: 3 }}>
+                  {nextRule ? triggerLabel(nextRule.d, nextRule.r.time!) : "把时间留给自己"}
                 </div>
-              </div>
-            </div>
-
-            {/* 手机电量横条 */}
-            <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <BatteryIcon level={battery} />
-                <span style={{ ...LABEL, marginRight: "auto" }}>手机电量</span>
-                <span style={{ fontSize: 18, fontWeight: 800, color: INK }}>
-                  {battery == null ? "—" : `${battery}%`}
-                </span>
-              </div>
-              <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 6 }}>
-                {battery == null
-                  ? (shellAvailable ? "读取中…" : "连接壳后显示实时电量")
-                  : battery < 20 ? "电量偏低，记得充电" : "电量稳稳的"}
               </div>
             </div>
 
@@ -534,7 +705,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
         )}
 
         {/* ============ Tab 2 陪伴 ============ */}
-        {tab === "companion" && (
+        {!showSettings && tab === "companion" && (
           <>
             {/* Hero 陪伴对象 */}
             <div style={HERO}>
@@ -605,17 +776,29 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                   <div style={{ ...LABEL, textAlign: "center" }}>🔋 归电</div>
                   <button type="button" style={{ ...ACTION_BTN_GHOST, marginTop: 6, padding: "6px 14px", fontSize: 11 }}
                     onClick={triggerGuidian}>
-                    让{ cname }敲门
+                    让{cname}敲门
                   </button>
                 </div>
               </div>
             </div>
 
-            {/* TA 的行动 */}
+            {/* TA 的行动：真实时间线 */}
             <div style={CARD}>
               <div style={{ fontSize: 14, fontWeight: 800, color: INK }}>{cname}的行动</div>
-              <div style={{ fontSize: 12.5, color: INK_FAINT, lineHeight: 1.7, marginTop: 10 }}>
-                还没有新的行动记录。
+              <div style={{ marginTop: 8 }}>
+                {companionActions.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: INK_FAINT, lineHeight: 1.7 }}>
+                    还没有新的行动记录。
+                  </div>
+                ) : companionActions.map((a, i) => (
+                  <div key={i} style={{
+                    display: "flex", alignItems: "baseline", gap: 10, padding: "6px 0",
+                    fontSize: 12.5, borderTop: i === 0 ? "none" : "1px dashed rgba(126,200,255,.3)",
+                  }}>
+                    <span style={{ color: ICE_DEEP, fontWeight: 800, minWidth: 42 }}>{FootprintTime(a.ts)}</span>
+                    <span style={{ color: INK, flex: 1 }}>{a.text}</span>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -660,12 +843,12 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
         )}
 
         {/* ============ Tab 3 守护 ============ */}
-        {tab === "guard" && (
+        {!showSettings && tab === "guard" && (
           <>
             <div style={GROUP_TITLE}>守护功能</div>
 
             <div style={LABEL}>日子与地点</div>
-            {/* 守护日历：内嵌当月矩阵 */}
+            {/* 守护日历：内嵌当月矩阵 + 本月守护日子清单 */}
             <div style={{ ...CARD, marginTop: 6 }}>
               <div style={{ display: "flex", alignItems: "baseline" }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: INK }}>{year} 年 {month + 1} 月 · 守护日历</span>
@@ -700,18 +883,27 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                   );
                 })}
               </div>
-            </div>
 
-            {/* 天气地区 */}
-            <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 18 }}>☁️</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>天气地区</div>
-                  <div style={{ fontSize: 11.5, color: INK_SOFT, marginTop: 3, lineHeight: 1.5 }}>
-                    {weather || (shellAvailable ? "天气加载中…" : "连接壳后显示当前天气")}
+              {/* 这个月的守护日子 */}
+              <div style={{ marginTop: 12, borderTop: "1px dashed rgba(126,200,255,.3)", paddingTop: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: INK_SOFT, marginBottom: 4 }}>这个月的守护日子</div>
+                {monthEvents.length === 0 ? (
+                  <div style={{ fontSize: 12, color: INK_FAINT, padding: "4px 0" }}>这个月还没有守护日子。</div>
+                ) : monthEvents.map(e => (
+                  <div key={`${e.date}-${e.title}`} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 12.5,
+                  }}>
+                    <span style={{ color: ICE_DEEP, fontWeight: 800, minWidth: 44 }}>{e.date.slice(5)}</span>
+                    <span style={{ color: INK, flex: 1 }}>{e.title}</span>
+                    {e.remindDaysBefore != null && <span style={MARK}>提前{e.remindDaysBefore}天</span>}
+                    {e.remindTime && <span style={MARK}>{e.remindTime}</span>}
+                    <button
+                      type="button" aria-label="删除守护日子"
+                      onClick={() => { removePeekGuardEvent(e.date, e.title); bump(); }}
+                      style={{ border: "none", background: "transparent", color: "#ff8a8a", cursor: "pointer", fontSize: 13 }}
+                    >✕</button>
                   </div>
-                </div>
+                ))}
               </div>
             </div>
 
@@ -753,7 +945,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               </button>
             </div>
 
-            {/* 屏幕休息 + 专注模式 */}
+            {/* 屏幕休息 */}
             <div style={CARD}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 18 }}>🌙</span>
@@ -764,6 +956,20 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               </div>
               <button type="button" style={{ ...ACTION_BTN, marginTop: 10 }} onClick={takeScreenBreak}>
                 护眼 5 分钟
+              </button>
+            </div>
+
+            {/* 息屏 */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 18 }}>📴</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>息屏</div>
+                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>让屏幕暗下来，去喝口水</div>
+                </div>
+              </div>
+              <button type="button" style={{ ...ACTION_BTN_GHOST, marginTop: 10 }} onClick={screenOff}>
+                立即息屏
               </button>
             </div>
 
@@ -788,7 +994,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                 <span style={{ fontSize: 18 }}>⏰</span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>主动提醒</div>
-                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>电量、休息与喝水</div>
+                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>休息与喝水</div>
                 </div>
               </div>
               <div style={{ marginTop: 10 }}>

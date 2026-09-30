@@ -2,6 +2,12 @@ import { callQaAgent, compactQaContext, formatQaErrorMessage, type QaContextEntr
 import { QA_TOOLS, formatQaToolSubtitle, type QaCreatedContent, type QaProposedCommit } from "./qa-agent-tools";
 import { loadQaGithubConfig } from "./qa-github";
 import { commitQaFiles, revertQaCommit, type QaCommitResult } from "./qa-github-write";
+import { kvGet, kvRemove, kvSet, registerKvMigration } from "./kv-db";
+
+const QA_CONTEXT_BUDGET_KEY = "ai_phone_qa_context_budget_chars";
+if (typeof window !== "undefined") {
+    registerKvMigration(QA_CONTEXT_BUDGET_KEY);
+}
 
 // ── 答疑 App 会话存储 ─────────────────────────────────
 // 模式与 mascot-chat-store 一致：裸 IndexedDB + 模块级单例 + subscribe/snapshot。
@@ -101,7 +107,7 @@ const DEFAULT_CONTEXT_BUDGET_CHARS = 1_000_000;
 
 function getContextBudget(): number {
     try {
-        const raw = Number(localStorage.getItem("ai_phone_qa_context_budget_chars"));
+        const raw = Number(kvGet(QA_CONTEXT_BUDGET_KEY));
         if (Number.isFinite(raw) && raw >= 2_000 && raw <= 2_000_000) return Math.floor(raw);
     } catch {
         // ignore
@@ -160,10 +166,10 @@ export function getQaContextBudgetChars(): number {
 /** 设置上下文预算（null = 恢复默认）；立即刷新进度条 */
 export function setQaContextBudgetChars(chars: number | null): void {
     try {
-        if (chars == null) localStorage.removeItem("ai_phone_qa_context_budget_chars");
+        if (chars == null) kvRemove(QA_CONTEXT_BUDGET_KEY);
         else {
             const clamped = Math.min(QA_CONTEXT_BUDGET_MAX, Math.max(QA_CONTEXT_BUDGET_MIN, Math.floor(chars)));
-            localStorage.setItem("ai_phone_qa_context_budget_chars", String(clamped));
+            kvSet(QA_CONTEXT_BUDGET_KEY, String(clamped));
         }
     } catch {
         // ignore

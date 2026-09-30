@@ -1,11 +1,17 @@
-// lib/voice-assistant-store.ts — 语音助手本地存储（localStorage）
+// lib/voice-assistant-store.ts — 语音助手持久化（云端 KV）
 //
 // 独立全屏语音助手的最小持久层：只存一条预设角色人设（system prompt）。
 // 对话轮次由组件内存维护，不污染正式聊天会话。
-// TODO(后续接入正式 session)：把 persona 与对话历史迁到真实 ChatSession/Character，
-//       这里目前只做 localStorage 兜底。
+// TODO(后续接入正式 session)：把 persona 与对话历史迁到真实 ChatSession/Character。
+
+import { kvGet, kvRemove, kvSet, registerKvMigration } from "./kv-db";
 
 const PERSONA_KEY = "voice_assistant_persona_v1";
+
+// 水合时把浏览器里残留的旧键上传云端后清掉
+if (typeof window !== "undefined") {
+    registerKvMigration(PERSONA_KEY);
+}
 
 export const DEFAULT_VOICE_ASSISTANT_PERSONA =
     "你是一个温柔干练的语音助手，像身边可靠的朋友。" +
@@ -16,7 +22,7 @@ export const DEFAULT_VOICE_ASSISTANT_PERSONA =
 export function loadVoiceAssistantPersona(): string {
     if (typeof window === "undefined") return DEFAULT_VOICE_ASSISTANT_PERSONA;
     try {
-        const raw = window.localStorage.getItem(PERSONA_KEY);
+        const raw = kvGet(PERSONA_KEY);
         if (raw && raw.trim()) return raw;
     } catch { /* 忽略读取失败 */ }
     return DEFAULT_VOICE_ASSISTANT_PERSONA;
@@ -27,9 +33,9 @@ export function saveVoiceAssistantPersona(persona: string): void {
     if (typeof window === "undefined") return;
     try {
         if (persona && persona.trim()) {
-            window.localStorage.setItem(PERSONA_KEY, persona);
+            kvSet(PERSONA_KEY, persona);
         } else {
-            window.localStorage.removeItem(PERSONA_KEY);
+            kvRemove(PERSONA_KEY);
         }
     } catch { /* 忽略写入失败 */ }
 }

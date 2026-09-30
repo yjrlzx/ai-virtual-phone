@@ -4,7 +4,13 @@
 //
 // 开关和等待秒数都按聊天窗口（sessionId）各存各的：设置页本来就是单个聊天的，
 // 在哪拨开就只对哪个聊天生效，「这个角色开、那个角色不开」天然成立。
+import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+
 const CONFIG_KEY = "float_keyboard_auto_send_v1";
+
+if (typeof window !== "undefined") {
+  registerKvMigration(CONFIG_KEY);
+}
 
 export interface KeyboardAutoSendConfig {
     /** 按会话的开关。缺省 = 关（不改变任何存量行为）。key = sessionId。 */
@@ -31,7 +37,7 @@ export function normalizeDebounceMs(value: unknown, fallback = DEFAULT_DEBOUNCE_
 export function loadKeyboardAutoSendConfig(): KeyboardAutoSendConfig {
     if (typeof window === "undefined") return { sessionEnabled: {}, sessionDebounceMs: {} };
     try {
-        const raw = localStorage.getItem(CONFIG_KEY);
+        const raw = kvGet(CONFIG_KEY);
         if (!raw) return { sessionEnabled: {}, sessionDebounceMs: {} };
         const saved = JSON.parse(raw) as Partial<KeyboardAutoSendConfig>;
         const enabledMap: Record<string, boolean> = {};
@@ -54,7 +60,7 @@ export function loadKeyboardAutoSendConfig(): KeyboardAutoSendConfig {
 }
 
 function saveConfig(config: KeyboardAutoSendConfig): void {
-    try { localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* ignore */ }
+    try { kvSet(CONFIG_KEY, JSON.stringify(config)); } catch { /* ignore */ }
 }
 
 /** 该会话是否开启了收起键盘自动触发（缺省关）。 */

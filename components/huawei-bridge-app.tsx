@@ -13,10 +13,15 @@ import { HuaweiBridgeWizard } from "./huawei-bridge-wizard";
  * 主体滚动区渲染双页 HuaweiBridgeWizard。HuaweiShellSettings 本身不改，仅换挂载位置。
  */
 
+/* 顶栏必须让到虚拟状态栏下方：.phone-status-bar 绝对定位 z-index:10，会盖住屏幕顶部
+   约 48px 并拦截触摸，返回按钮压在其下就点不动。与 reality-bridge 的 .rb-header 同值。 */
+const SAFE_TOP = "var(--page-header-safe-top, max(48px, env(safe-area-inset-top, 48px)))";
+
 const TITLEBAR: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 10,
+  marginTop: SAFE_TOP,
   padding: "10px 14px",
   background: "linear-gradient(180deg, rgba(255,255,255,.85), rgba(214,229,248,.55))",
   borderBottom: "1px solid rgba(140,180,220,.45)",
@@ -58,6 +63,14 @@ export function HuaweiBridgeApp({ onClose, onNotice }: {
   onNotice?: (text: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+
+  /* 返回：按钮先渐隐缩小，再真正卸载（与 reality-bridge 同构） */
+  const handleClose = () => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, 200);
+  };
 
   return (
     <div
@@ -73,7 +86,14 @@ export function HuaweiBridgeApp({ onClose, onNotice }: {
       }}
     >
       <div style={TITLEBAR}>
-        <button type="button" onClick={onClose} aria-label="返回桌面" style={{ ...GLASS_BTN, pointerEvents: "auto", zIndex: 10 }}>
+        <button type="button" onClick={handleClose} aria-label="返回桌面" style={{
+          ...GLASS_BTN,
+          pointerEvents: "auto",
+          zIndex: 10,
+          opacity: closing ? 0 : 1,
+          transform: closing ? "scale(0.78)" : "none",
+          transition: "opacity .2s ease, transform .2s ease",
+        }}>
           ‹
         </button>
         <span style={{ flex: 1, textAlign: "center" }}>华为现实桥</span>

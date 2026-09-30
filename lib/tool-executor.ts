@@ -29,7 +29,7 @@ import { fetchHuaweiCurrentWeather, getAndroidShell, invokeShellJson, loadHuawei
 import type { HuaweiLedgerRecord } from "./huawei-shell/storage";
 import type { HuaweiCustomAction, HuaweiTriggerRule } from "./huawei-shell/types";
 import { WECHAT_PACKAGE, type PaymentSource } from "./huawei-shell/types";
-import { addPeekGuardEvent, addTodayFocusMinutes, companionDayCount, readCompanionMeta, readTodayFocusMinutes, setCompanionStartDate, setTodayWindowLine } from "./huawei-shell/peek-store";
+import { addCompanionAction, addCompanionAnniversary, addPeekGuardEvent, addTodayFocusMinutes, companionDayCount, readCompanionActions, readCompanionMeta, readCompanionName, readPeekGuardEvents, readTodayFocusMinutes, readWindowLine, removeCompanionAnniversary, removePeekGuardEvent, setCompanionName, setCompanionStartDate, setTodayWindowLine, upsertPeekGuardEvent } from "./huawei-shell/peek-store";
 import { createDiaryEntry } from "./diary-entry-storage";
 import {
     appendLifelineFinanceRecord,
@@ -1423,6 +1423,13 @@ const PEEK_LOCAL_TOOLS = new Set([
     "写TA的日记",
     "添加守护日历",
     "设置定时提醒",
+    "改陪伴称呼",
+    "加纪念日",
+    "删纪念日",
+    "记陪伴行动",
+    "删守护事件",
+    "设守护提醒",
+    "读掌心窗一览",
 ]);
 
 async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
@@ -1470,6 +1477,13 @@ async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
         case "读取此刻状态": return huaweiNowStatusTool();
         case "写TA的日记": return huaweiWriteDiaryTool(args);
         case "添加守护日历": return huaweiAddGuardEventTool(args);
+        case "改陪伴称呼": return huaweiSetCompanionNameTool(args);
+        case "加纪念日": return huaweiAddAnniversaryTool(args);
+        case "删纪念日": return huaweiRemoveAnniversaryTool(args);
+        case "记陪伴行动": return huaweiRecordActionTool(args);
+        case "删守护事件": return huaweiRemoveGuardEventTool(args);
+        case "设守护提醒": return huaweiSetGuardReminderTool(args);
+        case "读掌心窗一览": return huaweiPeekOverviewTool();
         case "锁定应用": return huaweiLockAppTool(args);
         case "解锁应用": return huaweiUnlockAppTool(args);
         case "设置定时提醒": return huaweiScheduleReminderTool(args);
@@ -1510,6 +1524,13 @@ const HUAWEI_TOOL_PERMISSION_LEVEL: Record<string, "standard" | "accessibility" 
     "记录专注时长": "standard",
     "写TA的日记": "standard",
     "添加守护日历": "standard",
+    "改陪伴称呼": "standard",
+    "加纪念日": "standard",
+    "删纪念日": "standard",
+    "记陪伴行动": "standard",
+    "删守护事件": "standard",
+    "设守护提醒": "standard",
+    "读掌心窗一览": "standard",
     "查看通知": "accessibility",
     "读取微信消息": "accessibility",
     "点击文字": "accessibility",
@@ -1665,6 +1686,90 @@ function huaweiAddGuardEventTool(args: Record<string, unknown>): ToolResult {
     if (!title) return huaweiToolFail("添加守护日历", "缺少 title 参数（这个日子要提醒的事，如「考试」「复诊」）");
     addPeekGuardEvent(date, title);
     return huaweiToolOk("添加守护日历", `已在掌心窗守护日历 ${date} 画上「${title}」，到那天会有圆点提醒。`);
+}
+
+/** 陪伴页：改掌心窗里陪伴对象的显示称呼（覆盖角色默认名），写完回读确认。 */
+function huaweiSetCompanionNameTool(args: Record<string, unknown>): ToolResult {
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (!name) return huaweiToolFail("改陪伴称呼", "缺少 name 参数（想在掌心窗里怎么称呼 TA，不超过 12 字）");
+    setCompanionName(name);
+    const back = readCompanionName();
+    return huaweiToolOk("改陪伴称呼", `已把掌心窗里对 TA 的称呼改为「${back}」，陪伴页和窗语里都会用这个叫法。`);
+}
+
+/** 陪伴页：加一个每年 MM-DD 过的纪念日，成功后列出全部纪念日。 */
+function huaweiAddAnniversaryTool(args: Record<string, unknown>): ToolResult {
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (!name) return huaweiToolFail("加纪念日", "缺少 name 参数（纪念日叫什么，如「第一次见面」）");
+    const date = typeof args.date === "string" ? args.date.trim() : "";
+    if (!/^\d{2}-\d{2}$/.test(date)) return huaweiToolFail("加纪念日", "date 需要是 MM-DD 格式，例如 05-20");
+    addCompanionAnniversary(name, date);
+    const list = readCompanionMeta().anniversaries;
+    const summary = list.length ? list.map(a => `${a.date} ${a.name}`).join("；") : "（暂无）";
+    return huaweiToolOk("加纪念日", `已在掌心窗陪伴页记下纪念日「${name}」（${date}）。当前全部纪念日：${summary}`);
+}
+
+/** 陪伴页：删一个纪念日（按名称+MM-DD 精确匹配）。 */
+function huaweiRemoveAnniversaryTool(args: Record<string, unknown>): ToolResult {
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (!name) return huaweiToolFail("删纪念日", "缺少 name 参数（要删的纪念日叫什么）");
+    const date = typeof args.date === "string" ? args.date.trim() : "";
+    if (!/^\d{2}-\d{2}$/.test(date)) return huaweiToolFail("删纪念日", "date 需要是 MM-DD 格式，例如 05-20");
+    removeCompanionAnniversary(name, date);
+    return huaweiToolOk("删纪念日", `已从掌心窗陪伴页删掉纪念日「${name}」（${date}）。`);
+}
+
+/** 陪伴页：在「TA 的行动」时间线记一条陪伴行动（如「给她倒了杯热水」）。 */
+function huaweiRecordActionTool(args: Record<string, unknown>): ToolResult {
+    const text = typeof args.text === "string" ? args.text.trim() : "";
+    if (!text) return huaweiToolFail("记陪伴行动", "缺少 text 参数（替 TA 做了什么，如「给她倒了杯热水」，不超过 60 字）");
+    addCompanionAction(text);
+    return huaweiToolOk("记陪伴行动", `已把「${text}」记进掌心窗陪伴页的行动时间线。`);
+}
+
+/** 守护页：删掉守护日历上某条日子（按 date+title 精确匹配）。 */
+function huaweiRemoveGuardEventTool(args: Record<string, unknown>): ToolResult {
+    const date = typeof args.date === "string" ? args.date.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return huaweiToolFail("删守护事件", "date 需要是 YYYY-MM-DD，例如 2026-12-21");
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    if (!title) return huaweiToolFail("删守护事件", "缺少 title 参数（要删的日子标题）");
+    removePeekGuardEvent(date, title);
+    return huaweiToolOk("删守护事件", `已从掌心窗守护日历删掉 ${date} 的「${title}」。`);
+}
+
+/** 守护页：给已有的守护日子补/改提前几天、几点提醒。 */
+function huaweiSetGuardReminderTool(args: Record<string, unknown>): ToolResult {
+    const date = typeof args.date === "string" ? args.date.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return huaweiToolFail("设守护提醒", "date 需要是 YYYY-MM-DD，例如 2026-12-21");
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    if (!title) return huaweiToolFail("设守护提醒", "缺少 title 参数（要补提醒的守护日子标题）");
+    const remindDaysBefore = clampToolInteger(args.remindDaysBefore, 0, 30, 0);
+    const remindTime = typeof args.remindTime === "string" && /^\d{2}:\d{2}$/.test(args.remindTime.trim())
+        ? args.remindTime.trim()
+        : undefined;
+    upsertPeekGuardEvent(date, title, remindDaysBefore, remindTime);
+    const summary = [`已给守护日子 ${date}「${title}」设好提醒`, `提前 ${remindDaysBefore} 天`];
+    if (remindTime) summary.push(`${remindTime} 提醒`);
+    return huaweiToolOk("设守护提醒", summary.join("，") + "。");
+}
+
+/** 一览：动手前先读，把掌心窗今天/陪伴/守护三页现状汇总给 char。 */
+function huaweiPeekOverviewTool(): ToolResult {
+    const lines: string[] = [];
+    lines.push(`今日窗语：${readWindowLine()}`);
+    lines.push(`今日专注：${readTodayFocusMinutes()} 分钟`);
+    const meta = readCompanionMeta();
+    const name = readCompanionName();
+    const day = companionDayCount(meta.startDate);
+    lines.push(day != null ? `陪伴称呼：${name}，今天是第 ${day} 天` : `陪伴称呼：${name}（还没记录陪伴开始日）`);
+    if (meta.anniversaries.length) {
+        lines.push(`纪念日：${meta.anniversaries.map(a => `${a.name} ${a.date}`).join("、")}`);
+    }
+    const events = readPeekGuardEvents().slice(-3);
+    lines.push(events.length ? `最近守护日子：${events.map(e => `${e.date} ${e.title}`).join("、")}` : "最近守护日子：（暂无）");
+    const actions = readCompanionActions().slice(0, 3);
+    lines.push(actions.length ? `最近陪伴行动：${actions.map(a => a.text).join("、")}` : "最近陪伴行动：（暂无）");
+    return huaweiToolOk("读掌心窗一览", lines.join("\n"));
 }
 
 /** 守护页应用门禁：把某个包名加进锁屏门禁列表并同步到壳。 */

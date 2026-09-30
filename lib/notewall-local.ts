@@ -1,9 +1,16 @@
 "use client";
 
+import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import type { NoteWallTimerSettings } from "./notewall-types";
 
 const TIMER_KEY = "ai_phone_note_wall_timer_settings_v1";
 const LOCAL_USER_KEY = "ai_phone_note_wall_local_user_v1";
+
+// 水合时把浏览器残留旧键上传云端后清掉
+if (typeof window !== "undefined") {
+  registerKvMigration(TIMER_KEY);
+  registerKvMigration(LOCAL_USER_KEY);
+}
 
 export const DEFAULT_NOTE_WALL_TIMER_SETTINGS: NoteWallTimerSettings = {
   enabled: false,
@@ -15,7 +22,7 @@ export const DEFAULT_NOTE_WALL_TIMER_SETTINGS: NoteWallTimerSettings = {
 export function loadNoteWallTimerSettings(): NoteWallTimerSettings {
   if (typeof window === "undefined") return DEFAULT_NOTE_WALL_TIMER_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(TIMER_KEY);
+    const raw = kvGet(TIMER_KEY);
     if (!raw) return DEFAULT_NOTE_WALL_TIMER_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<NoteWallTimerSettings> & {
       replyEnabled?: unknown;
@@ -43,16 +50,16 @@ export function loadNoteWallTimerSettings(): NoteWallTimerSettings {
 
 export function saveNoteWallTimerSettings(settings: NoteWallTimerSettings): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(TIMER_KEY, JSON.stringify(settings));
+  kvSet(TIMER_KEY, JSON.stringify(settings));
 }
 
 export function getNoteWallLocalUserId(): string {
   if (typeof window === "undefined") return "server";
-  const existing = window.localStorage.getItem(LOCAL_USER_KEY);
+  const existing = kvGet(LOCAL_USER_KEY);
   if (existing) return existing;
   const id = typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  window.localStorage.setItem(LOCAL_USER_KEY, id);
+  kvSet(LOCAL_USER_KEY, id);
   return id;
 }

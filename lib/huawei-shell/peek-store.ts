@@ -14,14 +14,22 @@ const PEEK_CHAR_WINDOW_KEY = "ai_phone_peek_char_window_v1";
 const PEEK_FOCUS_KEY = "ai_phone_peek_focus_minutes_v1";
 const PEEK_COMPANION_KEY = "ai_phone_peek_companion_v1";
 const PEEK_GUARD_EVENT_KEY = "ai_phone_peek_guard_events_v1";
+const PEEK_COMPANION_NAME_KEY = "ai_phone_peek_companion_name_v1";
+const PEEK_CUSTOM_LINES_KEY = "ai_phone_peek_window_lines_custom_v1";
+const PEEK_COMPANION_ACTION_KEY = "ai_phone_peek_companion_actions_v1";
+const PEEK_FOCUS_GOAL_KEY = "ai_phone_peek_focus_goal_v1";
 
 registerKvMigration(PEEK_WINDOW_KEY);
 registerKvMigration(PEEK_CHAR_WINDOW_KEY);
 registerKvMigration(PEEK_FOCUS_KEY);
 registerKvMigration(PEEK_COMPANION_KEY);
 registerKvMigration(PEEK_GUARD_EVENT_KEY);
+registerKvMigration(PEEK_COMPANION_NAME_KEY);
+registerKvMigration(PEEK_CUSTOM_LINES_KEY);
+registerKvMigration(PEEK_COMPANION_ACTION_KEY);
+registerKvMigration(PEEK_FOCUS_GOAL_KEY);
 
-/* ---------- 今日窗语：语料库 + 轮换下标 ---------- */
+/* ---------- 今日窗语：内置语料 + 用户自定义语料，合并轮换 ---------- */
 
 export const PEEK_WINDOW_LINES: string[] = [
   "把今天，轻轻收进窗里。",
@@ -34,6 +42,36 @@ export const PEEK_WINDOW_LINES: string[] = [
   "把心事放下一会儿，窗里很安静。",
 ];
 
+/** 用户自定义窗语语料（设置里可增删），与内置语料合并后一起轮换。 */
+export function readCustomWindowLines(): string[] {
+  try {
+    const raw = kvGet(PEEK_CUSTOM_LINES_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown[];
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map(item => (typeof item === "string" ? item.trim() : ""))
+      .filter(t => t.length > 0)
+      .slice(0, 40);
+  } catch { return []; }
+}
+
+/** 整体替换自定义窗语语料（空数组 = 只用内置）。 */
+export function setCustomWindowLines(lines: string[]): void {
+  const clean = Array.from(new Set(
+    lines.map(l => String(l ?? "").trim().slice(0, 60)).filter(t => t.length > 0),
+  )).slice(0, 40);
+  try { kvSet(PEEK_CUSTOM_LINES_KEY, JSON.stringify(clean)); } catch { /* 存不下下次再写 */ }
+}
+
+/** 参与轮换的完整语料：内置 + 用户自定义（去重）。 */
+function allWindowLines(): string[] {
+  const custom = readCustomWindowLines();
+  const merged = [...PEEK_WINDOW_LINES];
+  for (const line of custom) if (!merged.includes(line)) merged.push(line);
+  return merged;
+}
+
 /** 读当前窗语：char 当天写过的优先；否则走语料轮换下标。 */
 export function readWindowLine(): string {
   try {
@@ -45,14 +83,15 @@ export function readWindowLine(): string {
       }
     }
   } catch { /* 读 char 窗语失败则回落语料轮换 */ }
+  const pool = allWindowLines();
   try {
     const raw = kvGet(PEEK_WINDOW_KEY);
-    if (!raw) return PEEK_WINDOW_LINES[0];
+    if (!raw) return pool[0];
     const idx = Number((JSON.parse(raw) as { index?: number }).index);
-    if (!Number.isFinite(idx)) return PEEK_WINDOW_LINES[0];
-    return PEEK_WINDOW_LINES[((idx % PEEK_WINDOW_LINES.length) + PEEK_WINDOW_LINES.length) % PEEK_WINDOW_LINES.length];
+    if (!Number.isFinite(idx)) return pool[0];
+    return pool[((idx % pool.length) + pool.length) % pool.length];
   } catch {
-    return PEEK_WINDOW_LINES[0];
+    return pool[0];
   }
 }
 
@@ -67,16 +106,17 @@ export function setTodayWindowLine(text: string): void {
 
 /** 顺时针换一句窗语并落盘，返回新文案。 */
 export function nextWindowLine(): string {
+  const pool = allWindowLines();
   let idx = 0;
   try {
     const raw = kvGet(PEEK_WINDOW_KEY);
     if (raw) idx = Number((JSON.parse(raw) as { index?: number }).index) || 0;
   } catch { idx = 0; }
-  idx = (idx + 1) % PEEK_WINDOW_LINES.length;
+  idx = (idx + 1) % pool.length;
   try { kvSet(PEEK_WINDOW_KEY, JSON.stringify({ index: idx })); } catch { /* 存不下就下次再转 */ }
   // 用户手动换一句 = 今天不再用 char 写的那句，语料轮换接管
   try { kvSet(PEEK_CHAR_WINDOW_KEY, ""); } catch { /* 忽略 */ }
-  return PEEK_WINDOW_LINES[idx];
+  return pool[idx];
 }
 
 /* ---------- 当日累计专注分钟（按 YYYY-MM-DD 记账） ---------- */
@@ -108,6 +148,22 @@ export function addTodayFocusMinutes(minutes: number): number {
   map[today] = (map[today] || 0) + Math.max(0, Math.round(minutes));
   try { kvSet(PEEK_FOCUS_KEY, JSON.stringify(map)); } catch { /* 忽略写失败 */ }
   return map[today];
+}
+
+/** 今日专注目标分钟数（进度条分母），默认 120。 */
+export function readFocusGoalMin(): number {
+  try {
+    const raw = kvGet(PEEK_FOCUS_GOAL_KEY);
+    if (!raw) return 120;
+    const n = Number(JSON.parse(raw));
+    return Number.isFinite(n) && n >= 15 && n <= 960 ? Math.round(n) : 120;
+  } catch { return 120; }
+}
+
+/** 设置今日专注目标分钟数（15-960）。 */
+export function setFocusGoalMin(minutes: number): void {
+  const n = Math.max(15, Math.min(960, Math.round(Number(minutes) || 120)));
+  try { kvSet(PEEK_FOCUS_GOAL_KEY, JSON.stringify(n)); } catch { /* 忽略写失败 */ }
 }
 
 /* ---------- 陪伴：起始日 + 纪念日列表 ---------- */
@@ -142,6 +198,50 @@ export function setCompanionStartDate(iso: string | null): void {
   try {
     kvSet(PEEK_COMPANION_KEY, JSON.stringify({ startDate: iso, anniversaries: current.anniversaries }));
   } catch { /* 存不下就下次再写 */ }
+}
+
+/** 加一个纪念日（MM-DD），同名同日去重，返回更新后的 meta。 */
+export function addCompanionAnniversary(name: string, dateMMDD: string): PeekCompanionMeta {
+  const cleanName = String(name ?? "").trim().slice(0, 20);
+  const cleanDate = String(dateMMDD ?? "").trim();
+  const current = readCompanionMeta();
+  if (cleanName && /^\d{2}-\d{2}$/.test(cleanDate)) {
+    if (!current.anniversaries.some(a => a.name === cleanName && a.date === cleanDate)) {
+      current.anniversaries.push({ name: cleanName, date: cleanDate });
+      current.anniversaries.sort((a, b) => a.date.localeCompare(b.date));
+      current.anniversaries = current.anniversaries.slice(0, 12);
+      try { kvSet(PEEK_COMPANION_KEY, JSON.stringify(current)); } catch { /* 忽略写失败 */ }
+    }
+  }
+  return current;
+}
+
+/** 删一个纪念日（按 name + date 精确匹配），返回更新后的 meta。 */
+export function removeCompanionAnniversary(name: string, dateMMDD: string): PeekCompanionMeta {
+  const current = readCompanionMeta();
+  current.anniversaries = current.anniversaries.filter(a => !(a.name === name && a.date === dateMMDD));
+  try { kvSet(PEEK_COMPANION_KEY, JSON.stringify(current)); } catch { /* 忽略写失败 */ }
+  return current;
+}
+
+/* ---------- 陪伴对象称呼：掌心窗内可改的显示名，覆盖角色默认名 ---------- */
+
+/** 读陪伴对象在掌心窗里的显示称呼；没设过回退 fallback（角色名或 TA）。 */
+export function readCompanionName(fallback?: string): string {
+  try {
+    const raw = kvGet(PEEK_COMPANION_NAME_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { name?: string };
+      if (typeof parsed.name === "string" && parsed.name.trim()) return parsed.name.trim().slice(0, 12);
+    }
+  } catch { /* 读失败回退 */ }
+  return fallback?.trim() || "TA";
+}
+
+/** 设置掌心窗里的陪伴称呼；传空串 = 清掉自定义、回退角色名。 */
+export function setCompanionName(name: string): void {
+  const clean = String(name ?? "").trim().slice(0, 12);
+  try { kvSet(PEEK_COMPANION_NAME_KEY, JSON.stringify({ name: clean })); } catch { /* 忽略写失败 */ }
 }
 
 /** 从起始日到今天的陪伴第几天（含今天）；没设起始日返回 null。 */
@@ -197,7 +297,12 @@ export function readPeekCalendarDots(): Set<string> {
 
 /* ---------- 守护日历事件：char 在守护日历上画一个有名字的日子 ---------- */
 
-export type PeekGuardEvent = { date: string; title: string };
+export type PeekGuardEvent = {
+  date: string;            // YYYY-MM-DD
+  title: string;
+  remindDaysBefore?: number; // 提前几天提醒（0=当天）
+  remindTime?: string;       // 提醒时刻 HH:MM
+};
 
 function loadGuardEvents(): PeekGuardEvent[] {
   try {
@@ -218,15 +323,75 @@ export function addPeekGuardEvent(date: string, title: string): PeekGuardEvent[]
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return readPeekGuardEvents();
   const clean = String(title ?? "").trim().slice(0, 40);
   if (!clean) return readPeekGuardEvents();
+  return upsertPeekGuardEvent(date, clean, undefined, undefined);
+}
+
+/** 新增或更新一条守护日历事件（同 date+title 覆盖提醒字段），返回最新列表。 */
+export function upsertPeekGuardEvent(
+  date: string,
+  title: string,
+  remindDaysBefore?: number,
+  remindTime?: string,
+): PeekGuardEvent[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return readPeekGuardEvents();
+  const clean = String(title ?? "").trim().slice(0, 40);
+  if (!clean) return readPeekGuardEvents();
   const events = loadGuardEvents();
-  if (!events.some(e => e.date === date && e.title === clean)) {
-    events.push({ date, title: clean });
-    events.sort((a, b) => a.date.localeCompare(b.date));
-    try { kvSet(PEEK_GUARD_EVENT_KEY, JSON.stringify(events)); } catch { /* 忽略写失败 */ }
-  }
+  const idx = events.findIndex(e => e.date === date && e.title === clean);
+  const ev: PeekGuardEvent = {
+    date,
+    title: clean,
+    ...(Number.isFinite(remindDaysBefore) ? { remindDaysBefore: Math.max(0, Math.min(30, Math.round(remindDaysBefore as number))) } : {}),
+    ...(typeof remindTime === "string" && /^\d{2}:\d{2}$/.test(remindTime) ? { remindTime } : {}),
+  };
+  if (idx >= 0) events[idx] = { ...events[idx], ...ev };
+  else events.push(ev);
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  try { kvSet(PEEK_GUARD_EVENT_KEY, JSON.stringify(events)); } catch { /* 忽略写失败 */ }
+  return events;
+}
+
+/** 删掉一条守护日历事件（按 date+title 精确匹配）。 */
+export function removePeekGuardEvent(date: string, title: string): PeekGuardEvent[] {
+  const events = loadGuardEvents().filter(e => !(e.date === date && e.title === title));
+  try { kvSet(PEEK_GUARD_EVENT_KEY, JSON.stringify(events)); } catch { /* 忽略写失败 */ }
   return events;
 }
 
 export function readPeekGuardEvents(): PeekGuardEvent[] {
   return loadGuardEvents();
+}
+
+/* ---------- 陪伴行动流：陪伴页「TA 的行动」时间线 ---------- */
+
+export type PeekCompanionAction = { ts: number; text: string };
+
+function loadCompanionActions(): PeekCompanionAction[] {
+  try {
+    const raw = kvGet(PEEK_COMPANION_ACTION_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown[];
+    if (!Array.isArray(arr)) return [];
+    return (arr as Array<Record<string, unknown>>).filter((item): item is PeekCompanionAction =>
+      typeof item === "object" && item !== null
+      && typeof item.ts === "number" && Number.isFinite(item.ts)
+      && typeof item.text === "string" && item.text.trim().length > 0,
+    ).slice(-30);
+  } catch { return []; }
+}
+
+/** 读最近的陪伴行动（新的在前）。 */
+export function readCompanionActions(): PeekCompanionAction[] {
+  return loadCompanionActions().slice().reverse();
+}
+
+/** 记一条陪伴行动（如「给你泡了杯热水」「把灯调暗了」），返回新列表。 */
+export function addCompanionAction(text: string): PeekCompanionAction[] {
+  const clean = String(text ?? "").trim().slice(0, 60);
+  if (!clean) return readCompanionActions();
+  const list = loadCompanionActions();
+  list.push({ ts: Date.now(), text: clean });
+  const trimmed = list.slice(-30);
+  try { kvSet(PEEK_COMPANION_ACTION_KEY, JSON.stringify(trimmed)); } catch { /* 忽略写失败 */ }
+  return trimmed.slice().reverse();
 }

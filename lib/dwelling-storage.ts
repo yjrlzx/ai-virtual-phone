@@ -1,4 +1,5 @@
 import Dexie from "dexie";
+import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
 // ── Types ──────────────────────────────────────
 
@@ -203,10 +204,14 @@ export function loadAllItemHtmlForChar(characterId: string): Record<string, stri
 
 const DWELLING_IMAGE_TOGGLE_KEY = "dwelling_image_gen_enabled";
 
+if (typeof window !== "undefined") {
+    registerKvMigration(DWELLING_IMAGE_TOGGLE_KEY);
+}
+
 export function loadDwellingImageEnabled(): boolean {
     if (typeof window === "undefined") return false;
     try {
-        return localStorage.getItem(DWELLING_IMAGE_TOGGLE_KEY) !== "0";
+        return kvGet(DWELLING_IMAGE_TOGGLE_KEY) !== "0";
     } catch {
         return true;
     }
@@ -214,7 +219,7 @@ export function loadDwellingImageEnabled(): boolean {
 
 export function saveDwellingImageEnabled(enabled: boolean): void {
     try {
-        localStorage.setItem(DWELLING_IMAGE_TOGGLE_KEY, enabled ? "1" : "0");
+        kvSet(DWELLING_IMAGE_TOGGLE_KEY, enabled ? "1" : "0");
     } catch { /* ignore */ }
 }
 

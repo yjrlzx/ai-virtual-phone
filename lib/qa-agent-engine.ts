@@ -17,6 +17,12 @@ import type { ApiConfig } from "./settings-types";
 import { buildQaSystemPrompt } from "./qa-knowledge";
 import { createSseJsonParser } from "./sse-json";
 import { getQaMaxOutputTokens, getQaMaxRounds } from "./qa-prefs";
+import { kvGet, registerKvMigration } from "./kv-db";
+
+const QA_STREAM_IDLE_MS_KEY = "ai_phone_qa_stream_idle_ms";
+if (typeof window !== "undefined") {
+    registerKvMigration(QA_STREAM_IDLE_MS_KEY);
+}
 import { parseToolCalls } from "./tool-executor";
 import {
     buildQaNativeNameMap,
@@ -85,7 +91,7 @@ function parseSseEvents(buffer: string): { events: string[]; rest: string } {
 // 可用 localStorage 键 ai_phone_qa_stream_idle_ms 覆盖（调参/测试用）。
 function qaStreamIdleMs(): number {
     try {
-        const raw = Number(localStorage.getItem("ai_phone_qa_stream_idle_ms"));
+        const raw = Number(kvGet(QA_STREAM_IDLE_MS_KEY));
         if (Number.isFinite(raw) && raw >= 1_000 && raw <= 600_000) return Math.floor(raw);
     } catch {
         // ignore

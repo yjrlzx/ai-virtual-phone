@@ -6,11 +6,11 @@
  * Lifeline 在本项目里有两种落盘形态，本文件同时提供两条读写通道：
  *
  * 1) 静态 iframe 形态：public/lifeline/index.html 以同源 iframe 挂载
- *    （components/lifeline-app.tsx），与父窗口共享 localStorage，
- *    整份状态存在 localStorage 键 `lifeLineState_v2`（页面内 saveDB() 即
- *    localStorage.setItem(DB_KEY, JSON.stringify(state))）。
+ *    （components/lifeline-app.tsx）。iframe 里的 float-storage-shim.js 把
+ *    lifeline 的 localStorage 读写桥到云端 KV 键 `lifeLineState_v2`
+ *    （/api/kv/* → SQLite），与父窗口 kv-db 落同一张表。
  *    readLifeLineState / mutateLifeLineState / appendLifelineFinanceRecord 等
- *    历史函数走这条通道，tool-executor.ts 已经在用。
+ *    函数走这条云端通道，tool-executor.ts 已经在用。
  *
  * 2) 自定义 APP 形态（float 宿主）：Lifeline 作为 manifest id = "lifeline" 的
  *    已安装自定义 APP，数据落在 kv-db 的集合
@@ -22,7 +22,7 @@
  * 不改动 public/lifeline/index.html 一行；Lifeline 页面下次打开时自然读到新数据。
  */
 
-import { kvGet, kvSet } from "./kv-db";
+import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import {
   loadInstalledCustomApps,
   readCustomAppCollection,
@@ -33,6 +33,12 @@ const LIFE_LINE_KEY = "lifeLineState_v2";
 const LIFELINE_MANIFEST_ID = "lifeline";
 const LIFELINE_COLLECTION = "lifeline";
 const STATE_ROW_ID = "lifeLineState_v2";
+
+// 本通道与 iframe（public/lifeline/float-storage-shim.js）共享同一个云端 KV 键，
+// 注册迁移：水合时把浏览器里残留的 lifeLineState_v2 上传云端后清掉。
+if (typeof window !== "undefined") {
+  registerKvMigration(LIFE_LINE_KEY);
+}
 
 /* ---------- Lifeline 状态类型 ---------- */
 
@@ -105,13 +111,16 @@ export function localDateKey(d: Date = new Date()): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/* ---------- localStorage 通道（历史，tool-executor 在用） ---------- */
+/* ---------- 云端 KV 通道（host 主应用侧，tool-executor 在用） ----------
+ * 与 iframe 里的 lifeline（float-storage-shim.js）落同一张云端 SQLite 键
+ * lifeLineState_v2。读走 kv-db 内存缓存，写 fire-and-forget 到 /api/kv/set。
+ * 不再直写浏览器 localStorage——否则宿主水合迁移清掉旧键后两边会分叉。 */
 
-/** 读取 localStorage 里的 lifeLineState_v2；不存在或解析失败返回 null（不抛异常）。 */
+/** 读取云端 lifeLineState_v2；不存在或解析失败返回 null（不抛异常）。 */
 export function readLifeLineState(): LifeLineState | null {
     if (typeof window === "undefined") return null;
     try {
-        const raw = localStorage.getItem(LIFE_LINE_KEY);
+        const raw = kvGet(LIFE_LINE_KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw) as unknown;
         if (!parsed || typeof parsed !== "object") return null;
@@ -121,17 +130,17 @@ export function readLifeLineState(): LifeLineState | null {
     }
 }
 
-/** 读-改-写整份 localStorage 状态：mutator 内可安全改 draft 的字段；返回是否写成功。 */
+/** 读-改-写整份云端状态：mutator 内可安全改 draft 的字段；返回是否写成功。 */
 export function mutateLifeLineState(mutator: (draft: LifeLineState) => void): boolean {
     if (typeof window === "undefined") return false;
     try {
-        const raw = localStorage.getItem(LIFE_LINE_KEY);
+        const raw = kvGet(LIFE_LINE_KEY);
         const draft: LifeLineState = raw
             ? ((JSON.parse(raw) as unknown) as LifeLineState)
             : {};
         if (!draft || typeof draft !== "object") return false;
         mutator(draft);
-        localStorage.setItem(LIFE_LINE_KEY, JSON.stringify(draft));
+        kvSet(LIFE_LINE_KEY, JSON.stringify(draft));
         return true;
     } catch {
         return false;

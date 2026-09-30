@@ -3,6 +3,7 @@
 // 换文件清单和逐行 patch 都不用自己算）；写侧走资源集市的上传中转函数
 // （action=contribute），由它持机器人 token 在官方仓库开 community PR。
 // 本模块零密钥：任何自部署站点开箱即用。
+import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
 export const UPSTREAM_REPO = "xiaolongbao0709/ai-virtual-phone";
 
@@ -11,9 +12,13 @@ export const CONTRIB_PATH_RE = /^(components|lib|styles|docs|hooks)\/[A-Za-z0-9_
 
 const FORK_STORE_KEY = "ai_phone_contrib_fork_v1";
 
+if (typeof window !== "undefined") {
+    registerKvMigration(FORK_STORE_KEY);
+}
+
 export function loadContribFork(): string {
     try {
-        return localStorage.getItem(FORK_STORE_KEY) || "";
+        return kvGet(FORK_STORE_KEY) || "";
     } catch {
         return "";
     }
@@ -21,7 +26,7 @@ export function loadContribFork(): string {
 
 export function saveContribFork(repo: string): void {
     try {
-        localStorage.setItem(FORK_STORE_KEY, repo);
+        kvSet(FORK_STORE_KEY, repo);
     } catch { /* 忽略 */ }
 }
 
