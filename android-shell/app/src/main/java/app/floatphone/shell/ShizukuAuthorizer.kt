@@ -88,7 +88,9 @@ object ShizukuAuthorizer {
             if (!hasPermission()) {
                 return ShellCommandResult(false, "", "Shizuku permission not granted", -1)
             }
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val process = ProcessBuilder("sh", "-c", command)
+                .redirectErrorStream(false)
+                .start()
             val stdout = process.inputStream.bufferedReader().readText()
             val stderr = process.errorStream.bufferedReader().readText()
             val exitCode = process.waitFor()
