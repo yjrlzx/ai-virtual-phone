@@ -17,6 +17,7 @@ import { suspendKeepAliveForCall, resumeKeepAliveAfterCall } from "@/lib/use-wei
 import { BilingualTextBlock } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import type { Character } from "@/lib/character-types";
+import { loadCharacters } from "@/lib/character-storage";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
@@ -105,8 +106,16 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const [showSttWarning, setShowSttWarning] = useState(false);
     const [showCallSettings, setShowCallSettings] = useState(false);
 
-    // 通话头像：自定义覆盖 > 角色头像；同步读 kv
-    const callAvatar = resolveCallAvatar(session.contactId, character.avatar);
+    // 通话头像：挂载时从存储重读最新 character.avatar（聊天里换了头像这里立刻生效）
+    const [liveAvatar, setLiveAvatar] = useState<string | null | undefined>(character.avatar);
+    useEffect(() => {
+        try {
+            const chars = loadCharacters();
+            const fresh = chars.find(c => c.id === session.contactId);
+            if (fresh?.avatar) setLiveAvatar(fresh.avatar);
+        } catch { /* ignore */ }
+    }, [session.contactId]);
+    const callAvatar = resolveCallAvatar(session.contactId, liveAvatar);
 
     const sttRef = useRef<STTSession | null>(null);
     const audioAbortRef = useRef<(() => void) | null>(null);

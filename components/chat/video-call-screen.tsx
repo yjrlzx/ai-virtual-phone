@@ -17,6 +17,7 @@ import { suspendKeepAliveForCall, resumeKeepAliveAfterCall } from "@/lib/use-wei
 import { BilingualTextBlock } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import type { Character } from "@/lib/character-types";
+import { loadCharacters } from "@/lib/character-storage";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
@@ -111,7 +112,16 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const userNameRef = useRef<string>(_initUi?.name || "你");
     const userAvatarRef = useRef<string | null>(_initUi?.avatarUrl || null);
     // 通话头像：自定义覆盖 > 角色头像
-    const callAvatar = resolveCallAvatar(session.contactId, character.avatar);
+    // 通话头像：挂载时从存储重读最新 character.avatar
+    const [liveAvatar, setLiveAvatar] = useState<string | null | undefined>(character.avatar);
+    useEffect(() => {
+        try {
+            const chars = loadCharacters();
+            const fresh = chars.find(c => c.id === session.contactId);
+            if (fresh?.avatar) setLiveAvatar(fresh.avatar);
+        } catch { /* ignore */ }
+    }, [session.contactId]);
+    const callAvatar = resolveCallAvatar(session.contactId, liveAvatar);
 
     useEffect(() => { stateRef.current = callState; }, [callState]);
     useEffect(() => { minimizedRef.current = minimized; }, [minimized]);

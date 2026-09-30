@@ -1055,8 +1055,8 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                   onClick={() => { setAvatarUrlDraft(companionMeta.avatar.startsWith("http") ? companionMeta.avatar : ""); setAvatarEditorOpen(v => !v); }}
                   style={{ padding: 0, border: "none", background: "transparent", cursor: "pointer", lineHeight: 0 }}
                 >
-                  {(companionMeta.avatar || companion?.avatar) ? (
-                    <img src={companionMeta.avatar || companion?.avatar || ""} alt="" style={{
+                  {(resolveCallAvatar(companion?.id || "", companion?.avatar || companionMeta.avatar || "")) ? (
+                    <img src={resolveCallAvatar(companion?.id || "", companion?.avatar || companionMeta.avatar || "") || ""} alt="" style={{
                       width: 64, height: 64, borderRadius: 20, objectFit: "cover",
                       border: `2px solid ${ICE}`,
                     }} />

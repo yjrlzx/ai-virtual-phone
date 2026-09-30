@@ -9568,7 +9568,7 @@ input[type=date]{ padding-right:34px !important; }
                 <!-- 陆知行情绪状态 -->
                 <div class="card" style="margin-bottom:16px;background:linear-gradient(135deg, rgba(107,184,245,.08), rgba(180,220,255,.08));">
                     <div style="display:flex;align-items:center;gap:12px;">
-                        <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#6bb8f5,#a8d8ff);display:flex;align-items:center;justify-content:center;font-size:24px;">🧑‍💻</div>
+                        <div id="luzhiAvatar" style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#6bb8f5,#a8d8ff);display:flex;align-items:center;justify-content:center;font-size:24px;overflow:hidden;">🧑‍💻</div>
                         <div style="flex:1;">
                             <div style="font-size:15px;font-weight:500;">陆知行 <span id="luzhiMood" style="font-size:12px;color:var(--blue-deep);margin-left:8px;">😊</span></div>
                             <div style="font-size:13px;color:var(--ink-sub);margin-top:4px;" id="luzhiStatus">在呢</div>
@@ -11334,6 +11334,30 @@ function llRenderWelcome() {
   llRenderNickname();
   llRenderSignature();
 }
+
+// 宿主（float 主应用）通过 postMessage 传入角色/用户头像，替换 emoji 占位
+var llHostAvatars = { charAvatar: '', userAvatar: '' };
+function llRenderCharAvatar() {
+  var el = document.getElementById('luzhiAvatar');
+  if (!el) return;
+  if (llHostAvatars.charAvatar) {
+    el.innerHTML = '<img src="' + llHostAvatars.charAvatar + '" style="width:100%;height:100%;object-fit:cover;">';
+  }
+}
+window.addEventListener('message', function(e) {
+  var d = e.data;
+  if (!d || d.type !== 'lifeline:avatars') return;
+  if (d.charAvatar) llHostAvatars.charAvatar = d.charAvatar;
+  if (d.userAvatar) {
+    llHostAvatars.userAvatar = d.userAvatar;
+    // 用户头像：如果 lifeline 自己没设过，就用宿主传的
+    if (!(state.profile && state.profile.avatar)) {
+      var wrap = document.getElementById('welcomeAvatarWrap');
+      if (wrap) wrap.innerHTML = '<img src="' + d.userAvatar + '" class="avatar-img">';
+    }
+  }
+  llRenderCharAvatar();
+});
 
 // Export welcome functions to global scope for onclick
 window.llEditAvatar = llEditAvatar;
