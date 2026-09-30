@@ -25,6 +25,9 @@ object MascotAvatar {
     private const val PREFS = "float_shell"
     private const val KEY_URL = "mascot_avatar_url"
 
+    private fun prefs(ctx: Context) =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
     @Volatile var url: String? = null
         private set
 

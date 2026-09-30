@@ -229,7 +229,7 @@ class RealityBridgeFloatingService : Service() {
             return
         }
         FloatingChatWindowService.show(this)
-        handler.postDelayed({ FloatingChatWindowService.injectScreenText(text) }, 800L)
+        handler.postDelayed({ FloatingChatWindowService.injectScreenText(this, text) }, 800L)
     }
 
     /** 从 dumpScreenTree 的节点 JSON 里抽取可见文字/描述，去重后拼接成上下文。 */

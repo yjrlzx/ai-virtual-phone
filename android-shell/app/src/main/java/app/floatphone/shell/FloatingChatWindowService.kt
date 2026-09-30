@@ -62,6 +62,11 @@ class FloatingChatWindowService : Service() {
             val inst = instance
             if (inst != null && inst.isShowing()) inst.closeSelf() else show(context)
         }
+
+        /** 无障碍抓屏得到的文字，塞进悬浮对话窗发给角色。 */
+        fun injectScreenText(context: Context, text: String) {
+            instance?.injectScreenText(text)
+        }
     }
 
     private var windowManager: WindowManager? = null
@@ -134,7 +139,7 @@ class FloatingChatWindowService : Service() {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(0xFF2A3138.toInt())
-                setStroke(dp(1).toInt(), 0x66FFFFFF)
+                setStroke(dp(1f), 0x66FFFFFF.toInt())
             }
             layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f)).apply {
                 rightMargin = dp(8f)
