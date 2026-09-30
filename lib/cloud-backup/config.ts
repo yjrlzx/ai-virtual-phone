@@ -72,8 +72,9 @@ export function saveCloudBackupConfig(config: CloudBackupConfig): void {
   }));
 }
 
-export function isCloudBackupConfigured(config: CloudBackupConfig): boolean {
-  return Boolean(normalizeBackupUrl(config.url) && config.key.trim());
+export function isCloudBackupConfigured(_config: CloudBackupConfig): boolean {
+  // 自托管：备份存储就是这台云服务器自己，不需要用户填任何地址/key。
+  return true;
 }
 
 function clampInterval(value: unknown): number {
