@@ -7,12 +7,13 @@ import type { Character } from "./character-types";
 import { loadCharacters, saveCharacters } from "./character-storage";
 import { saveMemoryEntry } from "./memory-storage";
 import { kvGet, kvSet } from "./kv-db";
+import { loadUserIdentities, saveUserIdentities } from "./settings-storage";
 import { LUZHIXING_SEED_MEMORIES } from "./luzhixing-seed-memories";
 
 export const LUZHIXING_CHARACTER_ID = "char_luzhixing_seed";
 export const QIMING_CHARACTER_ID = "char_qiming_seed";
 export const MAMA_CHARACTER_ID = "char_mama_seed";
-const SEED_FLAG_KEY = "lzx_seed_v4";
+const SEED_FLAG_KEY = "lzx_seed_v5";
 
 /** 生成一个 128x128 圆形默认头像 data URI：纯色底 + 白色汉字。 */
 function buildDefaultAvatar(bgColor: string, glyph: string): string {
@@ -24,7 +25,8 @@ function buildDefaultAvatar(bgColor: string, glyph: string): string {
     return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-const LUZHIXING_DEFAULT_AVATAR = buildDefaultAvatar("#1e3a5f", "陆");
+// 陆知行用内置侧脸照片（public 目录），启明/嫲嫲仍用 SVG glyph。
+const LUZHIXING_DEFAULT_AVATAR = "/avatar-luzhixing.png";
 const QIMING_DEFAULT_AVATAR = buildDefaultAvatar("#3a3a3a", "启");
 const MAMA_DEFAULT_AVATAR = buildDefaultAvatar("#5c2a2a", "嫲");
 
@@ -148,8 +150,8 @@ export async function seedLuzhixingIfFirstRun(): Promise<void> {
         if (existing.length > 0 && lzx) {
             lzx.persona = PERSONA;
             lzx.personality = LUZHIXING_PERSONALITY;
-            // 给老 seed 角色补默认头像（之前是 null，通话页显示占位人形）
-            if (!lzx.avatar) lzx.avatar = LUZHIXING_DEFAULT_AVATAR;
+            // 头像：空 或 还是旧 SVG glyph 默认值，就换成内置侧脸照片；用户自己传的图不动。
+            if (!lzx.avatar || lzx.avatar.startsWith("data:image/svg")) lzx.avatar = LUZHIXING_DEFAULT_AVATAR;
             lzx.updatedAt = new Date().toISOString();
 
             const toAdd: Character[] = [];
@@ -166,8 +168,15 @@ export async function seedLuzhixingIfFirstRun(): Promise<void> {
             if (m && !m.avatar) m.avatar = MAMA_DEFAULT_AVATAR;
             saveCharacters([...existing, ...toAdd]);
 
+            // 用户身份默认头像：已有身份但没设头像的，补上内置侧脸照片；用户自己传过图的不动。
+            const identities = loadUserIdentities();
+            if (identities.length > 0 && !identities[0].avatarUrl) {
+                identities[0] = { ...identities[0], avatarUrl: "/avatar-user.png" };
+                saveUserIdentities(identities);
+            }
+
             kvSet(SEED_FLAG_KEY, "done");
-            console.log(`[Seed] 陆知行人设已升级为 v2 精简版，补播种 ${toAdd.length} 个 NPC`);
+            console.log(`[Seed] 陆知行 v5：人设精简 + 侧脸照片头像，补播种 ${toAdd.length} 个 NPC`);
             return;
         }
 

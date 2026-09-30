@@ -92,6 +92,7 @@ export function UserIdentitySettings() {
             age: "",
             occupation: "",
             customSettings: "",
+            avatarUrl: "/avatar-user.png",
         };
         const next = [newIdentity, ...identities];
         setIdentities(next);
