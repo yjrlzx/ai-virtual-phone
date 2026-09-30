@@ -32,6 +32,7 @@ import { getAndroidShell } from "./huawei-shell/storage";
 import { loadCharacters } from "./character-storage";
 import { loadChatSessions } from "./chat-storage";
 import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei-shell/peek-store";
+import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell } from "./huawei-shell/storage";
 
 // ── 通用类型 ────────────────────────────────────────────
 
@@ -1093,11 +1094,39 @@ export const MASCOT_COMPANION_DAYS_TOOL: MascotSubTool = {
     parameterSchema: { type: "object", properties: {} },
 };
 
+export const MASCOT_TARGET_APP_TOOL: MascotSubTool = {
+    name: "登记目标App",
+    description: "把一个 App 登记为目标 App（守护列表）。name 必填，package 可选。适用于用户说'把微信加到目标里'。",
+    parameterSchema: {
+        type: "object",
+        properties: {
+            name: { type: "string", description: "App 名字，如 微信" },
+            package: { type: "string", description: "可选：包名，如 com.tencent.mm" },
+        },
+        required: ["name"],
+    },
+};
+
+export const MASCOT_APP_LOCK_TOOL: MascotSubTool = {
+    name: "锁定或解锁App",
+    description: "锁定或解锁一个 App（应用门禁）。action 取 lock 或 unlock，package 必填（包名）。适用于用户说'把抖音锁了'。",
+    parameterSchema: {
+        type: "object",
+        properties: {
+            action: { type: "string", enum: ["lock", "unlock"], description: "锁定或解锁" },
+            package: { type: "string", description: "包名，如 com.ss.android.ugc.aweme" },
+        },
+        required: ["action", "package"],
+    },
+};
+
 const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
     MASCOT_NAVIGATE_TOOL,
     MASCOT_CALL_TOOL,
     MASCOT_SCREEN_BREAK_TOOL,
     MASCOT_COMPANION_DAYS_TOOL,
+    MASCOT_TARGET_APP_TOOL,
+    MASCOT_APP_LOCK_TOOL,
 ];
 
 // ── 文本协议下的工具列表渲染 ─────────────────────────────
@@ -1121,6 +1150,8 @@ export function buildMascotToolsListPrompt(): string {
     lines.push("  参数：headline (可选) — 来电时想说的一句话。");
     lines.push("【独立工具】护眼休息 — 触发 5 分钟屏幕休息，让用户歇眼睛。");
     lines.push("【独立工具】读取陪伴天数 — 读取你和用户在一起的天数。");
+    lines.push("【独立工具】登记目标App — 把 App 加到守护目标列表。参数：name(必填), package(可选)。");
+    lines.push("【独立工具】锁定或解锁App — 应用门禁。参数：action(lock/unlock), package(必填)。");
     lines.push("");
     lines.push("===== 调用规则 =====");
     lines.push("· 展开套件：使用 [获取指令:套件名] 格式，例如 [获取指令:CSS样式套件]");
@@ -1200,6 +1231,8 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "发起通话": "mascot_initiate_call",
     "护眼休息": "mascot_screen_break",
     "读取陪伴天数": "mascot_read_companion_days",
+    "登记目标App": "mascot_target_app",
+    "锁定或解锁App": "mascot_app_lock",
     "读取CSS": "mascot_read_css",
     "覆写CSS": "mascot_write_css",
     "清除CSS": "mascot_clear_css",
@@ -1453,6 +1486,8 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "发起通话": return handleInitiateCall(call.args);
             case "护眼休息": return handleScreenBreak();
             case "读取陪伴天数": return handleReadCompanionDays();
+            case "登记目标App": return handleTargetApp(call.args);
+            case "锁定或解锁App": return handleAppLock(call.args);
 
             default:
                 return { name: call.name, success: false, error: `未知工具：${call.name}` };
@@ -2991,6 +3026,50 @@ function handleReadCompanionDays(): ToolResult {
         return { name: "读取陪伴天数", success: true, data: `我们在一起的第 ${days} 天（从 ${meta.startDate} 开始）` };
     } catch {
         return { name: "读取陪伴天数", success: false, error: "读取陪伴天数失败" };
+    }
+}
+
+/** 登记目标 App：加到 open_app 自定义动作列表。 */
+function handleTargetApp(args: Record<string, unknown>): ToolResult {
+    try {
+        const name = typeof args.name === "string" ? args.name.trim() : "";
+        const pkg = typeof args.package === "string" ? args.package.trim() : "";
+        if (!name) return { name: "登记目标App", success: false, error: "需要 App 名字（name）" };
+        const actions = loadHuaweiCustomActions();
+        actions.push({
+            id: `action_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+            name: name.slice(0, 30),
+            type: "open_app",
+            description: "",
+            packageName: pkg || undefined,
+            openApp: pkg || undefined,
+            enabled: true,
+            createdAt: Date.now(),
+        });
+        saveHuaweiCustomActions(actions);
+        return { name: "登记目标App", success: true, data: `已把 ${name}${pkg ? `（${pkg}）` : ""} 加到守护目标列表` };
+    } catch {
+        return { name: "登记目标App", success: false, error: "登记目标 App 失败" };
+    }
+}
+
+/** 锁定或解锁 App：改门禁列表并推到壳。 */
+function handleAppLock(args: Record<string, unknown>): ToolResult {
+    try {
+        const action = args.action === "unlock" ? "unlock" : "lock";
+        const pkg = typeof args.package === "string" ? args.package.trim() : "";
+        if (!pkg) return { name: "锁定或解锁App", success: false, error: "需要包名（package）" };
+        let list = readLockedPackagesFromShell();
+        if (action === "lock") {
+            if (!list.includes(pkg)) list = [...list, pkg];
+        } else {
+            list = list.filter(p => p !== pkg);
+        }
+        const r = pushLockedPackagesToShell(list);
+        if (!r.ok) return { name: "锁定或解锁App", success: false, error: r.error || "推到壳失败" };
+        return { name: "锁定或解锁App", success: true, data: action === "lock" ? `已锁定 ${pkg}` : `已解锁 ${pkg}` };
+    } catch {
+        return { name: "锁定或解锁App", success: false, error: "门禁操作失败" };
     }
 }
 

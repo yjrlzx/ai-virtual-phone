@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   getAndroidShell,
   isHuaweiShellAvailable,
@@ -9,6 +9,8 @@ import {
   loadHuaweiTriggerRules,
   saveHuaweiTriggerRules,
   loadHuaweiShellSettings,
+  loadHuaweiCustomActions,
+  saveHuaweiCustomActions,
 } from "@/lib/huawei-shell/storage";
 import type { HuaweiFootprintEntry, HuaweiTriggerRule } from "@/lib/huawei-shell/types";
 import { loadCharacters } from "@/lib/character-storage";
@@ -274,10 +276,14 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const [callOverlayOpen, setCallOverlayOpen] = useState(false);
 
   /* 守护 tab：可展开的配置面板 */
-  const [openPanel, setOpenPanel] = useState<"none" | "rules" | "focus" | "period">("none");
+  const [openPanel, setOpenPanel] = useState<"none" | "rules" | "focus" | "period" | "target" | "lock">("none");
   /* 主动提醒新规则草稿 */
   const [newRuleName, setNewRuleName] = useState("");
   const [newRuleTime, setNewRuleTime] = useState("08:00");
+  /* 目标 App / 门禁草稿 */
+  const [targetNameDraft, setTargetNameDraft] = useState("");
+  const [targetPkgDraft, setTargetPkgDraft] = useState("");
+  const [lockPkgDraft, setLockPkgDraft] = useState("");
   /* 专注时长选择 */
   const [focusChoice, setFocusChoice] = useState(() => readFocusDurationMin());
   /* 经期编辑草稿 */
@@ -334,7 +340,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     const shellSettings = loadHuaweiShellSettings();
     const targetApps = shellSettings.customActions
       .filter(a => a.type === "open_app")
-      .map(a => ({ name: a.name, pkg: a.packageName || a.openApp || "" }));
+      .map(a => ({ id: a.id, name: a.name, pkg: a.packageName || a.openApp || "" }));
 
     const customLines = readCustomWindowLines();
     const callSettings = readCallSettings();
@@ -491,6 +497,53 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     const r = pushLockedPackagesToShell(list);
     onNotice?.(r.ok ? `门禁列表已同步（${list.length} 个 App）` : (r.error || "门禁同步失败"));
   }, [onNotice]);
+
+  /* ---- 目标 App（open_app 自定义动作）增删 ---- */
+  const addTargetApp = useCallback(() => {
+    const name = targetNameDraft.trim();
+    const pkg = targetPkgDraft.trim();
+    if (!name) { onNotice?.("填个 App 名字"); return; }
+    const actions = loadHuaweiCustomActions();
+    actions.push({
+      id: `action_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      name: name.slice(0, 30),
+      type: "open_app",
+      description: "",
+      packageName: pkg || undefined,
+      openApp: pkg || undefined,
+      enabled: true,
+      createdAt: Date.now(),
+    });
+    saveHuaweiCustomActions(actions);
+    setTargetNameDraft(""); setTargetPkgDraft("");
+    bump();
+    onNotice?.(`已登记目标 App：${name}`);
+  }, [onNotice, targetNameDraft, targetPkgDraft, bump]);
+
+  const removeTargetApp = useCallback((id: string) => {
+    saveHuaweiCustomActions(loadHuaweiCustomActions().filter(a => a.id !== id));
+    bump();
+    onNotice?.("已移除目标 App");
+  }, [onNotice, bump]);
+
+  /* ---- 门禁增删：本地 state 改完推到壳 ---- */
+  const addLockedPkg = useCallback(() => {
+    const pkg = lockPkgDraft.trim();
+    if (!pkg) { onNotice?.("填个包名，如 com.tencent.mm"); return; }
+    if (locked.includes(pkg)) { onNotice?.("这个包已经在门禁里"); return; }
+    const next = [...locked, pkg];
+    setLocked(next);
+    const r = pushLockedPackagesToShell(next);
+    setLockPkgDraft("");
+    onNotice?.(r.ok ? `已锁定 ${pkg}` : (r.error || "已加入本地，但推到壳失败"));
+  }, [onNotice, locked, lockPkgDraft]);
+
+  const removeLockedPkg = useCallback((pkg: string) => {
+    const next = locked.filter(p => p !== pkg);
+    setLocked(next);
+    const r = pushLockedPackagesToShell(next);
+    onNotice?.(r.ok ? `已解锁 ${pkg}` : (r.error || "已从本地移除，但推到壳失败"));
+  }, [onNotice, locked]);
 
   /* ---- 主动提醒（time 规则）增删改：直接落到华为壳 triggerRules ---- */
   const addTimeRule = useCallback(() => {
@@ -1203,11 +1256,12 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
 
             <div style={{ ...LABEL, margin: "6px 0" }}>安心规则</div>
 
-            {/* 目标 App（只读） */}
+            {/* 目标 App（可增删） */}
             <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" onClick={() => setOpenPanel(p => p === "target" ? "none" : "target")}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
                 <span style={{ fontSize: 18 }}>🎯</span>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, textAlign: "left" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>目标 App 设置</div>
                   <div style={{ fontSize: 11.5, color: INK_SOFT, marginTop: 3, lineHeight: 1.5 }}>
                     {targetApps.length === 0
@@ -1215,28 +1269,60 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                       : targetApps.map(t => `${t.name}（${t.pkg || "未填包名"}）`).join("、")}
                   </div>
                 </div>
-              </div>
+                <span style={{ color: INK_FAINT, fontSize: 12 }}>{openPanel === "target" ? "▲" : "▼"}</span>
+              </button>
+              {openPanel === "target" && (
+                <div style={{ marginTop: 10 }}>
+                  {targetApps.map(t => (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12.5, color: INK }}>
+                      <span style={{ flex: 1, minWidth: 0 }}>📌 {t.name}{t.pkg ? `（${t.pkg}）` : ""}</span>
+                      <button type="button" onClick={() => removeTargetApp(t.id)}
+                        style={{ border: "none", background: "rgba(255,120,120,.15)", color: "#c0392b", borderRadius: 8, padding: "4px 10px", fontSize: 11, minHeight: 32, cursor: "pointer" }}>删除</button>
+                    </div>
+                  ))}
+                  <input type="text" value={targetNameDraft} onChange={e => setTargetNameDraft(e.target.value)}
+                    placeholder="App 名字，如 微信" style={{ ...INPUT, marginTop: 8 }} />
+                  <input type="text" value={targetPkgDraft} onChange={e => setTargetPkgDraft(e.target.value)}
+                    placeholder="包名，如 com.tencent.mm（可选）" style={{ ...INPUT, marginTop: 6 }} />
+                  <button type="button" style={{ ...ACTION_BTN, marginTop: 8, width: "100%", minHeight: 40 }} onClick={addTargetApp}>
+                    + 添加目标 App
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* 应用门禁 */}
+            {/* 应用门禁（可增删） */}
             <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" onClick={() => setOpenPanel(p => p === "lock" ? "none" : "lock")}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
                 <span style={{ fontSize: 18 }}>🛡️</span>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, textAlign: "left" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>应用门禁</div>
-                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>需要时轻轻守住</div>
+                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>需要时轻轻守住 · {locked.length} 个已锁</div>
                 </div>
-              </div>
-              <div style={{ marginTop: 10 }}>
-                {locked.length === 0 ? (
-                  <div style={{ fontSize: 12, color: INK_FAINT }}>还没有锁定的 App。</div>
-                ) : locked.map(pkg => (
-                  <div key={pkg} style={{ fontSize: 12, color: INK, padding: "3px 0" }}>🔒 {pkg}</div>
-                ))}
-              </div>
-              <button type="button" style={{ ...ACTION_BTN_GHOST, marginTop: 10 }} onClick={syncLocked}>
-                同步门禁列表到壳
+                <span style={{ color: INK_FAINT, fontSize: 12 }}>{openPanel === "lock" ? "▲" : "▼"}</span>
               </button>
+              {openPanel === "lock" && (
+                <div style={{ marginTop: 10 }}>
+                  {locked.length === 0 ? (
+                    <div style={{ fontSize: 12, color: INK_FAINT }}>还没有锁定的 App。</div>
+                  ) : locked.map(pkg => (
+                    <div key={pkg} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 12.5, color: INK }}>
+                      <span style={{ flex: 1, minWidth: 0 }}>🔒 {pkg}</span>
+                      <button type="button" onClick={() => removeLockedPkg(pkg)}
+                        style={{ border: "none", background: "rgba(255,120,120,.15)", color: "#c0392b", borderRadius: 8, padding: "4px 10px", fontSize: 11, minHeight: 32, cursor: "pointer" }}>解锁</button>
+                    </div>
+                  ))}
+                  <input type="text" value={lockPkgDraft} onChange={e => setLockPkgDraft(e.target.value)}
+                    placeholder="包名，如 com.ss.android.ugc.aweme" style={{ ...INPUT, marginTop: 8 }} />
+                  <button type="button" style={{ ...ACTION_BTN, marginTop: 8, width: "100%", minHeight: 40 }} onClick={addLockedPkg}>
+                    + 锁定这个 App
+                  </button>
+                  <button type="button" style={{ ...ACTION_BTN_GHOST, marginTop: 6, width: "100%" }} onClick={syncLocked}>
+                    从壳回读并同步
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* 屏幕休息 */}
