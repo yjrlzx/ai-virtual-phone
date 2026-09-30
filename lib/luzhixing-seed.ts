@@ -13,7 +13,7 @@ import { LUZHIXING_SEED_MEMORIES } from "./luzhixing-seed-memories";
 export const LUZHIXING_CHARACTER_ID = "char_luzhixing_seed";
 export const QIMING_CHARACTER_ID = "char_qiming_seed";
 export const MAMA_CHARACTER_ID = "char_mama_seed";
-const SEED_FLAG_KEY = "lzx_seed_v5";
+const SEED_FLAG_KEY = "lzx_seed_v6";
 
 /** 生成一个 128x128 圆形默认头像 data URI：纯色底 + 白色汉字。 */
 function buildDefaultAvatar(bgColor: string, glyph: string): string {
