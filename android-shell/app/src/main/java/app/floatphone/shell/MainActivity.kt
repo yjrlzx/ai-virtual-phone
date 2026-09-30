@@ -141,6 +141,11 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { /* 授权结果由下一次 getLocation 重新读取 */ }
 
+    /** 麦克风授权：录制唤醒词模板 / 开启唤醒服务时缺权限则弹运行时授权，授权后用户再点一次即可 */
+    private val micPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 授权结果由下一次 enrollWakeWord / startWakeWord 重新读取 */ }
+
     // 网页侧 getUserMedia（通话按住说话、语音条录音、视频通话摄像头）触发的
     // WebView 权限请求：先要系统运行时权限，拿到后再转授给页面。
     // 不实现 onPermissionRequest 时 WebView 会静默拒绝，页面永远拿不到麦克风。
@@ -449,6 +454,53 @@ class MainActivity : AppCompatActivity() {
                 .toString()
         }.getOrElse { errJson(it.message) }
 
+        /** 系统状态快照（Operit 式一次性打包）：电量/是否充电/网络类型/经纬度/前台应用。
+         *  静默读取、不弹权限框；拿不到的字段直接缺省，由网页层按现实桥开关过滤后注入 prompt。 */
+        @JavascriptInterface
+        fun getSystemContextSnapshot(): String = runCatching {
+            val bm = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
+            val batteryLevel = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val charging = runCatching {
+                val sticky = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+                val status = sticky?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val plugged = sticky?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+                status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                        status == android.os.BatteryManager.BATTERY_STATUS_FULL || plugged > 0
+            }.getOrDefault(false)
+
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+            val networkType = when {
+                cm.activeNetwork == null -> "none"
+                caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true -> "wifi"
+                caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "mobile"
+                else -> "other"
+            }
+
+            val obj = org.json.JSONObject()
+                .put("ok", true)
+                .put("batteryLevel", batteryLevel)
+                .put("isCharging", charging)
+                .put("networkType", networkType)
+
+            // 定位：只读最后已知位置，不弹窗；没权限或没定位结果就不带 location 字段
+            val hasFine = ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (hasFine || hasCoarse) {
+                runCatching {
+                    val lm = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
+                    val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                        ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                    if (loc != null) {
+                        obj.put("location", org.json.JSONObject().put("lat", loc.latitude).put("lng", loc.longitude))
+                    }
+                }
+            }
+            val fg = RealityBridgeAccessibility.current()?.foregroundApp().orEmpty()
+            if (fg.isNotEmpty()) obj.put("foregroundApp", fg)
+            obj.toString()
+        }.getOrElse { errJson(it.message) }
+
         /** 开关悬浮球（悬浮球双击速聊）。 */
         @JavascriptInterface
         fun setFloating(enabled: Boolean) {
@@ -707,6 +759,34 @@ class MainActivity : AppCompatActivity() {
                 .toString()
         }.getOrElse { errJson(it.message) }
 
+        /** 读取系统控制所需权限的实时状态（供网页决定哪些项可操作、哪些要引导开权限）。 */
+        @JavascriptInterface
+        fun getSystemControlStatus(): String = runCatching {
+            val btConnect = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                ContextCompat.checkSelfPermission(
+                    this@MainActivity, android.Manifest.permission.BLUETOOTH_CONNECT,
+                ) == PackageManager.PERMISSION_GRANTED
+            } else true
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("writeSettings", Settings.System.canWrite(this@MainActivity))
+                .put("shizuku", ShizukuAuthorizer.hasPermission())
+                .put("bluetoothConnect", btConnect)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 请求蓝牙运行时权限（API31+ BLUETOOTH_CONNECT，弹系统授权框）。 */
+        @JavascriptInterface
+        fun requestBluetoothPermission(): String = runCatching {
+            if (android.os.Build.VERSION.SDK_INT < 31) return """{"ok":true,"already":true}"""
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this@MainActivity,
+                arrayOf(android.Manifest.permission.BLUETOOTH_CONNECT),
+                1042,
+            )
+            """{"ok":true,"message":"已弹出蓝牙授权框"}"""
+        }.getOrElse { errJson(it.message) }
+
         /** 读取剪贴板文本（Android 13+ 需应用在前台时读取）。 */
         @JavascriptInterface
         fun readClipboard(): String = runCatching {
@@ -874,7 +954,8 @@ class MainActivity : AppCompatActivity() {
                 this@MainActivity, android.Manifest.permission.RECORD_AUDIO,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             if (!granted) {
-                return """{"ok":false,"error":"缺少麦克风权限，请先在系统设置中授权"}"""
+                runOnUiThread { runCatching { micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) } }
+                return """{"ok":false,"error":"缺少麦克风权限，已弹出授权，授权后再开启一次"}"""
             }
             WakeWordService.start(this@MainActivity, configJson)
             return """{"ok":true,"started":true}"""
@@ -893,7 +974,10 @@ class MainActivity : AppCompatActivity() {
             val granted = androidx.core.content.ContextCompat.checkSelfPermission(
                 this@MainActivity, android.Manifest.permission.RECORD_AUDIO,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (!granted) return """{"ok":false,"error":"缺少麦克风权限"}"""
+            if (!granted) {
+                runOnUiThread { runCatching { micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) } }
+                return """{"ok":false,"error":"缺少麦克风权限，已弹出授权，授权后请再录一次"}"""
+            }
             val sampleRate = 16000
             val seconds = 2
             val minBuf = android.media.AudioRecord.getMinBufferSize(
@@ -1076,6 +1160,9 @@ class MainActivity : AppCompatActivity() {
                     else android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))
                 "location" -> android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
                 "microphone" -> android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))
+                "bluetooth" -> android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)
+                "wireless" -> android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS)
+                "app_details" -> android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))
                 else -> android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
             }
             startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -1190,19 +1277,25 @@ class MainActivity : AppCompatActivity() {
                 .toString()
         }
 
-        /** 经 Shizuku 开关飞行模式（写 global 设置 + 发系统广播）。 */
+        /** 经 Shizuku 开关飞行模式（写 global 设置 + 发系统广播）。未授权时如实返回错误，不假装成功。 */
         @JavascriptInterface
         fun setAirplaneMode(on: Boolean): String {
-            if (!ShizukuAuthorizer.hasPermission()) return """{"ok":false,"error":"Shizuku 未授权"}"""
+            if (!ShizukuAuthorizer.hasPermission()) {
+                return """{"ok":false,"error":"系统限制：普通 App 无法直接切换飞行模式，需要先授权 Shizuku"}"""
+            }
             val v = if (on) 1 else 0
             val state = if (on) "true" else "false"
             val r1 = ShizukuAuthorizer.executeShell("settings put global airplane_mode_on $v")
-            val r2 = ShizukuAuthorizer.executeShell("am broadcast -a android.intent.action.AIRPLANE_MODE --ez state $state")
+            if (!r1.success) {
+                return org.json.JSONObject()
+                    .put("ok", false)
+                    .put("error", "写入飞行模式设置失败：${r1.stderr.ifBlank { r1.stdout }}")
+                    .toString()
+            }
+            ShizukuAuthorizer.executeShell("am broadcast -a android.intent.action.AIRPLANE_MODE --ez state $state")
             return org.json.JSONObject()
                 .put("ok", true)
                 .put("on", on)
-                .put("settings", r1.stdout)
-                .put("broadcast", r2.stdout)
                 .toString()
         }
 
@@ -1265,9 +1358,15 @@ class MainActivity : AppCompatActivity() {
                 .toString()
         }.getOrElse { errJson(it.message) }
 
-        /** 开关蓝牙（走 Shizuku svc，无 Shizuku 退回 adapter.enable/disable）。 */
+        /** 开关蓝牙（优先 Shizuku svc；API31+ 先校验 BLUETOOTH_CONNECT，无权限如实返回错误）。 */
         @JavascriptInterface
         fun setBluetoothEnabled(on: Boolean): String = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                val granted = ContextCompat.checkSelfPermission(
+                    this@MainActivity, android.Manifest.permission.BLUETOOTH_CONNECT,
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!granted) return@runCatching """{"ok":false,"error":"需要蓝牙权限，请先授权 BLUETOOTH_CONNECT"}"""
+            }
             val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
                 ?: return@runCatching """{"ok":false,"error":"本机无蓝牙模块"}"""
             if (ShizukuAuthorizer.hasPermission()) {
@@ -1276,6 +1375,8 @@ class MainActivity : AppCompatActivity() {
                 @Suppress("DEPRECATION")
                 if (on) adapter.enable() else adapter.disable()
             }
+            // 回读真实状态，不假装成功
+            Thread.sleep(400)
             org.json.JSONObject()
                 .put("ok", true)
                 .put("on", on)

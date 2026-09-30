@@ -98,7 +98,7 @@ function persistState() {
 }
 
 function withTimestamp(msg: MascotMsg): MascotMsg {
-    return msg.createdAt ? msg : { ...msg, createdAt: new Date().toISOString() };
+    return { ...msg, text: msg.text ?? "", createdAt: msg.createdAt ?? new Date().toISOString() };
 }
 
 function normalizeMessages(nextMessages: MascotMsg[]): MascotMsg[] {
@@ -129,7 +129,7 @@ export function hasMascotNativeToolReplayMetadata(msg: MascotMsg): boolean {
 
 function hasVisibleMascotPayload(msg: MascotMsg): boolean {
     const display = (msg.displayText || "").trim();
-    return !!msg.text.trim()
+    return !!(msg.text || "").trim()
         || (!!display && display !== "（调用工具中...）" && display !== "（无内容）")
         || !!msg.images?.length;
 }

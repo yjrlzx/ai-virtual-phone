@@ -26,9 +26,7 @@ import { triggerImmediatePost } from "@/lib/moments-engine";
 import type { Character } from "@/lib/character-types";
 import { requestNotificationPermission } from "@/lib/browser-notification";
 import { disableOfflinePush, enableOfflinePush, getOfflinePushState, isShellEnvironment, loadPushQuietHours, savePushQuietHours, sendTestOfflinePush, type OfflinePushState } from "@/lib/push-client";
-import { isPersonalPushCloudActive, setPersonalPushCloudScheduled } from "@/lib/personal-push-cloud";
-import { loadPushCloudScheduled, savePushCloudScheduled } from "@/lib/cloud-deploy-status";
-import { armIdleReconnectBailout, armTimedWakeBailout, cancelBailoutKey, cancelBailoutPrefix } from "@/lib/push-bailout-client";
+import { cancelBailoutKey, cancelBailoutPrefix } from "@/lib/push-bailout-client";
 import { loadTimedWakeSchedules, makeTimedWakeId, removeTimedWakeSchedule, saveTimedWakeSchedule, type TimedWakeSchedule } from "@/lib/timed-wake-storage";
 import { IDLE_RECONNECT_MAX_CONSECUTIVE, loadIdleReconnectRules, removeIdleReconnectRule, upsertIdleReconnectRule, type IdleReconnectRule } from "@/lib/idle-reconnect-storage";
 import { addChatContact, createOrGetSession } from "@/lib/chat-storage";
@@ -1175,26 +1173,10 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
     const [isShellApp, setIsShellApp] = useState(false);
     const [offlinePushBusy, setOfflinePushBusy] = useState(false);
     const [offlinePushHint, setOfflinePushHint] = useState<string | null>(null);
-    const [personalCloudActive, setPersonalCloudActive] = useState(false);
-    const [pushCloudScheduled, setPushCloudScheduled] = useState(() => loadPushCloudScheduled());
-    const [pushScheduleBusy, setPushScheduleBusy] = useState(false);
-    const [pushScheduleHint, setPushScheduleHint] = useState("");
+    const [cloudReachable, setCloudReachable] = useState<boolean | null>(null);
+    const [serverUrl, setServerUrl] = useState("");
+    const [onlineSessions, setOnlineSessions] = useState(0);
 
-    const handleTogglePushCloudSchedule = async (enabled: boolean) => {
-        if (pushScheduleBusy) return;
-        setPushScheduleBusy(true);
-        setPushScheduleHint("");
-        try {
-            await setPersonalPushCloudScheduled(enabled);
-            savePushCloudScheduled(enabled);
-            setPushCloudScheduled(enabled);
-            setPushScheduleHint(enabled ? "云端任务已开启。" : "云端任务已停用，零配额消耗；重新打开即可恢复。");
-        } catch (error) {
-            setPushScheduleHint(error instanceof Error ? error.message : String(error));
-        } finally {
-            setPushScheduleBusy(false);
-        }
-    };
     const storedQuiet = loadPushQuietHours().match(/^(\d{1,2}):(\d{2})\s*[-~—]\s*(\d{1,2}):(\d{2})$/);
     const [quietEnabled, setQuietEnabled] = useState(Boolean(storedQuiet));
     const [quietStart, setQuietStart] = useState(storedQuiet ? `${storedQuiet[1].padStart(2, "0")}:${storedQuiet[2]}` : "23:00");
@@ -1217,9 +1199,28 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
 
     useEffect(() => {
         setIsShellApp(isShellEnvironment());
-        setPersonalCloudActive(isPersonalPushCloudActive());
         void getOfflinePushState().then(setOfflinePushState);
         refreshTimedSchedules();
+        let cancelled = false;
+        const pollCloud = async () => {
+            try {
+                const res = await fetch("/api/cloud/status", { cache: "no-store" });
+                const data = (await res.json()) as { ok?: boolean; serverUrl?: string; push?: { onlineSessions?: number } };
+                if (cancelled) return;
+                if (res.ok && data.ok) {
+                    setCloudReachable(true);
+                    setServerUrl(data.serverUrl || "");
+                    setOnlineSessions(data.push?.onlineSessions || 0);
+                } else {
+                    setCloudReachable(false);
+                }
+            } catch {
+                if (!cancelled) setCloudReachable(false);
+            }
+        };
+        void pollCloud();
+        const timer = window.setInterval(pollCloud, 10_000);
+        return () => { cancelled = true; window.clearInterval(timer); };
     }, []);
 
     const handleOfflinePushToggle = async (enabled: boolean) => {
@@ -1286,12 +1287,10 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
         };
         upsertIdleReconnectRule(rule);
         setTmBusy(true);
-        setTmHint("已保存本地规则，正在预约离线推送...");
-        const armResult = await armIdleReconnectBailout(rule);
+        setTmHint("已保存本地规则。");
+        // 自托管版没有沉默重连的服务端巡检，规则只在本 App 开着时生效。
         setTmBusy(false);
-        setTmHint(armResult.ok
-            ? `已创建：超过 ${amount}${UNIT_LABEL[tmIdleUnit]}没消息时，TA 会主动来找你；服务端离线推送已预约。`
-            : `已创建本地规则，但离线推送未预约成功：${armResult.reason}`);
+        setTmHint(`已创建：超过 ${amount}${UNIT_LABEL[tmIdleUnit]}没消息时，TA 会主动来找你（本 App 前台生效）。`);
         refreshTimedSchedules();
     };
 
@@ -1324,12 +1323,29 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
         };
         saveTimedWakeSchedule(schedule);
         setTmBusy(true);
-        setTmHint("已保存本地定时，正在预约离线推送...");
-        const armResult = await armTimedWakeBailout(schedule);
+        setTmHint("已保存本地定时，正在预约服务端推送...");
+        const characterName = loadCharacters().find(c => c.id === tmCharId)?.name || "小手机";
+        let scheduled = false;
+        try {
+            const res = await fetch("/api/push/schedule", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    runAt: schedule.fireAt,
+                    type: "message",
+                    title: characterName,
+                    body: "TA 主动来找你",
+                    sessionId: session.id,
+                }),
+            });
+            scheduled = res.ok;
+        } catch {
+            scheduled = false;
+        }
         setTmBusy(false);
-        setTmHint(armResult.ok
-            ? `已创建：${amount}${UNIT_LABEL[tmUnit]}后 TA 会主动来找你；服务端离线推送已预约。`
-            : `已创建本地定时，但离线推送未预约成功：${armResult.reason}`);
+        setTmHint(scheduled
+            ? `已创建：${amount}${UNIT_LABEL[tmUnit]}后 TA 会主动来找你，服务端到点推送。`
+            : `已创建本地定时，但服务端预约失败（${serverUrl ? "请检查云服务器连接" : "云服务器不可达"}）。`);
         refreshTimedSchedules();
     };
 
@@ -1362,43 +1378,20 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
                                 <div className="flex items-start gap-3">
                                     <ProfileSettingsIcon icon={CloudUpload} color={BINDING_ACCENTS.api} />
                                     <div className="menu-label-group">
-                                        <span className="menu-label">部署到我的 Supabase</span>
-                                        <span className="menu-desc">离线预约、生成和回传使用你自己的 Supabase</span>
+                                        <span className="menu-label">部署到我的云服务器</span>
+                                        <span className="menu-desc !mt-0 break-all">{serverUrl || "连接中…"}</span>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-3">
-                                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${personalCloudActive ? "bg-green-500" : "bg-black/20"}`} />
-                                    <span className="menu-label flex-1">{personalCloudActive ? "已部署" : "未部署"}</span>
-                                    <button
-                                        type="button"
-                                        className="ui-btn ui-btn-outline shrink-0 whitespace-nowrap !gap-1.5 !px-3 !text-[12px]"
-                                        onClick={() => {
-                                            sessionStorage.setItem("mascot-settings-mode", "cloud");
-                                            window.dispatchEvent(new CustomEvent("mascot-navigate", { detail: { app: "settings", mode: "cloud" } }));
-                                        }}
-                                    >
-                                        <CloudUpload size={14} /> {personalCloudActive ? "重新部署" : "去部署"}
-                                    </button>
+                                <div className="flex items-center gap-2">
+                                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${cloudReachable === false ? "bg-red-500" : "bg-green-500"}`} />
+                                    <span className="menu-label flex-1">
+                                        {cloudReachable === false
+                                            ? "云服务器不可达"
+                                            : onlineSessions > 0
+                                                ? `已连接 · ${onlineSessions} 个在线设备`
+                                                : "在线但暂无设备连接"}
+                                    </span>
                                 </div>
-                                {personalCloudActive && (
-                                    <div className="flex items-center gap-3">
-                                        <div className="flex-1 flex flex-col">
-                                            <span className="menu-label">云端任务</span>
-                                            <span className="menu-desc !mt-0">开着才会派发离线预约；关掉零配额消耗</span>
-                                        </div>
-                                        {pushScheduleBusy
-                                            ? <Loader2 size={18} className="animate-spin shrink-0" />
-                                            : (
-                                                <Toggle
-                                                    checked={pushCloudScheduled}
-                                                    onChange={v => void handleTogglePushCloudSchedule(v)}
-                                                />
-                                            )}
-                                    </div>
-                                )}
-                                {pushScheduleHint && (
-                                    <span className="menu-desc !mt-0">{pushScheduleHint}</span>
-                                )}
                             </div>
                         </div>
                         <p className="menu-group-desc mx-2">系统推送</p>
@@ -1456,8 +1449,8 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
                         </div>
                         <p className="menu-group-desc mx-2">
                             {offlinePushHint || (isShellApp
-                                ? "App 版自带推送通道，已自动接管离线推送；保持系统通知权限开启即可，可点「测试」验证。"
-                                : offlinePushState === "unsupported" ? "当前环境不支持。iOS 请先添加到主屏幕，从主屏幕打开后再开启。" : "")}
+                                ? "App 版自带 SSE 长连接，已自动接管离线推送；保持系统通知权限开启即可，可点「测试」验证。"
+                                : offlinePushState === "unsupported" ? "浏览器环境不支持系统级推送，请安装安卓壳 App 接收离线消息。" : "")}
                         </p>
                     </>
                 )}

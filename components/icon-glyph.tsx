@@ -14,7 +14,6 @@ import {
   mdiTeddyBear,
   mdiCogOutline,
   mdiMessageProcessing,
-  mdiBookOpenPageVariant,
   mdiMusic,
   mdiBookOpenVariant,
   mdiFeather,
@@ -51,7 +50,6 @@ type IconGlyphProps = {
 const MDI_PATHS: Record<IconId, string> = {
   settings: mdiCogOutline,
   chat: mdiMessageProcessing,
-  diary: mdiBookOpenPageVariant,
   music: mdiMusic,
   reading: mdiBookOpenVariant,
   cocreate: mdiFeather,

@@ -4,6 +4,8 @@
  *  与 iOS 现实桥并行，走同一套本地 kv 存储，不依赖 Supabase / iPhone 快捷指令。 */
 
 import { kvGet, kvSet, registerKvMigration } from "../kv-db";
+import { loadVoiceConfigs, saveVoiceConfigs, loadBindingConfig, saveBindingConfig, getCharacterBinding, setCharacterBinding } from "../settings-storage";
+import type { VoiceApiConfig } from "../settings-types";
 import type { HuaweiCustomAction, HuaweiHealthSnapshot, HuaweiOcrEngine, HuaweiPlace, HuaweiShellBridge, HuaweiStatusKey, HuaweiSttMode, HuaweiTriggerRule, HuaweiFootprintEntry, HuaweiWakeWordAction, HuaweiWakeWordMode, HuaweiWhereaboutsPrivacy, HuaweiHealthSource, PaymentSource, ShellJsonResult, HuaweiActionParam, HuaweiActionResultMode, HuaweiActionDelivery, HuaweiBridgeEvent } from "./types";
 export type { HuaweiHealthSnapshot, HuaweiPlace, HuaweiFootprintEntry } from "./types";
 import { ALIPAY_PACKAGE, WECHAT_PACKAGE } from "./types";
@@ -304,6 +306,14 @@ export type HuaweiShellSettings = {
         lastLowBatteryLevel: number | null;
         lastSleepDate: string;
     };
+
+    /* ---------- 现实桥能力开关：关闭后快照不注入、对应工具拒绝执行 ---------- */
+    /** 电量：关闭后 system 快照不含电量，「查看手机状态」不返回电量 */
+    capBatteryEnabled: boolean;
+    /** 定位：关闭后快照不含定位，「查询位置」「实时天气」拒绝执行 */
+    capLocationEnabled: boolean;
+    /** 天气：关闭后快照不含天气，「实时天气」拒绝执行 */
+    capWeatherEnabled: boolean;
 };
 
 const DEFAULT_SETTINGS: HuaweiShellSettings = {
@@ -383,6 +393,10 @@ const DEFAULT_SETTINGS: HuaweiShellSettings = {
         lastLowBatteryLevel: null,
         lastSleepDate: "",
     },
+
+    capBatteryEnabled: true,
+    capLocationEnabled: true,
+    capWeatherEnabled: true,
 };
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -476,6 +490,10 @@ export function loadHuaweiShellSettings(): HuaweiShellSettings {
             companionTitle: typeof parsed.companionTitle === "string" && parsed.companionTitle.trim() ? parsed.companionTitle.trim().slice(0, 30) : DEFAULT_SETTINGS.companionTitle,
             companionTemplates: normalizeCompanionTemplates(parsed.companionTemplates),
             companionLatched: normalizeCompanionLatched(parsed.companionLatched),
+
+            capBatteryEnabled: parsed.capBatteryEnabled !== false,
+            capLocationEnabled: parsed.capLocationEnabled !== false,
+            capWeatherEnabled: parsed.capWeatherEnabled !== false,
         };
     } catch {
         return { ...DEFAULT_SETTINGS };
@@ -920,4 +938,65 @@ export function addHuaweiLedgerRecordFromOcr(parsed: HuaweiOcrParsed): { ok: boo
 
 function amountTextPattern(regex: string): RegExp {
     try { return new RegExp(regex, "g"); } catch { return /([¥￥]\s*\d+(?:\.\d{1,2})?)/g; }
+}
+
+/* ---------- 语音助手（MiniMax）配置：现实桥设置页读写 resolveVoiceConfig("voice-assistant") 同一 store ----------
+ *  resolveVoiceConfig 链路：characterBinding(voice-assistant).defaults.voiceConfigId → voice configs。
+ *  这里固定专用 configId，设置页写入后 tab-voice、语音通话、消息播报、壳端 ShellTts 在线合成自动读到。 */
+
+export const VOICE_ASSISTANT_CONFIG_ID = "voice_assistant_minimax";
+
+export type VoiceAssistantConfig = {
+    provider: "system" | "minimax";
+    apiKey: string;
+    voiceId: string;
+    baseUrl: string;
+    model: string;
+};
+
+export const VOICE_ASSISTANT_DEFAULT_VOICES: { id: string; label: string }[] = [
+    { id: "female-shaonv", label: "少女（默认）" },
+    { id: "female-tianmeinvyou", label: "甜美女友" },
+    { id: "female-yujiejing", label: "御姐音" },
+    { id: "female-badaojing", label: "霸气女声" },
+    { id: "male-qnqing", label: "青年男声" },
+    { id: "male-qnbaqi", label: "霸气男声" },
+    { id: "male-qnjingjie", label: "青年精英" },
+];
+
+/** 读出现实桥语音助手配置；未配置过回落到系统 TTS 的默认值。 */
+export function readVoiceAssistantConfig(): VoiceAssistantConfig {
+    const vc = loadVoiceConfigs().find(c => c.id === VOICE_ASSISTANT_CONFIG_ID);
+    const isMinimax = vc?.provider === "Minimax" && !!vc.apiKey;
+    return {
+        provider: isMinimax ? "minimax" : "system",
+        apiKey: vc?.apiKey ?? "",
+        voiceId: vc?.defaultVoice || "female-shaonv",
+        baseUrl: vc?.baseUrl || "https://api.minimaxi.com/v1",
+        model: vc?.model || "speech-01-turbo",
+    };
+}
+
+/** 写入语音助手配置：upsert 专用 voice config，并把 character voice-assistant 绑定到它。 */
+export function saveVoiceAssistantConfig(cfg: VoiceAssistantConfig): void {
+    const configs = loadVoiceConfigs();
+    const entry: VoiceApiConfig = {
+        id: VOICE_ASSISTANT_CONFIG_ID,
+        name: "语音助手（现实桥）",
+        provider: cfg.provider === "minimax" ? "Minimax" : "System",
+        apiKey: cfg.provider === "minimax" ? cfg.apiKey.trim().slice(0, 300) : "",
+        baseUrl: cfg.baseUrl.trim() || "https://api.minimaxi.com/v1",
+        model: cfg.model.trim() || "speech-01-turbo",
+        defaultVoice: cfg.voiceId.trim() || "female-shaonv",
+        enableSTT: false,
+        enableTTS: true,
+    };
+    const idx = configs.findIndex(c => c.id === VOICE_ASSISTANT_CONFIG_ID);
+    if (idx >= 0) configs[idx] = entry; else configs.push(entry);
+    saveVoiceConfigs(configs);
+
+    const bindings = loadBindingConfig();
+    const slot = getCharacterBinding(bindings, "voice-assistant");
+    const nextSlot = { ...slot, defaults: { ...slot.defaults, voiceConfigId: VOICE_ASSISTANT_CONFIG_ID } };
+    saveBindingConfig(setCharacterBinding(bindings, nextSlot));
 }

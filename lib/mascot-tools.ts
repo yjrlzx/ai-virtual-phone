@@ -28,6 +28,10 @@ import {
     uploadCssAssetToImageHost,
     type CssAssetUserImageHistoryMessage,
 } from "./css-asset-tools";
+import { getAndroidShell } from "./huawei-shell/storage";
+import { loadCharacters } from "./character-storage";
+import { loadChatSessions } from "./chat-storage";
+import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei-shell/peek-store";
 
 // ── 通用类型 ────────────────────────────────────────────
 
@@ -1065,6 +1069,37 @@ export const MASCOT_NAVIGATE_TOOL: MascotSubTool = {
     parameterSchema: NAVIGATE_SCHEMA,
 };
 
+// ── 掌心窗守护 / 归电：独立工具，直接暴露 ─────────────────
+export const MASCOT_CALL_TOOL: MascotSubTool = {
+    name: "发起通话",
+    description: "给用户打一个语音电话（归电）。会响铃并在屏幕上弹出来电界面，用户接听后进入通话；用户挂断则回到对话。适用于你说'我给你打个电话''我想你了'时。",
+    parameterSchema: {
+        type: "object",
+        properties: {
+            headline: { type: "string", description: "可选：来电时想说的一句话，例如'我想你了，接一下电话'" },
+        },
+    },
+};
+
+export const MASCOT_SCREEN_BREAK_TOOL: MascotSubTool = {
+    name: "护眼休息",
+    description: "提醒并触发 5 分钟屏幕休息（护眼模式），让用户放下手机歇眼睛。适用于你说'该让眼睛休息一下了'时。",
+    parameterSchema: { type: "object", properties: {} },
+};
+
+export const MASCOT_COMPANION_DAYS_TOOL: MascotSubTool = {
+    name: "读取陪伴天数",
+    description: "读取你和用户在一起的天数（从共同开始日期算起），用于对话里说'我们已经在一起第几天了'。",
+    parameterSchema: { type: "object", properties: {} },
+};
+
+const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
+    MASCOT_NAVIGATE_TOOL,
+    MASCOT_CALL_TOOL,
+    MASCOT_SCREEN_BREAK_TOOL,
+    MASCOT_COMPANION_DAYS_TOOL,
+];
+
 // ── 文本协议下的工具列表渲染 ─────────────────────────────
 
 /** 紧凑工具列表（每轮都注入到 system prompt） */
@@ -1082,6 +1117,10 @@ export function buildMascotToolsListPrompt(): string {
     lines.push("    · page (必填) — 页面名。可选值：chat / characters / story / vnmode / moments / calendar / music / resources / settings");
     lines.push("    · subpage (可选) — 子页面（仅 page=settings 时有效）。可选值：presets / worldbook / regex / api / voice / binding / data / identity");
     lines.push("  调用：[执行动作:导航({\"page\":\"chat\"})] 或 [执行动作:导航({\"page\":\"settings\",\"subpage\":\"presets\"})]");
+    lines.push("【独立工具】发起通话 — 给用户打一个语音电话（归电），响铃并弹出来电界面。");
+    lines.push("  参数：headline (可选) — 来电时想说的一句话。");
+    lines.push("【独立工具】护眼休息 — 触发 5 分钟屏幕休息，让用户歇眼睛。");
+    lines.push("【独立工具】读取陪伴天数 — 读取你和用户在一起的天数。");
     lines.push("");
     lines.push("===== 调用规则 =====");
     lines.push("· 展开套件：使用 [获取指令:套件名] 格式，例如 [获取指令:CSS样式套件]");
@@ -1158,6 +1197,9 @@ function numberOption(value: unknown, fallback: number): number {
 
 const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "导航": "mascot_navigate",
+    "发起通话": "mascot_initiate_call",
+    "护眼休息": "mascot_screen_break",
+    "读取陪伴天数": "mascot_read_companion_days",
     "读取CSS": "mascot_read_css",
     "覆写CSS": "mascot_write_css",
     "清除CSS": "mascot_clear_css",
@@ -1251,12 +1293,14 @@ export function getMascotNativeLoaderName(packageId: string): string {
 export function getMascotNativeToolDefinitions(expandedPackageIds: string[] = []): LlmToolDefinition[] {
     const defs: LlmToolDefinition[] = [];
 
-    // 导航工具：始终暴露
-    defs.push({
-        name: getMascotNativeToolName(MASCOT_NAVIGATE_TOOL.name),
-        description: MASCOT_NAVIGATE_TOOL.description,
-        parameters: MASCOT_NAVIGATE_TOOL.parameterSchema,
-    });
+    // 导航 + 掌心窗工具：始终暴露
+    for (const tool of MASCOT_STANDALONE_TOOLS) {
+        defs.push({
+            name: getMascotNativeToolName(tool.name),
+            description: tool.description,
+            parameters: tool.parameterSchema,
+        });
+    }
 
     // 每个套件先暴露一个 loader（除非已展开）
     const expanded = new Set(expandedPackageIds);
@@ -1292,7 +1336,9 @@ export function getMascotNativeToolDefinitions(expandedPackageIds: string[] = []
 /** 原生工具名 → 中文工具名映射（用于将 LLM 调用转回中文工具名执行） */
 export function buildMascotNativeNameMap(): Map<string, string> {
     const map = new Map<string, string>();
-    map.set(getMascotNativeToolName(MASCOT_NAVIGATE_TOOL.name), MASCOT_NAVIGATE_TOOL.name);
+    for (const tool of MASCOT_STANDALONE_TOOLS) {
+        map.set(getMascotNativeToolName(tool.name), tool.name);
+    }
     for (const pkg of MASCOT_TOOL_PACKAGES) {
         map.set(getMascotNativeLoaderName(pkg.id), `_loader:${pkg.id}`);
         for (const tool of pkg.subTools) {
@@ -1402,8 +1448,11 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
                 }
             }
 
-            // ─── 导航 ───
+            // ─── 导航 / 掌心窗守护 / 归电 ───
             case "导航": return await handleNavigate(call.args);
+            case "发起通话": return handleInitiateCall(call.args);
+            case "护眼休息": return handleScreenBreak();
+            case "读取陪伴天数": return handleReadCompanionDays();
 
             default:
                 return { name: call.name, success: false, error: `未知工具：${call.name}` };
@@ -2875,6 +2924,74 @@ async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult
     const { mascotNavigate } = await import("./mascot-events");
     mascotNavigate(page, subpage);
     return { name: "导航", success: true, data: `已跳转到 ${page}${subpage ? `:${subpage}` : ""}` };
+}
+
+// ── 掌心窗守护 / 归电工具 ──────────────────────────────
+
+/** 发起语音通话（归电）：响铃 + 弹出来电界面。壳/会话不可用时返回"对方暂时无法接听"。 */
+function handleInitiateCall(args: Record<string, unknown>): ToolResult {
+    if (typeof window === "undefined") {
+        return { name: "发起通话", success: false, error: "对方暂时无法接听" };
+    }
+    try {
+        const chars = loadCharacters();
+        const companion = chars[0];
+        // 找到与该角色最近的 1:1 会话作为来电落点
+        const sessions = loadChatSessions();
+        const session = sessions
+            .filter(s => !s.isGroup && companion && s.contactId === companion.id)
+            .sort((a, b) => Date.parse(String(b.updatedAt ?? 0)) - Date.parse(String(a.updatedAt ?? 0)))[0];
+        if (!session || !companion) {
+            return { name: "发起通话", success: false, error: "对方暂时无法接听" };
+        }
+        // 响铃+震动（受来电样式里的开关控制；与掌心窗读同一份配置）
+        const callSettings = readCallSettings();
+        if (callSettings.ringEnabled) {
+            try {
+                const shell = getAndroidShell();
+                if (shell && typeof shell.ring === "function") shell.ring(15);
+            } catch { /* 响铃失败不阻断弹出来电 */ }
+        }
+        window.dispatchEvent(new CustomEvent("ai-call-trigger", {
+            detail: { sessionId: session.id, type: "voice", characterName: companion.name },
+        }));
+        const headline = typeof args.headline === "string" && args.headline.trim() ? args.headline.trim() : "";
+        return {
+            name: "发起通话",
+            success: true,
+            data: headline ? `已向用户发起语音通话（${headline}）` : "已向用户发起语音通话",
+        };
+    } catch {
+        return { name: "发起通话", success: false, error: "对方暂时无法接听" };
+    }
+}
+
+/** 护眼休息：触发 5 分钟屏幕休息。 */
+function handleScreenBreak(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        if (shell && typeof shell.screenBreak === "function") {
+            shell.screenBreak(5);
+            return { name: "护眼休息", success: true, data: "已开始 5 分钟屏幕休息，带用户歇会儿眼睛" };
+        }
+        return { name: "护眼休息", success: false, error: "当前不在手机环境，无法触发屏幕休息" };
+    } catch {
+        return { name: "护眼休息", success: false, error: "护眼休息触发失败" };
+    }
+}
+
+/** 读取陪伴天数：与掌心窗读同一份 companionMeta。 */
+function handleReadCompanionDays(): ToolResult {
+    try {
+        const meta = readCompanionMeta();
+        const days = companionDayCount(meta.startDate);
+        if (days == null || !meta.startDate) {
+            return { name: "读取陪伴天数", success: true, data: "还没有设置在一起的开始日期" };
+        }
+        return { name: "读取陪伴天数", success: true, data: `我们在一起的第 ${days} 天（从 ${meta.startDate} 开始）` };
+    } catch {
+        return { name: "读取陪伴天数", success: false, error: "读取陪伴天数失败" };
+    }
 }
 
 // ── 套件展开管理 ─────────────────────────────

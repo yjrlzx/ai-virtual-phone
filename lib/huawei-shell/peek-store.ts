@@ -18,6 +18,8 @@ const PEEK_COMPANION_NAME_KEY = "ai_phone_peek_companion_name_v1";
 const PEEK_CUSTOM_LINES_KEY = "ai_phone_peek_window_lines_custom_v1";
 const PEEK_COMPANION_ACTION_KEY = "ai_phone_peek_companion_actions_v1";
 const PEEK_FOCUS_GOAL_KEY = "ai_phone_peek_focus_goal_v1";
+const PEEK_FOCUS_DURATION_KEY = "ai_phone_peek_focus_duration_v1";
+const PEEK_CALL_SETTINGS_KEY = "ai_phone_peek_call_settings_v1";
 
 registerKvMigration(PEEK_WINDOW_KEY);
 registerKvMigration(PEEK_CHAR_WINDOW_KEY);
@@ -28,6 +30,8 @@ registerKvMigration(PEEK_COMPANION_NAME_KEY);
 registerKvMigration(PEEK_CUSTOM_LINES_KEY);
 registerKvMigration(PEEK_COMPANION_ACTION_KEY);
 registerKvMigration(PEEK_FOCUS_GOAL_KEY);
+registerKvMigration(PEEK_FOCUS_DURATION_KEY);
+registerKvMigration(PEEK_CALL_SETTINGS_KEY);
 
 /* ---------- 今日窗语：内置语料 + 用户自定义语料，合并轮换 ---------- */
 
@@ -169,10 +173,10 @@ export function setFocusGoalMin(minutes: number): void {
 /* ---------- 陪伴：起始日 + 纪念日列表 ---------- */
 
 export type PeekAnniversary = { name: string; date: string }; // date = MM-DD
-export type PeekCompanionMeta = { startDate: string | null; anniversaries: PeekAnniversary[] };
+export type PeekCompanionMeta = { startDate: string | null; anniversaries: PeekAnniversary[]; avatar: string };
 
 export function readCompanionMeta(): PeekCompanionMeta {
-  const fallback: PeekCompanionMeta = { startDate: null, anniversaries: [] };
+  const fallback: PeekCompanionMeta = { startDate: null, anniversaries: [], avatar: "" };
   try {
     const raw = kvGet(PEEK_COMPANION_KEY);
     if (!raw) return fallback;
@@ -187,16 +191,26 @@ export function readCompanionMeta(): PeekCompanionMeta {
     return {
       startDate: typeof p.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.startDate) ? p.startDate : null,
       anniversaries,
+      avatar: typeof p.avatar === "string" ? p.avatar.trim().slice(0, 600000) : "",
     };
   } catch { return fallback; }
 }
 
-/** 设置（或清除）陪伴起始日，保留已有纪念日列表。null = 清除。 */
+/** 设置（或清除）陪伴起始日，保留已有纪念日与头像。null = 清除。 */
 export function setCompanionStartDate(iso: string | null): void {
   if (iso !== null && !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
   const current = readCompanionMeta();
   try {
-    kvSet(PEEK_COMPANION_KEY, JSON.stringify({ startDate: iso, anniversaries: current.anniversaries }));
+    kvSet(PEEK_COMPANION_KEY, JSON.stringify({ startDate: iso, anniversaries: current.anniversaries, avatar: current.avatar }));
+  } catch { /* 存不下就下次再写 */ }
+}
+
+/** 设置陪伴头像（单源：陪伴卡片 / 归电来电 / 悬浮窗共用）。空串 = 清除，回退心形占位。 */
+export function setCompanionAvatar(url: string): void {
+  const clean = String(url ?? "").trim().slice(0, 600000);
+  const current = readCompanionMeta();
+  try {
+    kvSet(PEEK_COMPANION_KEY, JSON.stringify({ startDate: current.startDate, anniversaries: current.anniversaries, avatar: clean }));
   } catch { /* 存不下就下次再写 */ }
 }
 
@@ -394,4 +408,94 @@ export function addCompanionAction(text: string): PeekCompanionAction[] {
   const trimmed = list.slice(-30);
   try { kvSet(PEEK_COMPANION_ACTION_KEY, JSON.stringify(trimmed)); } catch { /* 忽略写失败 */ }
   return trimmed.slice().reverse();
+}
+
+/* ---------- 专注模式可选时长（15 / 25 / 45 分钟） ---------- */
+
+const FOCUS_DURATION_CHOICES = [15, 25, 45] as const;
+export type FocusDurationChoice = typeof FOCUS_DURATION_CHOICES[number];
+
+export function readFocusDurationMin(): FocusDurationChoice {
+  try {
+    const raw = kvGet(PEEK_FOCUS_DURATION_KEY);
+    if (!raw) return 25;
+    const n = Number(JSON.parse(raw));
+    return (FOCUS_DURATION_CHOICES as readonly number[]).includes(n) ? n as FocusDurationChoice : 25;
+  } catch { return 25; }
+}
+
+export function setFocusDurationMin(minutes: number): void {
+  const n = Number(minutes);
+  if (!(FOCUS_DURATION_CHOICES as readonly number[]).includes(n)) return;
+  try { kvSet(PEEK_FOCUS_DURATION_KEY, JSON.stringify(n)); } catch { /* 忽略写失败 */ }
+}
+
+/* ---------- 归电（来电覆盖层）样式与行为配置 ---------- */
+
+export type PeekCallSettings = {
+  /** char 名字覆盖；空 = 用掌心窗称呼 */
+  charName: string;
+  /** 来电副标题文案，{name} 会替换成 char 名字 */
+  headline: string;
+  /** 背景：preset:ocean / preset:sunset / preset:night / preset:peach，或任意图片 URL */
+  background: string;
+  /** 是否在来电页显示用户头像 */
+  showUserAvatar: boolean;
+  /** 来电时是否响铃+震动（调壳 ring） */
+  ringEnabled: boolean;
+  /** 接听按钮底色（css 渐变或颜色） */
+  acceptColor: string;
+  /** 挂断按钮底色（css 渐变或颜色） */
+  hangupColor: string;
+};
+
+export const PEEK_CALL_BACKGROUNDS: Record<string, { label: string; css: string }> = {
+  ocean: { label: "深海", css: "linear-gradient(180deg,#2c4a6e 0%,#4aa8ef 55%,#7ec8ff 100%)" },
+  sunset: { label: "落日", css: "linear-gradient(180deg,#3a2c6e 0%,#e86a8a 55%,#ffb87e 100%)" },
+  night: { label: "星夜", css: "linear-gradient(180deg,#0b1020 0%,#1e2f52 60%,#3a4a7a 100%)" },
+  peach: { label: "蜜桃", css: "linear-gradient(180deg,#ff9a8b 0%,#ff6a88 55%,#ff99ac 100%)" },
+};
+
+const DEFAULT_CALL_SETTINGS: PeekCallSettings = {
+  charName: "",
+  headline: "{name}想和你说说话",
+  background: "preset:ocean",
+  showUserAvatar: false,
+  ringEnabled: true,
+  acceptColor: "linear-gradient(135deg,#63d68f,#37b568)",
+  hangupColor: "linear-gradient(135deg,#ff8a8a,#e84545)",
+};
+
+function normalizeUrlish(v: unknown, max = 500): string {
+  return typeof v === "string" ? v.trim().slice(0, max) : "";
+}
+
+export function readCallSettings(): PeekCallSettings {
+  try {
+    const raw = kvGet(PEEK_CALL_SETTINGS_KEY);
+    if (!raw) return { ...DEFAULT_CALL_SETTINGS };
+    const p = JSON.parse(raw) as Partial<PeekCallSettings>;
+    return {
+      charName: typeof p.charName === "string" ? p.charName.trim().slice(0, 12) : "",
+      headline: typeof p.headline === "string" && p.headline.trim() ? p.headline.trim().slice(0, 40) : DEFAULT_CALL_SETTINGS.headline,
+      background: typeof p.background === "string" && p.background.trim() ? p.background.trim().slice(0, 500) : DEFAULT_CALL_SETTINGS.background,
+      showUserAvatar: p.showUserAvatar === true,
+      ringEnabled: p.ringEnabled !== false,
+      acceptColor: normalizeUrlish(p.acceptColor, 200) || DEFAULT_CALL_SETTINGS.acceptColor,
+      hangupColor: normalizeUrlish(p.hangupColor, 200) || DEFAULT_CALL_SETTINGS.hangupColor,
+    };
+  } catch { return { ...DEFAULT_CALL_SETTINGS }; }
+}
+
+export function saveCallSettings(next: PeekCallSettings): void {
+  const clean: PeekCallSettings = {
+    charName: typeof next.charName === "string" ? next.charName.trim().slice(0, 12) : "",
+    headline: typeof next.headline === "string" && next.headline.trim() ? next.headline.trim().slice(0, 40) : DEFAULT_CALL_SETTINGS.headline,
+    background: typeof next.background === "string" && next.background.trim() ? next.background.trim().slice(0, 500) : DEFAULT_CALL_SETTINGS.background,
+    showUserAvatar: next.showUserAvatar === true,
+    ringEnabled: next.ringEnabled !== false,
+    acceptColor: normalizeUrlish(next.acceptColor, 200) || DEFAULT_CALL_SETTINGS.acceptColor,
+    hangupColor: normalizeUrlish(next.hangupColor, 200) || DEFAULT_CALL_SETTINGS.hangupColor,
+  };
+  try { kvSet(PEEK_CALL_SETTINGS_KEY, JSON.stringify(clean)); } catch { /* 忽略写失败 */ }
 }

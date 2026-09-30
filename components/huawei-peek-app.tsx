@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   getAndroidShell,
   isHuaweiShellAvailable,
@@ -7,15 +7,16 @@ import {
   readLockedPackagesFromShell,
   loadHuaweiFootprint,
   loadHuaweiTriggerRules,
+  saveHuaweiTriggerRules,
   loadHuaweiShellSettings,
 } from "@/lib/huawei-shell/storage";
 import type { HuaweiFootprintEntry, HuaweiTriggerRule } from "@/lib/huawei-shell/types";
 import { loadCharacters } from "@/lib/character-storage";
-import { loadDiaryEntries } from "@/lib/diary-entry-storage";
-import type { DiaryEntry } from "@/lib/diary-entry-types";
 import {
   loadMenstrualConfig,
   loadMenstrualRecords,
+  saveMenstrualConfig,
+  startCurrentPeriod,
   getNextPredictedPeriodStart,
 } from "@/lib/menstrual-storage";
 import { formatIsoDate } from "@/lib/calendar-utils";
@@ -40,6 +41,13 @@ import {
   readCompanionActions,
   readPeekGuardEvents,
   removePeekGuardEvent,
+  setCompanionAvatar,
+  readFocusDurationMin,
+  setFocusDurationMin,
+  readCallSettings,
+  saveCallSettings,
+  PEEK_CALL_BACKGROUNDS,
+  type PeekCallSettings,
 } from "@/lib/huawei-shell/peek-store";
 
 /**
@@ -71,6 +79,10 @@ const WINDOW_STYLE: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   height: "100%",
+  width: "100%",
+  maxWidth: 412,
+  margin: "0 auto",
+  boxSizing: "border-box",
   borderRadius: 18,
   overflow: "hidden",
   border: "1px solid rgba(126,200,255,.5)",
@@ -129,6 +141,9 @@ const CARD: CSSProperties = {
   padding: "14px 16px",
   marginBottom: 12,
   boxShadow: "0 6px 18px rgba(120,180,230,.14)",
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+  boxSizing: "border-box",
 };
 
 const HERO: CSSProperties = {
@@ -156,9 +171,10 @@ const GROUP_TITLE: CSSProperties = {
 const ACTION_BTN: CSSProperties = {
   border: "none",
   borderRadius: 999,
-  padding: "7px 14px",
+  padding: "10px 16px",
+  minHeight: 40,
   cursor: "pointer",
-  fontSize: 12,
+  fontSize: 13,
   fontWeight: 700,
   color: "#fff",
   background: `linear-gradient(135deg,${ICE},${ICE_DEEP})`,
@@ -253,10 +269,26 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const [focusMinutes, setFocusMinutes] = useState(() => readTodayFocusMinutes());
   const [windowLine, setWindowLine] = useState(() => readWindowLine());
   const [footprint, setFootprint] = useState<HuaweiFootprintEntry[]>(() => loadHuaweiFootprint().slice(0, 5));
-  const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [dots] = useState(() => readPeekCalendarDots());
   /* 归电全屏来电覆盖层是否展开 */
   const [callOverlayOpen, setCallOverlayOpen] = useState(false);
+
+  /* 守护 tab：可展开的配置面板 */
+  const [openPanel, setOpenPanel] = useState<"none" | "rules" | "focus" | "period">("none");
+  /* 主动提醒新规则草稿 */
+  const [newRuleName, setNewRuleName] = useState("");
+  const [newRuleTime, setNewRuleTime] = useState("08:00");
+  /* 专注时长选择 */
+  const [focusChoice, setFocusChoice] = useState(() => readFocusDurationMin());
+  /* 经期编辑草稿 */
+  const [periodStartDraft, setPeriodStartDraft] = useState("");
+  const [periodLengthDraft, setPeriodLengthDraft] = useState("5");
+  /* 来电样式草稿（设置面板里编辑，保存时落盘） */
+  const [callDraft, setCallDraft] = useState<PeekCallSettings>(() => readCallSettings());
+  /* 陪伴头像编辑：上传本地图 / 输入 URL，单源存 companionMeta.avatar */
+  const [avatarEditorOpen, setAvatarEditorOpen] = useState(false);
+  const [avatarUrlDraft, setAvatarUrlDraft] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   /* 设置写入后用来触发三 Tab 重新读 store 的 tick */
   const [storeTick, setStoreTick] = useState(0);
@@ -305,16 +337,19 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
       .map(a => ({ name: a.name, pkg: a.packageName || a.openApp || "" }));
 
     const customLines = readCustomWindowLines();
+    const callSettings = readCallSettings();
 
     return {
       companion, cname, companionMeta, dayCount, nextAnni, focusGoal,
       companionActions, guardEvents, menstrualLabel, targetApps, customLines,
+      mConfig, callSettings,
     };
-  }, [storeTick, status, currentApp, locked, footprint, diaries]);
+  }, [storeTick, status, currentApp, locked, footprint]);
 
   const {
     companion, cname, companionMeta, dayCount, nextAnni, focusGoal,
     companionActions, guardEvents, menstrualLabel, targetApps, customLines,
+    mConfig, callSettings,
   } = derived;
 
   /* ---- 设置面板草稿 ---- */
@@ -326,15 +361,15 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const [newLineDraft, setNewLineDraft] = useState("");
 
   const timeRules = useMemo(
-    () => loadHuaweiTriggerRules().filter(r => r.trigger === "time" && r.enabled && !!r.time),
-    [],
+    () => loadHuaweiTriggerRules().filter(r => r.trigger === "time" && !!r.time),
+    [storeTick],
   );
 
   /** 「下一件事」：最近一条已启用的定时提醒。 */
   const nextRule = useMemo(() => {
     const withDate = timeRules
       .map(r => ({ r, d: nextTriggerDate(r) }))
-      .filter((x): x is { r: HuaweiTriggerRule; d: Date } => !!x.d)
+      .filter((x): x is { r: HuaweiTriggerRule; d: Date } => !!x.d && x.r.enabled)
       .sort((a, b) => a.d.getTime() - b.d.getTime());
     return withDate[0] || null;
   }, [timeRules]);
@@ -361,9 +396,6 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     const footprintNext = loadHuaweiFootprint().slice(0, 5);
     setFootprint(prev => sameJson(prev, footprintNext) ? prev : footprintNext);
     setWindowLine(prev => prev === readWindowLine() ? prev : readWindowLine());
-    const cid = loadCharacters()[0]?.id;
-    const diariesNext = cid ? loadDiaryEntries().filter(e => e.characterId === cid).slice(0, 3) : [];
-    setDiaries(prev => sameJson(prev, diariesNext) ? prev : diariesNext);
   }, []);
 
   useEffect(() => {
@@ -377,15 +409,16 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   const floating = statusBool(status, "floating");
 
   const startFocus = useCallback(() => {
-    const r = invokeShellJson(s => (s.focusMode ? s.focusMode(25) : null));
+    const minutes = focusChoice;
+    const r = invokeShellJson(s => (s.focusMode ? s.focusMode(minutes) : null));
     if (r.ok) {
-      onNotice?.("已开始 25 分钟专注");
-      setFocusMinutes(addTodayFocusMinutes(25));
+      onNotice?.(`已开始 ${minutes} 分钟专注`);
+      setFocusMinutes(addTodayFocusMinutes(minutes));
       setFocusing(true);
     } else {
       onNotice?.(r.error || "专注模式启动失败");
     }
-  }, [onNotice]);
+  }, [onNotice, focusChoice]);
 
   const takeScreenBreak = useCallback(() => {
     const r = invokeShellJson(s => (s.screenBreak ? s.screenBreak(300) : null));
@@ -426,12 +459,14 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
 
   const triggerGuidian = useCallback(() => {
     /* 能连壳就启铃声+循环震动；连不上也照弹来电窗，只是不响铃。 */
-    try {
-      const shell = getAndroidShell();
-      if (shell && typeof shell.ring === "function") shell.ring(15);
-    } catch { /* 响铃失败不阻断弹窗 */ }
+    if (callSettings.ringEnabled) {
+      try {
+        const shell = getAndroidShell();
+        if (shell && typeof shell.ring === "function") shell.ring(15);
+      } catch { /* 响铃失败不阻断弹窗 */ }
+    }
     setCallOverlayOpen(true);
-  }, []);
+  }, [callSettings.ringEnabled]);
 
   /** 挂断：停震、关窗，不再派发通话事件。 */
   const hangupCall = useCallback(() => {
@@ -456,6 +491,110 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
     const r = pushLockedPackagesToShell(list);
     onNotice?.(r.ok ? `门禁列表已同步（${list.length} 个 App）` : (r.error || "门禁同步失败"));
   }, [onNotice]);
+
+  /* ---- 主动提醒（time 规则）增删改：直接落到华为壳 triggerRules ---- */
+  const addTimeRule = useCallback(() => {
+    const name = newRuleName.trim();
+    if (!name || !/^\d{2}:\d{2}$/.test(newRuleTime)) {
+      onNotice?.("填个名字和时间（HH:MM）再加提醒");
+      return;
+    }
+    const rules = loadHuaweiTriggerRules();
+    rules.push({
+      id: `rule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      name: name.slice(0, 30),
+      enabled: true,
+      trigger: "time",
+      time: newRuleTime,
+      days: [],
+      action: "send_notification",
+      title: name.slice(0, 30),
+      content: name.slice(0, 120),
+    });
+    saveHuaweiTriggerRules(rules);
+    setNewRuleName("");
+    bump();
+    onNotice?.(`已加提醒「${name}」`);
+  }, [newRuleName, newRuleTime, bump, onNotice]);
+
+  const removeTimeRule = useCallback((id: string) => {
+    saveHuaweiTriggerRules(loadHuaweiTriggerRules().filter(r => r.id !== id));
+    bump();
+  }, [bump]);
+
+  const toggleTimeRule = useCallback((id: string) => {
+    const rules = loadHuaweiTriggerRules().map(r => r.id === id ? { ...r, enabled: !r.enabled } : r);
+    saveHuaweiTriggerRules(rules);
+    bump();
+  }, [bump]);
+
+  /* ---- 周期提醒：设置经期开始日 + 持续天数 ---- */
+  const savePeriodConfig = useCallback(() => {
+    const len = Math.max(2, Math.min(10, Math.round(Number(periodLengthDraft) || 5)));
+    const current = loadMenstrualConfig();
+    saveMenstrualConfig({ ...current, enabled: true, periodLength: len });
+    if (periodStartDraft) {
+      startCurrentPeriod(periodStartDraft);
+      setPeriodStartDraft("");
+    }
+    bump();
+    onNotice?.(periodStartDraft ? `已标记经期自 ${periodStartDraft} 开始，持续 ${len} 天` : `经期持续天数已设为 ${len} 天`);
+  }, [periodStartDraft, periodLengthDraft, bump, onNotice]);
+
+  /* ---- 来电样式：草稿落盘 ---- */
+  const persistCallDraft = useCallback(() => {
+    saveCallSettings(callDraft);
+    bump();
+    onNotice?.("来电样式已保存");
+  }, [callDraft, bump, onNotice]);
+
+  /* ---- 陪伴头像：本地上传 → 方形裁剪压成 data URL，单源落盘 ---- */
+  const onAvatarFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const SIZE = 256;
+        const canvas = document.createElement("canvas");
+        canvas.width = SIZE; canvas.height = SIZE;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        // cover 裁剪居中方形
+        const scale = Math.max(SIZE / img.width, SIZE / img.height);
+        const w = img.width * scale, h = img.height * scale;
+        ctx.drawImage(img, (SIZE - w) / 2, (SIZE - h) / 2, w, h);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        setCompanionAvatar(dataUrl);
+        bump();
+        setAvatarEditorOpen(false);
+        onNotice?.("陪伴头像已更新");
+      };
+      img.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  }, [bump, onNotice]);
+
+  const saveAvatarUrl = useCallback(() => {
+    setCompanionAvatar(avatarUrlDraft.trim());
+    setAvatarUrlDraft("");
+    setAvatarEditorOpen(false);
+    bump();
+    onNotice?.(avatarUrlDraft.trim() ? "陪伴头像已更新" : "已清除陪伴头像");
+  }, [avatarUrlDraft, bump, onNotice]);
+
+  /* 来电页实际展示的头像/名字/文案：头像单源 = companionMeta.avatar → 角色 avatar → 心形 */
+  const callCharAvatar = companionMeta.avatar || companion?.avatar || "";
+  const callCharName = callSettings.charName || cname;
+  const callHeadline = (callSettings.headline || "{name}想和你说说话").replaceAll("{name}", callCharName);
+  const callBackground = callSettings.background.startsWith("preset:")
+    ? (PEEK_CALL_BACKGROUNDS[callSettings.background.slice(7)]?.css || PEEK_CALL_BACKGROUNDS.ocean.css)
+    : callSettings.background;
+  const callBackgroundStyle: CSSProperties = callSettings.background.startsWith("preset:")
+    ? { background: callBackground }
+    : { backgroundImage: `url(${callBackground})`, backgroundSize: "cover", backgroundPosition: "center" };
 
   /* 守护日历矩阵 */
   const nowDate = new Date();
@@ -526,7 +665,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", WebkitOverflowScrolling: "touch" }}>
         {!shellAvailable && (
           <div style={{ ...CARD, background: "rgba(255,244,228,.9)", borderColor: "rgba(240,180,110,.55)" }}>
             <div style={{ fontWeight: 800, color: "#9a6a2a", fontSize: 13 }}>未连接真机壳</div>
@@ -671,6 +810,96 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                 >保存</button>
               </div>
             </div>
+
+            {/* 来电样式（归电覆盖层） */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: INK }}>来电样式（归电）</div>
+              <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 3 }}>头像跟随陪伴卡片的设置；这里调名字、文案、背景与按钮。</div>
+
+              {/* char 名字覆盖 */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 12 }}>来电显示名（留空用陪伴称呼）</div>
+              <input
+                value={callDraft.charName}
+                onChange={e => setCallDraft(d => ({ ...d, charName: e.target.value }))}
+                placeholder={cname}
+                style={{ ...INPUT, marginTop: 6 }}
+              />
+
+              {/* 来电文案 */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 12 }}>来电文案（{`{name}`} 替换成 TA 的名字）</div>
+              <input
+                value={callDraft.headline}
+                onChange={e => setCallDraft(d => ({ ...d, headline: e.target.value }))}
+                placeholder="{name}想和你说说话"
+                style={{ ...INPUT, marginTop: 6 }}
+              />
+
+              {/* 背景预设 */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 12 }}>背景预设</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                {Object.entries(PEEK_CALL_BACKGROUNDS).map(([key, bg]) => (
+                  <button
+                    key={key} type="button"
+                    onClick={() => setCallDraft(d => ({ ...d, background: `preset:${key}` }))}
+                    style={{
+                      flex: "1 1 40%", minWidth: 90, minHeight: 40, borderRadius: 10, cursor: "pointer",
+                      fontSize: 12, fontWeight: 700, color: "#fff", border: callDraft.background === `preset:${key}` ? "2px solid #fff" : "2px solid transparent",
+                      background: bg.css, boxShadow: "0 3px 8px rgba(0,0,0,.18)",
+                    }}
+                  >{bg.label}</button>
+                ))}
+              </div>
+
+              {/* 自定义背景图 URL */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 12 }}>自定义背景图 URL（填了就覆盖预设）</div>
+              <input
+                value={callDraft.background.startsWith("preset:") ? "" : callDraft.background}
+                onChange={e => setCallDraft(d => ({ ...d, background: e.target.value }))}
+                placeholder="https://…/bg.jpg"
+                style={{ ...INPUT, marginTop: 6 }}
+              />
+
+              {/* 开关 */}
+              <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                <button type="button" style={{ ...ACTION_BTN_GHOST, flex: "1 1 45%", minHeight: 40, fontSize: 12 }}
+                  onClick={() => setCallDraft(d => ({ ...d, showUserAvatar: !d.showUserAvatar }))}>
+                  用户头像：{callDraft.showUserAvatar ? "显示" : "隐藏"}
+                </button>
+                <button type="button" style={{ ...ACTION_BTN_GHOST, flex: "1 1 45%", minHeight: 40, fontSize: 12 }}
+                  onClick={() => setCallDraft(d => ({ ...d, ringEnabled: !d.ringEnabled }))}>
+                  响铃震动：{callDraft.ringEnabled ? "开" : "关"}
+                </button>
+              </div>
+
+              {/* 按钮配色 */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 12 }}>接听 / 挂断按钮色</div>
+              <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                {[
+                  { label: "接听绿", v: "linear-gradient(135deg,#63d68f,#37b568)", key: "acc" },
+                  { label: "接听蓝", v: "linear-gradient(135deg,#7ec8ff,#4aa8ef)", key: "accb" },
+                ].map(o => (
+                  <button key={o.key} type="button" onClick={() => setCallDraft(d => ({ ...d, acceptColor: o.v }))}
+                    style={{ flex: 1, minHeight: 38, borderRadius: 10, cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#fff", background: o.v, border: callDraft.acceptColor === o.v ? "2px solid #fff" : "2px solid transparent" }}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                {[
+                  { label: "挂断红", v: "linear-gradient(135deg,#ff8a8a,#e84545)", key: "hangr" },
+                  { label: "挂断橙", v: "linear-gradient(135deg,#ffb26b,#e8803a)", key: "hango" },
+                ].map(o => (
+                  <button key={o.key} type="button" onClick={() => setCallDraft(d => ({ ...d, hangupColor: o.v }))}
+                    style={{ flex: 1, minHeight: 38, borderRadius: 10, cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#fff", background: o.v, border: callDraft.hangupColor === o.v ? "2px solid #fff" : "2px solid transparent" }}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+
+              <button type="button" style={{ ...ACTION_BTN, marginTop: 14, width: "100%", minHeight: 42 }} onClick={persistCallDraft}>
+                保存来电样式
+              </button>
+            </div>
           </>
         )}
 
@@ -739,7 +968,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
             <div style={{ display: "flex", alignItems: "baseline", margin: "2px 4px 8px" }}>
               <span style={{ fontSize: 14, fontWeight: 800, color: INK }}>今日轨迹</span>
               <span style={{ flex: 1 }} />
-              <span style={{ fontSize: 11, color: INK_FAINT }}>全部</span>
+              <span style={{ fontSize: 11, color: INK_FAINT }}>{footprint.length} 条</span>
             </div>
             <div style={CARD}>
               {footprint.length === 0 ? (
@@ -766,19 +995,25 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
             {/* Hero 陪伴对象 */}
             <div style={HERO}>
               <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                {companion?.avatar ? (
-                  <img src={companion.avatar} alt="" style={{
-                    width: 64, height: 64, borderRadius: 20, objectFit: "cover",
-                    border: `2px solid ${ICE}`,
-                  }} />
-                ) : (
-                  <span style={{
-                    width: 64, height: 64, borderRadius: 20,
-                    background: `linear-gradient(135deg,${ICE_LIGHT},${ICE_DEEP})`,
-                    display: "inline-flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 26, color: "#fff",
-                  }}>🤍</span>
-                )}
+                <button
+                  type="button" aria-label="更换陪伴头像"
+                  onClick={() => { setAvatarUrlDraft(companionMeta.avatar.startsWith("http") ? companionMeta.avatar : ""); setAvatarEditorOpen(v => !v); }}
+                  style={{ padding: 0, border: "none", background: "transparent", cursor: "pointer", lineHeight: 0 }}
+                >
+                  {(companionMeta.avatar || companion?.avatar) ? (
+                    <img src={companionMeta.avatar || companion?.avatar || ""} alt="" style={{
+                      width: 64, height: 64, borderRadius: 20, objectFit: "cover",
+                      border: `2px solid ${ICE}`,
+                    }} />
+                  ) : (
+                    <span style={{
+                      width: 64, height: 64, borderRadius: 20,
+                      background: `linear-gradient(135deg,${ICE_LIGHT},${ICE_DEEP})`,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 26, color: "#fff",
+                    }}>🤍</span>
+                  )}
+                </button>
                 <div style={{ flex: 1 }}>
                   <div style={LABEL}>我的陪伴 · {cname}</div>
                   <div style={{ fontSize: 19, fontWeight: 800, color: INK, marginTop: 4 }}>{cname}在窗边</div>
@@ -789,6 +1024,28 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                   </div>
                 </div>
               </div>
+              {/* 头像编辑弹层：上传本地图 / 输入 URL / 清除 */}
+              {avatarEditorOpen && (
+                <div style={{ marginTop: 12, background: "rgba(255,255,255,.75)", borderRadius: 12, padding: 10 }}>
+                  <input ref={fileInputRef} type="file" accept="image/*" onChange={onAvatarFile} style={{ display: "none" }} />
+                  <button type="button" style={{ ...ACTION_BTN_GHOST, width: "100%", minHeight: 40, fontSize: 12 }} onClick={() => fileInputRef.current?.click()}>
+                    从相册选一张
+                  </button>
+                  <input
+                    value={avatarUrlDraft}
+                    onChange={e => setAvatarUrlDraft(e.target.value)}
+                    placeholder="或粘贴图片 URL"
+                    style={{ ...INPUT, marginTop: 8 }}
+                  />
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button type="button" style={{ ...ACTION_BTN, flex: 1, minHeight: 38 }} onClick={saveAvatarUrl}>用这张</button>
+                    <button type="button" style={{ ...ACTION_BTN_GHOST, flex: 1, minHeight: 38, fontSize: 12 }}
+                      onClick={() => { setCompanionAvatar(""); bump(); setAvatarEditorOpen(false); }}>
+                      恢复心形
+                    </button>
+                  </div>
+                </div>
+              )}
               <div style={{
                 marginTop: 13, display: "flex", alignItems: "center",
                 background: "rgba(255,255,255,.7)", borderRadius: 12, padding: "8px 12px",
@@ -816,6 +1073,13 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
                 <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 4 }}>
                   {companionMeta.startDate ? `从 ${companionMeta.startDate} 开始` : "从今天开始"}
                 </div>
+                <input
+                  type="date"
+                  value={companionMeta.startDate ?? ""}
+                  onChange={e => { setCompanionStartDate(e.target.value || null); bump(); }}
+                  style={{ ...INPUT, marginTop: 10, fontSize: 12, padding: "6px 8px" }}
+                  aria-label="在一起开始日期"
+                />
               </div>
               <div style={{ flex: "1 1 0", display: "flex", flexDirection: "column", gap: 9 }}>
                 <div style={{ ...CARD, marginBottom: 0, flex: 1 }}>
@@ -860,32 +1124,6 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
 
             {/* 更多陪伴 */}
             <div style={GROUP_TITLE}>更多陪伴</div>
-            <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 18 }}>📖</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>TA 的日记</div>
-                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>把今天看见的你，轻轻写下来。</div>
-                </div>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                {diaries.length === 0 ? (
-                  <div style={{ fontSize: 12, color: INK_FAINT, padding: "6px 0" }}>TA 还没有写下日记。</div>
-                ) : diaries.map(d => (
-                  <div key={d.id} style={{ padding: "8px 0", borderTop: "1px dashed rgba(126,200,255,.3)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>{d.title || "无标题"}</span>
-                      <span style={{ fontSize: 10.5, color: INK_FAINT, whiteSpace: "nowrap" }}>
-                        {d.dateLabel}{d.mood ? ` · ${d.mood}` : ""}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 11.5, color: INK_SOFT, marginTop: 4, lineHeight: 1.55 }}>
-                      {d.body.split(/\n+/).filter(Boolean).slice(0, 2).join(" ")}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
             <div style={CARD}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 18 }}>🔋</span>
@@ -1030,58 +1268,113 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
             </div>
 
             <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" onClick={() => setOpenPanel(p => p === "focus" ? "none" : "focus")}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
                 <span style={{ fontSize: 18 }}>🎧</span>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, textAlign: "left" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>专注模式</div>
                   <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>
-                    {focusing ? "正在专注中" : "当前未在专注"}
+                    {focusing ? "正在专注中" : "当前未在专注"} · 点选时长后开始
                   </div>
                 </div>
+                <span style={{ color: INK_FAINT, fontSize: 12 }}>{openPanel === "focus" ? "▲" : "▼"}</span>
+              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                {[15, 25, 45].map(m => (
+                  <button key={m} type="button"
+                    onClick={() => { setFocusChoice(m as 15 | 25 | 45); setFocusDurationMin(m); bump(); }}
+                    style={{
+                      flex: 1, minHeight: 40, borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 700,
+                      border: focusChoice === m ? "none" : "1px solid rgba(126,200,255,.5)",
+                      background: focusChoice === m ? `linear-gradient(135deg,${ICE},${ICE_DEEP})` : "rgba(255,255,255,.85)",
+                      color: focusChoice === m ? "#fff" : INK_SOFT,
+                    }}>
+                    {m} 分钟
+                  </button>
+                ))}
               </div>
-              <button type="button" style={{ ...ACTION_BTN, marginTop: 10 }} onClick={startFocus}>
-                专注 25 分钟
+              <button type="button" style={{ ...ACTION_BTN, marginTop: 10, width: "100%", minHeight: 42 }} onClick={startFocus}>
+                开始专注（{focusChoice} 分钟）
               </button>
             </div>
 
             {/* 主动提醒 */}
             <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" onClick={() => setOpenPanel(p => p === "rules" ? "none" : "rules")}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
                 <span style={{ fontSize: 18 }}>⏰</span>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, textAlign: "left" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>主动提醒</div>
-                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>休息与喝水</div>
+                  <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 2 }}>
+                    {timeRules.length === 0 ? "还没有定时提醒，点这里添加" : `${timeRules.length} 条提醒 · 点这里增删改`}
+                  </div>
                 </div>
-              </div>
-              <div style={{ marginTop: 10 }}>
-                {timeRules.length === 0 ? (
-                  <div style={{ fontSize: 12, color: INK_FAINT }}>没有已启用的定时提醒。</div>
-                ) : timeRules.map(rule => {
-                  const d = nextTriggerDate(rule);
-                  return (
-                    <div key={rule.id} style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      padding: "5px 0", fontSize: 12.5, borderTop: "1px dashed rgba(126,200,255,.3)",
-                    }}>
-                      <span style={{ color: INK }}>{rule.name}</span>
-                      <span style={{ color: ICE_DEEP, fontWeight: 700 }}>
-                        {d ? triggerLabel(d, rule.time!) : rule.time || "—"}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+                <span style={{ color: INK_FAINT, fontSize: 12 }}>{openPanel === "rules" ? "▲" : "▼"}</span>
+              </button>
+              {openPanel === "rules" && (
+                <>
+                  <div style={{ marginTop: 10 }}>
+                    {timeRules.length === 0 ? (
+                      <div style={{ fontSize: 12, color: INK_FAINT }}>没有定时提醒。下面加一条。</div>
+                    ) : timeRules.map(rule => {
+                      const d = nextTriggerDate(rule);
+                      return (
+                        <div key={rule.id} style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "7px 0", fontSize: 12.5, borderTop: "1px dashed rgba(126,200,255,.3)",
+                          opacity: rule.enabled ? 1 : 0.5,
+                        }}>
+                          <span style={{ color: INK, flex: 1 }}>{rule.name}</span>
+                          <span style={{ color: ICE_DEEP, fontWeight: 700 }}>
+                            {d ? triggerLabel(d, rule.time!) : rule.time || "—"}
+                          </span>
+                          <button type="button" aria-label={rule.enabled ? "停用" : "启用"}
+                            onClick={() => toggleTimeRule(rule.id)}
+                            style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 14, padding: 4 }}>
+                            {rule.enabled ? "⏸" : "▶"}
+                          </button>
+                          <button type="button" aria-label="删除提醒"
+                            onClick={() => removeTimeRule(rule.id)}
+                            style={{ border: "none", background: "transparent", color: "#ff8a8a", cursor: "pointer", fontSize: 14, padding: 4 }}>✕</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                    <input value={newRuleName} onChange={e => setNewRuleName(e.target.value)}
+                      placeholder="名字，如：喝水" style={{ ...INPUT, flex: 1.3 }} />
+                    <input value={newRuleTime} onChange={e => setNewRuleTime(e.target.value)}
+                      type="time" style={{ ...INPUT, flex: 1 }} />
+                    <button type="button" style={{ ...ACTION_BTN_GHOST, whiteSpace: "nowrap", minHeight: 38 }} onClick={addTimeRule}>加</button>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* 周期提醒 */}
             <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" onClick={() => setOpenPanel(p => p === "period" ? "none" : "period")}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
                 <span style={{ fontSize: 18 }}>💗</span>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, textAlign: "left" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>周期提醒</div>
                   <div style={{ fontSize: 11.5, color: INK_SOFT, marginTop: 3 }}>{menstrualLabel}</div>
                 </div>
-              </div>
+                <span style={{ color: INK_FAINT, fontSize: 12 }}>{openPanel === "period" ? "▲" : "▼"}</span>
+              </button>
+              {openPanel === "period" && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT }}>本次经期开始日</div>
+                  <input type="date" value={periodStartDraft} onChange={e => setPeriodStartDraft(e.target.value)}
+                    style={{ ...INPUT, marginTop: 6 }} />
+                  <div style={{ fontSize: 11, fontWeight: 700, color: INK_SOFT, marginTop: 10 }}>经期持续天数（当前 {mConfig.periodLength} 天）</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                    <input type="number" min={2} max={10} value={periodLengthDraft}
+                      onChange={e => setPeriodLengthDraft(e.target.value)} style={{ ...INPUT, flex: 1 }} />
+                    <button type="button" style={{ ...ACTION_BTN, whiteSpace: "nowrap", minHeight: 38 }} onClick={savePeriodConfig}>保存</button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 收尾卡 */}
@@ -1101,44 +1394,63 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
         <div style={{
           position: "fixed", inset: 0, zIndex: 9999,
           display: "flex", flexDirection: "column", alignItems: "center",
-          paddingTop: `calc(${SAFE_TOP} + 26px)`,
-          background: "linear-gradient(180deg,#2c4a6e 0%,#4aa8ef 55%,#7ec8ff 100%)",
+          paddingTop: "calc(env(safe-area-inset-top, 0px) + 20px)",
+          paddingLeft: 16, paddingRight: 16,
+          ...callBackgroundStyle,
           color: "#fff",
         }}>
-          <div style={{ fontSize: 12, letterSpacing: 4, fontWeight: 700, opacity: .85 }}>来电中…</div>
+          <div style={{ fontSize: "clamp(11px,3vw,13px)", letterSpacing: 4, fontWeight: 700, opacity: .85 }}>来电中…</div>
 
-          {/* char 头像 */}
-          <div style={{ marginTop: 46 }}>
-            {companion?.avatar ? (
-              <img src={companion.avatar} alt="" style={{
-                width: 108, height: 108, borderRadius: "50%", objectFit: "cover",
+          {/* char 头像（可配置 URL，空则回退角色 avatar）；小屏用 clamp 自动缩小 */}
+          <div style={{ marginTop: "calc(env(safe-area-inset-top, 0px) + 22px)" }}>
+            {callCharAvatar ? (
+              <img src={callCharAvatar} alt="" style={{
+                width: "clamp(88px,30vw,116px)", height: "clamp(88px,30vw,116px)", borderRadius: "50%", objectFit: "cover",
                 border: "3px solid rgba(255,255,255,.85)",
                 boxShadow: "0 10px 28px rgba(44,74,110,.4)",
               }} />
             ) : (
               <span style={{
-                width: 108, height: 108, borderRadius: "50%",
+                width: "clamp(88px,30vw,116px)", height: "clamp(88px,30vw,116px)", borderRadius: "50%",
                 background: "linear-gradient(135deg,#bfe4ff,#4aa8ef)",
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
-                fontSize: 44, border: "3px solid rgba(255,255,255,.85)",
+                fontSize: "clamp(36px,12vw,46px)", border: "3px solid rgba(255,255,255,.85)",
                 boxShadow: "0 10px 28px rgba(44,74,110,.4)",
               }}>🤍</span>
             )}
           </div>
 
-          <div style={{ fontSize: 28, fontWeight: 800, marginTop: 20 }}>{cname}</div>
-          <div style={{ fontSize: 13, marginTop: 8, opacity: .9 }}>{cname}想和你说说话</div>
+          <div style={{ fontSize: "clamp(22px,7vw,30px)", fontWeight: 800, marginTop: 20, textAlign: "center" }}>{callCharName}</div>
+          <div style={{ fontSize: "clamp(12px,3.6vw,14px)", marginTop: 8, opacity: .9, textAlign: "center" }}>{callHeadline}</div>
 
-          {/* iOS 风格：左挂断(红) 右接听(绿) */}
-          <div style={{ marginTop: "auto", marginBottom: 64, display: "flex", gap: 84 }}>
+          {/* 可选：用户头像小圈 */}
+          {callSettings.showUserAvatar && (
+            <div style={{
+              marginTop: 18, display: "flex", alignItems: "center", gap: 8,
+              background: "rgba(255,255,255,.18)", borderRadius: 999, padding: "4px 12px 4px 5px",
+            }}>
+              <span style={{
+                width: 26, height: 26, borderRadius: "50%", background: "rgba(255,255,255,.6)",
+                display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 14,
+              }}>🙂</span>
+              <span style={{ fontSize: 11, fontWeight: 700, opacity: .95 }}>你</span>
+            </div>
+          )}
+
+          {/* iOS 风格：左挂断 右接听；按钮 ≥64px 触控热区，抬到 Home 手势条之上 */}
+          <div style={{
+            marginTop: "auto",
+            marginBottom: "calc(env(safe-area-inset-bottom, 0px) + 40px)",
+            display: "flex", gap: "clamp(48px,20vw,88px)",
+          }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
               <button
                 type="button" aria-label="挂断" onClick={hangupCall}
                 style={{
-                  width: 68, height: 68, borderRadius: "50%", border: "none", cursor: "pointer",
-                  fontSize: 28, color: "#fff",
-                  background: "linear-gradient(135deg,#ff8a8a,#e84545)",
-                  boxShadow: "0 8px 20px rgba(180,40,40,.45)",
+                  width: "clamp(64px,20vw,76px)", height: "clamp(64px,20vw,76px)", borderRadius: "50%", border: "none", cursor: "pointer",
+                  fontSize: "clamp(24px,7vw,30px)", color: "#fff",
+                  background: callSettings.hangupColor,
+                  boxShadow: "0 8px 20px rgba(120,40,40,.4)",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   transform: "rotate(135deg)",
                 }}
@@ -1149,10 +1461,10 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               <button
                 type="button" aria-label="接听" onClick={acceptCall}
                 style={{
-                  width: 68, height: 68, borderRadius: "50%", border: "none", cursor: "pointer",
-                  fontSize: 28, color: "#fff",
-                  background: "linear-gradient(135deg,#63d68f,#37b568)",
-                  boxShadow: "0 8px 20px rgba(30,140,70,.45)",
+                  width: "clamp(64px,20vw,76px)", height: "clamp(64px,20vw,76px)", borderRadius: "50%", border: "none", cursor: "pointer",
+                  fontSize: "clamp(24px,7vw,30px)", color: "#fff",
+                  background: callSettings.acceptColor,
+                  boxShadow: "0 8px 20px rgba(30,120,70,.4)",
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}
               >📞</button>

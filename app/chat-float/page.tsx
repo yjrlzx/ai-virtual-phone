@@ -15,9 +15,11 @@ import type { MascotMsg } from "@/lib/mascot-engine";
 import {
     DEFAULT_MASCOT_DISPLAY_NAME,
     getMascotSettingsSnapshot,
+    resolveMascotImageRef,
     subscribeMascotSettings,
 } from "@/lib/mascot-settings";
 import { BilingualTextBlock } from "@/components/chat/message-bubble";
+import { ChatFloatErrorBoundary } from "./error-boundary";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
 import { shouldSendChatInputOnEnter } from "@/lib/chat-input-keyboard";
 
@@ -34,10 +36,32 @@ function getMascotMessageText(msg: MascotMsg | undefined): string {
 }
 
 function getVisibleMessages(messages: MascotMsg[]): MascotMsg[] {
-    return messages.filter((msg) => !msg.hidden && msg.role !== "tool" && !isHiddenMascotPlaceholder(msg));
+    return messages.filter((msg) => !!msg && !msg.hidden && msg.role !== "tool" && !isHiddenMascotPlaceholder(msg));
 }
 
-export default function ChatFloatPage() {
+/**
+ * 把头像统一转成 data URI 交给壳：blob:/data: 壳侧拉不到，同源图走 canvas 导出 PNG。
+ * 失败时原样返回（http/相对路径壳侧可自行下载）。
+ */
+async function toShellAvatar(url: string): Promise<string> {
+    if (url.startsWith("data:")) return url;
+    try {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        const bmp = await createImageBitmap(blob);
+        const canvas = document.createElement("canvas");
+        canvas.width = bmp.width;
+        canvas.height = bmp.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return url;
+        ctx.drawImage(bmp, 0, 0);
+        return canvas.toDataURL("image/png");
+    } catch {
+        return url;
+    }
+}
+
+function ChatFloatContent() {
     const chat = useSyncExternalStore(subscribeMascotChat, getMascotChatSnapshot, getMascotChatSnapshot);
     const settings = useSyncExternalStore(subscribeMascotSettings, getMascotSettingsSnapshot, getMascotSettingsSnapshot);
 
@@ -53,6 +77,34 @@ export default function ChatFloatPage() {
         void hydrateMascotChat();
     }, []);
 
+    // 上报角色名/头像给壳原生标题栏与悬浮球（壳侧 JS 桥 FloatShell）。
+    useEffect(() => {
+        const bridge = (window as unknown as { FloatShell?: { setTitle?: (n: string) => void; setAvatar?: (u: string) => void } }).FloatShell;
+        if (!bridge) return;
+        bridge.setTitle?.(settings.nickname || DEFAULT_MASCOT_DISPLAY_NAME);
+        let cancelled = false;
+        void resolveMascotImageRef(settings.avatarImage).then(async (url) => {
+            if (cancelled || !url) return;
+            bridge.setAvatar?.(await toShellAvatar(url));
+        });
+        return () => { cancelled = true; };
+    }, [settings.nickname, settings.avatarImage]);
+
+    // 双击悬浮球读到的屏幕文字：作为上下文消息发给角色。
+    useEffect(() => {
+        const handler = (text: string) => {
+            const content = (text || "").trim();
+            if (!content) return;
+            void sendMascotMessage({
+                text: `【当前屏幕】\n${content}\n\n这是我手机屏幕上现在显示的内容，请看看并和我聊聊。`,
+            });
+        };
+        (window as unknown as { FloatShellOnScreenText?: (t: string) => void }).FloatShellOnScreenText = handler;
+        return () => {
+            delete (window as unknown as { FloatShellOnScreenText?: unknown }).FloatShellOnScreenText;
+        };
+    }, []);
+
     useEffect(() => {
         const sync = () => setEnterToSend(loadChatAppSettings().enterToSendEnabled === true);
         window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
@@ -60,7 +112,7 @@ export default function ChatFloatPage() {
     }, []);
 
     const visibleMessages = useMemo(() => getVisibleMessages(chat.messages), [chat.messages]);
-    const latestVisible = [...chat.messages].reverse().find((msg) => !msg.hidden && msg.role !== "tool");
+    const latestVisible = [...chat.messages].reverse().find((msg) => !!msg && !msg.hidden && msg.role !== "tool");
     const canGenerateReply = !chat.isThinking && latestVisible?.role === "user";
 
     // 自动滚到底：历史加载完成、新消息、流式增量、思考态切换时都要贴底。
@@ -267,5 +319,13 @@ export default function ChatFloatPage() {
                 </button>
             </div>
         </div>
+    );
+}
+
+export default function ChatFloatPage() {
+    return (
+        <ChatFloatErrorBoundary>
+            <ChatFloatContent />
+        </ChatFloatErrorBoundary>
     );
 }

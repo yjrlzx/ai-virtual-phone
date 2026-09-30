@@ -1883,6 +1883,11 @@ const HUAWEI_SHELL_SUBTOOLS: InternalToolDefinition[] = [
         parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
     },
     {
+        name: "实时天气",
+        description: "根据{{user}}当前经纬度查询实时天气（温度与天气状况），提到“天气”“冷不冷”时用。",
+        parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
+    },
+    {
         name: "查看当前应用",
         description: "读取{{user}}华为手机此刻前台正在使用的应用。",
         parameterSchema: HUAWEI_EMPTY_PARAMETER_SCHEMA,
@@ -2308,6 +2313,10 @@ function buildHuaweiShellUsageGuide(): string {
         "动作：查询位置",
         "说明：{{user}}手机当前经纬度；提到“我在哪”“发个定位”时用。",
         "示例：[执行动作:查询位置({})]",
+        "",
+        "动作：实时天气",
+        "说明：{{user}}当前位置的实时天气（温度与状况）；问“外面冷不冷”“天气怎么样”时用。",
+        "示例：[执行动作:实时天气({})]",
         "",
         "动作：查看当前应用",
         "说明：{{user}}此刻正在用的前台应用；问“在看什么”时用。",

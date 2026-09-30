@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -18,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlin.math.hypot
 
@@ -25,7 +27,7 @@ import kotlin.math.hypot
  * 现实桥·悬浮球服务（对齐 Operit 悬浮球交互）。
  *
  *  - 单击（短按未拖动）→ 打开/收起悬浮聊天小窗（FloatingChatWindowService）；
- *  - 双击 → 截真实屏幕交给角色速聊（MediaProjectionCapture + 网页回调）；
+ *  - 双击 → 无障碍遍历当前屏幕抓文字，塞进悬浮对话窗发给角色；无障碍未开时引导去开启；
  *  - 长按（超过 600ms 未拖动）→ 震动一下，球缩到屏幕边缘半透明收起态；
  *  - 拖动松手后自动吸附到最近的屏幕左/右边缘。
  *
@@ -55,6 +57,7 @@ class RealityBridgeFloatingService : Service() {
     private var ballView: View? = null
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballPx = 0
+    private var ballAvatarObserver: (() -> Unit)? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
@@ -70,6 +73,7 @@ class RealityBridgeFloatingService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        MascotAvatar.initFromPrefs(this)
         startForeground(NOTIF_FG_ID, buildFloatNotification())
         if (!canDrawOverlays(this)) {
             // 引导去开悬浮窗权限
@@ -90,9 +94,22 @@ class RealityBridgeFloatingService : Service() {
     private fun showBall() {
         val wm = getSystemService(WINDOW_SERVICE) as? WindowManager ?: return
         windowManager = wm
-        val ball = ImageView(this)
-        ball.setImageResource(R.drawable.ic_stat)
-        ball.alpha = 0.92f
+
+        // 高对比圆形球：品牌蓝底 + 白描边 + 白图标/角色头像，深浅壁纸都看得见
+        val ball = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF4F8CFF.toInt())
+                setStroke(dp(2f).toInt(), android.graphics.Color.WHITE)
+            }
+            setPadding(dp(9f), dp(9f), dp(9f), dp(9f))
+            alpha = 0.95f
+        }
+        applyBallAvatar(ball)
+        val observer: () -> Unit = { applyBallAvatar(ball) }
+        ballAvatarObserver = observer
+        MascotAvatar.addObserver(observer)
         ballPx = dp(46f)
         val size = ballPx
         val params = WindowManager.LayoutParams(
@@ -194,18 +211,45 @@ class RealityBridgeFloatingService : Service() {
         FloatingChatWindowService.toggle(this)
     }
 
-    /** 双击 → 截真实屏幕 → 交给角色速聊 */
+    /** 双击 → 无障碍读屏文字，塞进悬浮对话窗发给角色。 */
     private fun onDoubleTap() {
-        MediaProjectionCapture.capture(this) { bitmap ->
-            if (bitmap != null) {
-                // 借活动 MainActivity 的 AndroidShell 桥回调网页（网页侧 window.__floatBridgeOnScreenShot）
-                MainActivity.deliverScreenShotToWeb(bitmap)
-            } else if (MediaProjectionCapture.needsReauth) {
-                // 投影为空/已失效：借活动切主线程弹系统授权，授权成功后 screenCaptureLauncher 会自动再截一次
-                MainActivity.requestScreenCaptureForFloatingBall()
+        val svc = RealityBridgeAccessibility.current()
+        if (svc == null) {
+            Toast.makeText(this, "读取屏幕文字需要无障碍权限，请在 设置→无障碍 中开启", Toast.LENGTH_LONG).show()
+            runCatching {
+                startActivity(
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
             }
-            // busy（上一帧未拍完）导致的 null 直接忽略，不打扰用户
+            return
         }
+        val text = runCatching { extractScreenText(svc.dumpScreenTree()) }.getOrDefault("")
+        if (text.isBlank()) {
+            Toast.makeText(this, "没有读到屏幕上的文字", Toast.LENGTH_SHORT).show()
+            return
+        }
+        FloatingChatWindowService.show(this)
+        handler.postDelayed({ FloatingChatWindowService.injectScreenText(text) }, 800L)
+    }
+
+    /** 从 dumpScreenTree 的节点 JSON 里抽取可见文字/描述，去重后拼接成上下文。 */
+    private fun extractScreenText(json: String): String {
+        return runCatching {
+            val arr = org.json.JSONArray(json)
+            val seen = LinkedHashSet<String>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                o.optString("text")?.takeIf { it.isNotBlank() }?.let { seen.add(it.trim()) }
+                o.optString("desc")?.takeIf { it.isNotBlank() }?.let { seen.add(it.trim()) }
+            }
+            seen.joinToString("\n").take(1500)
+        }.getOrDefault("")
+    }
+
+    /** 球上的头像：有角色圆图就用，否则退回默认白图标。 */
+    private fun applyBallAvatar(ball: ImageView) {
+        val bmp = MascotAvatar.bitmap
+        if (bmp != null) ball.setImageBitmap(bmp) else ball.setImageResource(R.drawable.ic_stat)
     }
 
     /** 长按：震动一下并切换边缘半透明收起态。 */
@@ -278,6 +322,8 @@ class RealityBridgeFloatingService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndLp()
+        ballAvatarObserver?.let { MascotAvatar.removeObserver(it) }
+        ballAvatarObserver = null
         runCatching { ballView?.let { windowManager?.removeView(it) } }
         ballView = null
         ballParams = null

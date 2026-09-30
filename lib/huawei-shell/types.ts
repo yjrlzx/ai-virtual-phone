@@ -15,6 +15,8 @@ export type HuaweiShellBridge = {
 
     openApp?(packageName: string): string;
     getStatus?(): string;
+    /** 系统状态快照（Operit 式）：{ok,batteryLevel,isCharging,networkType,location?:{lat,lng},foregroundApp?} */
+    getSystemContextSnapshot?(): string;
     setFloating?(enabled: boolean): void;
     setLockedPackages?(json: string): string;
     getLockedPackages?(): string;
@@ -61,6 +63,10 @@ export type HuaweiShellBridge = {
     readGadgetbridgeHealth?(exportPath: string): string;
     getPermissionStatus?(customSuCommand?: string): string;
     openPermissionSettings?(setting: string): string;
+    /** 系统控制权限实时状态 → {ok, writeSettings, shizuku, bluetoothConnect} */
+    getSystemControlStatus?(): string;
+    /** 弹系统授权框请求 BLUETOOTH_CONNECT（API31+）→ {ok, message} */
+    requestBluetoothPermission?(): string;
 
     /** Shizuku 执行 shell，返回 {ok, stdout, stderr, exitCode}（照搬 Operit 系统操作核心） */
     executeShellCommand?(command: string): string;

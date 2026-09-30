@@ -10,6 +10,11 @@ import { getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
 export function ChatPluginBootstrap() {
     useEffect(() => {
         void getChatPluginRuntime().ensureStarted();
+        // 陆知行首启播种：动态 import，避免模块作用域碰浏览器 API，
+        // 老 WebView（华为 P60 HarmonyOS）里即使 IndexedDB/kv 异常也不崩 hydration。
+        void import("@/lib/luzhixing-seed")
+            .then(m => m.seedLuzhixingIfFirstRun())
+            .catch(err => console.warn("[Bootstrap] seed skipped:", err));
     }, []);
     return null;
 }

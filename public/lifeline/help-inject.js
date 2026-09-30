@@ -7,49 +7,65 @@
 (function () {
   'use strict';
 
-  /* ---------- 样式（与主应用同色系） ---------- */
+  /* ---------- 样式（移动优先：手机端底部抽屉单栏，桌面宽屏居中弹窗；沿用主应用配色变量并带兜底） ---------- */
   var cssText = [
+    /* 遮罩：手机端从底部弹起，桌面端(>=640px)由媒体查询改为居中 */
     '.llhelp-mask{position:fixed;inset:0;top:0;left:0;width:100%;height:100%;',
-    'background:rgba(240,248,255,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);',
-    'z-index:9997;display:none;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}',
+    'background:rgba(30,60,90,0.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);',
+    'z-index:9997;display:none;align-items:flex-end;justify-content:center;padding:0;box-sizing:border-box;}',
     '.llhelp-mask.llhelp-show{display:flex;}',
-    '.llhelp-panel{background:rgba(255,255,255,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);',
-    'border:1px solid rgba(255,255,255,0.6);border-radius:24px;',
-    'box-shadow:0 20px 60px rgba(130,170,220,0.30);',
-    'width:100%;max-width:600px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;',
-    'font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#44546A;}',
-    '.llhelp-head{display:flex;align-items:center;justify-content:space-between;',
-    'padding:16px 22px;border-bottom:1px solid rgba(184,224,247,0.4);',
-    'background:linear-gradient(to bottom,#f8fbff,#eaf4fd);flex:0 0 auto;}',
-    '.llhelp-title{font-size:15px;font-weight:600;color:#44546A;letter-spacing:0.5px;}',
-    '.llhelp-close{width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;',
-    'background:rgba(214,237,249,0.9);color:#44546A;font-size:15px;line-height:1;',
-    'display:flex;align-items:center;justify-content:center;}',
-    '.llhelp-close:hover{background:#B8E0F7;}',
-    '.llhelp-body{padding:18px 22px 26px;overflow-y:auto;flex:1 1 auto;}',
-    '.llhelp-body h3{font-size:14px;font-weight:600;color:#44546A;margin:20px 0 10px;',
-    'padding:8px 14px;background:#D6EDF9;border-radius:14px;border-left:4px solid #B8E0F7;}',
+    /* 面板：移动优先单栏、接近全高，顶部圆角；宽度自适应屏幕，无固定桌面多栏 */
+    '.llhelp-panel{background:#fff;',
+    'border:1px solid var(--card-border,rgba(184,224,247,0.4));border-radius:20px 20px 0 0;',
+    'box-shadow:0 -10px 40px rgba(130,170,220,0.35);',
+    'width:100%;max-height:92vh;max-height:92dvh;display:flex;flex-direction:column;overflow:hidden;',
+    'font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--text-main,#44546A);box-sizing:border-box;}',
+    '.llhelp-head{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;',
+    'padding:calc(14px + env(safe-area-inset-top,0px)) 16px 12px;border-bottom:1px solid var(--card-border,rgba(184,224,247,0.4));',
+    'background:linear-gradient(to bottom,#f8fbff,#eaf4fd);box-sizing:border-box;}',
+    '.llhelp-title{font-size:16px;font-weight:600;color:var(--text-main,#44546A);line-height:1.4;}',
+    /* 关闭按钮触控热区 44x44，不依赖 hover，用 :active 反馈 */
+    '.llhelp-close{flex:0 0 auto;width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;',
+    'background:var(--inactive-blue,rgba(214,237,249,0.95));color:var(--text-main,#44546A);font-size:22px;line-height:1;',
+    'display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;}',
+    '.llhelp-close:active{background:var(--active-blue,#B8E0F7);}',
+    '.llhelp-body{flex:1 1 auto;padding:16px 16px calc(24px + env(safe-area-inset-bottom,0px));',
+    'overflow-y:auto;-webkit-overflow-scrolling:touch;box-sizing:border-box;}',
+    '.llhelp-body h3{font-size:16px;font-weight:600;color:var(--text-main,#44546A);margin:22px 0 10px;',
+    'padding:10px 14px;background:var(--inactive-blue,#D6EDF9);border-radius:12px;border-left:4px solid var(--active-blue,#B8E0F7);line-height:1.4;}',
     '.llhelp-body h3:first-child{margin-top:0;}',
-    '.llhelp-body p{font-size:13px;line-height:1.7;color:#44546A;margin:8px 0;}',
-    '.llhelp-body .llhelp-sub{color:#8899AA;font-size:12px;}',
-    '.llhelp-body ol,.llhelp-body ul{margin:8px 0;padding-left:22px;}',
-    '.llhelp-body li{font-size:13px;line-height:1.7;margin:4px 0;color:#44546A;}',
-    '.llhelp-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;',
-    'margin:8px 0;border-radius:16px;overflow:hidden;border:1px solid rgba(184,224,247,0.4);}',
-    '.llhelp-table th{background:#B8E0F7;color:#44546A;font-weight:600;padding:8px 10px;text-align:left;}',
-    '.llhelp-table td{padding:7px 10px;border-top:1px solid rgba(184,224,247,0.35);color:#44546A;background:rgba(255,255,255,0.7);}',
+    '.llhelp-body p{font-size:15px;line-height:1.7;color:var(--text-main,#44546A);margin:10px 0;}',
+    '.llhelp-body .llhelp-sub{color:var(--text-sub,#5f7185);font-size:13px;line-height:1.6;}',
+    '.llhelp-body ol,.llhelp-body ul{margin:10px 0;padding-left:22px;}',
+    '.llhelp-body li{font-size:15px;line-height:1.7;margin:6px 0;color:var(--text-main,#44546A);}',
+    /* 表格：外包一层横向滚动容器，min-width 强制小屏可横滑，不挤压换行 */
+    '.llhelp-tablewrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;',
+    'margin:10px 0;border-radius:12px;border:1px solid var(--card-border,rgba(184,224,247,0.4));box-sizing:border-box;}',
+    '.llhelp-table{width:100%;min-width:420px;border-collapse:separate;border-spacing:0;font-size:14px;}',
+    '.llhelp-table th{background:var(--active-blue,#B8E0F7);color:var(--text-main,#44546A);font-weight:600;padding:10px 12px;text-align:left;white-space:nowrap;}',
+    '.llhelp-table td{padding:10px 12px;border-top:1px solid rgba(184,224,247,0.35);color:var(--text-main,#44546A);background:rgba(255,255,255,0.8);}',
     '.llhelp-table tr:nth-child(even) td{background:rgba(214,237,249,0.35);}',
-    '.llhelp-code{display:block;background:#F0F8FF;border:1px dashed rgba(184,224,247,0.8);',
-    'border-radius:14px;padding:12px 14px;font-size:12.5px;line-height:1.8;color:#44546A;',
-    'white-space:pre-wrap;word-break:break-all;font-family:Consolas,"Courier New",monospace;margin:8px 0;}',
-    '.llhelp-quote{background:rgba(184,224,247,0.25);border-radius:14px;padding:10px 14px;',
-    'font-size:13px;line-height:1.7;color:#44546A;margin:8px 0;}',
-    '.llhelp-fab{position:fixed;right:18px;bottom:22px;z-index:9998;width:52px;height:52px;border-radius:50%;',
+    '.llhelp-code{display:block;background:var(--page-bg,#F0F8FF);border:1px dashed rgba(184,224,247,0.8);',
+    'border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.7;color:var(--text-main,#44546A);',
+    'white-space:pre-wrap;word-break:break-word;overflow-x:auto;',
+    'font-family:Consolas,"Courier New",monospace;margin:10px 0;}',
+    '.llhelp-quote{background:rgba(184,224,247,0.25);border-radius:12px;padding:12px 14px;',
+    'font-size:15px;line-height:1.7;color:var(--text-main,#44546A);margin:10px 0;}',
+    /* 悬浮帮助按钮：安全区适配，:active 缩放反馈，不依赖 hover */
+    '.llhelp-fab{position:fixed;right:calc(16px + env(safe-area-inset-right,0px));',
+    'bottom:calc(20px + env(safe-area-inset-bottom,0px));z-index:9998;width:52px;height:52px;border-radius:50%;',
     'border:1px solid rgba(255,255,255,0.7);cursor:pointer;',
-    'background:linear-gradient(135deg,#B8E0F7,#a8d8f5);color:#44546A;',
+    'background:linear-gradient(135deg,#B8E0F7,#a8d8f5);color:#3a6a8a;',
     'font-size:22px;font-weight:600;font-family:Georgia,serif;',
-    'box-shadow:0 8px 24px rgba(130,170,220,0.4);display:flex;align-items:center;justify-content:center;}',
-    '.llhelp-fab:hover{box-shadow:0 10px 28px rgba(130,170,220,0.55);transform:translateY(-1px);}'
+    'box-shadow:0 8px 24px rgba(130,170,220,0.4);display:flex;align-items:center;justify-content:center;',
+    '-webkit-tap-highlight-color:transparent;}',
+    '.llhelp-fab:active{transform:scale(0.94);}',
+    /* 桌面宽屏：回到居中卡片弹窗，仍保持单栏 */
+    '@media (min-width:640px){',
+    '.llhelp-mask{align-items:center;padding:20px;}',
+    '.llhelp-panel{max-width:600px;max-height:82vh;max-height:82dvh;border-radius:24px;',
+    'box-shadow:0 20px 60px rgba(130,170,220,0.30);}',
+    '}'
   ].join('');
 
   /* ---------- 内容 ---------- */
@@ -174,6 +190,16 @@
     var body = document.createElement('div');
     body.className = 'llhelp-body';
     body.innerHTML = htmlContent;
+
+    // 给表格套一层横向滚动容器：小屏可左右滑动，不挤压换行（纯布局，不改文字）
+    var llTables = body.querySelectorAll('.llhelp-table');
+    for (var ti = 0; ti < llTables.length; ti++) {
+      var lt = llTables[ti];
+      var lw = document.createElement('div');
+      lw.className = 'llhelp-tablewrap';
+      lt.parentNode.insertBefore(lw, lt);
+      lw.appendChild(lt);
+    }
 
     panel.appendChild(head);
     panel.appendChild(body);

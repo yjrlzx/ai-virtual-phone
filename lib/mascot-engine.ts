@@ -3,6 +3,7 @@
 
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { getMascotPersonaPrompt } from "./mascot-settings";
+import { buildSystemContextSnapshot } from "./huawei-shell/system-snapshot";
 import type { MascotPageContext } from "./mascot-context";
 import {
     buildMascotToolsListPrompt,
@@ -528,6 +529,8 @@ async function callMascotText(
     const systemPrompt = [
         getMascotPersonaPrompt(),
         `当前页面：${context.label}（${context.mode}）`,
+        // Operit 式系统快照：电量/网络/定位/天气/前台应用自动感知，LLM 不用主动调工具
+        await buildSystemContextSnapshot(),
         buildMascotToolsListPrompt(),
     ].join("\n\n");
 
@@ -602,6 +605,8 @@ async function callMascotNative(
     const systemPrompt = [
         getMascotPersonaPrompt(),
         `当前页面：${context.label}（${context.mode}）`,
+        // Operit 式系统快照：电量/网络/定位/天气/前台应用自动感知
+        await buildSystemContextSnapshot(),
         "你有工具可调。每个套件需要先展开才能看到详细动作；导航工具直接可用。同时最多展开 2 个套件。",
         "重要：调用工具时，回复文本里**不要复述**工具参数的内容（比如不要把 persona 完整文本再写一遍）。回复文本只用一两句话简短说明你在做什么即可，详细内容通过工具参数传递。",
     ].join("\n\n");

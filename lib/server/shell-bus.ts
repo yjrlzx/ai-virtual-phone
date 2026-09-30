@@ -47,3 +47,8 @@ export function subscribeShellNotify(userId: string, listener: ShellBusListener)
     instance.off(key, listener);
   };
 }
+
+/** 当前该用户挂着几条在线 SSE 长连接（= 几条壳在线）。 */
+export function countShellListeners(userId: string): number {
+  return getBus().listenerCount(channelKey(userId));
+}

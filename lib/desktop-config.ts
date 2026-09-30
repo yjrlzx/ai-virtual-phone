@@ -1,8 +1,7 @@
-import type { CustomAppIconId } from "@/lib/custom-app-types";
+﻿import type { CustomAppIconId } from "@/lib/custom-app-types";
 
 export type IconId =
   | "chat"
-  | "diary"
   | "music"
   | "reading"
   | "cocreate"
@@ -57,7 +56,7 @@ export type IconMeta = {
   path?: string;
 };
 
-export const PAGE_1_DEFAULT: IconId[] = ["chat", "diary", "music", "calendar", "checkphone", "shopping", "reading", "interview_magazine"];
+export const PAGE_1_DEFAULT: IconId[] = ["chat", "music", "calendar", "checkphone", "shopping", "reading", "interview_magazine"];
 
 export const PAGE_2_DEFAULT: IconId[] = [
   "cocreate",
@@ -77,7 +76,6 @@ export const DOCK_DEFAULT: IconId[] = ["settings", "theme", "resources", "charac
 
 export const ICONS: Record<IconId, IconMeta> = {
   chat: { id: "chat", label: "\u804a\u5929", tone: "var(--c-icon-green)", placeholder: false },
-  diary: { id: "diary", label: "手记", tone: "var(--c-icon-violet)", placeholder: false },
   music: { id: "music", label: "\u97F3\u4E50", tone: "var(--c-icon-coral)", placeholder: false },
   reading: { id: "reading", label: "\u9605\u8BFB", tone: "var(--c-icon-amber)", placeholder: false },
   cocreate: { id: "cocreate", label: "共创", tone: "var(--c-icon-cocreate, #c8b58a)", placeholder: false },

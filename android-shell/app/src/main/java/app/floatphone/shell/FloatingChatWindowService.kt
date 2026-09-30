@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -21,6 +22,7 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -65,6 +67,9 @@ class FloatingChatWindowService : Service() {
     private var windowManager: WindowManager? = null
     private var rootView: View? = null
     private var chatWeb: WebView? = null
+    private var nameView: TextView? = null
+    private var avatarObserver: (() -> Unit)? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var recording = false
 
     /** 最近一次缩放结束后的窗口宽高（px），仅内存记录，不持久化；0 表示未缩放过，用默认尺寸。 */
@@ -117,19 +122,35 @@ class FloatingChatWindowService : Service() {
             setBackgroundColor(0xF0101418.toInt())
         }
 
-        // ── 标题栏：左侧球图标+标题，右侧 ← / 🎤 / ✕
+        // ── 标题栏：左侧角色头像+标题，右侧 ← / 🎤 / ✕
         val titleBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(0xFF1A1F26.toInt())
             setPadding(dp(10f), dp(8f), dp(6f), dp(8f))
         }
-        val title = TextView(this).apply {
-            text = "◉ 角色"
+        val avatarView = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF2A3138.toInt())
+                setStroke(dp(1).toInt(), 0x66FFFFFF)
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f)).apply {
+                rightMargin = dp(8f)
+            }
+        }
+        applyAvatar(avatarView)
+        val observer: () -> Unit = { applyAvatar(avatarView) }
+        avatarObserver = observer
+        MascotAvatar.addObserver(observer)
+        val name = TextView(this).apply {
+            text = "角色"
             setTextColor(Color.WHITE)
             textSize = 14f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        nameView = name
         val backBtn = titleButton("←") {
             val wv = chatWeb
             if (wv != null && wv.canGoBack()) wv.goBack()
@@ -137,7 +158,8 @@ class FloatingChatWindowService : Service() {
         }
         val micBtn = titleButton("🎤") { toggleMic() }
         val closeBtn = titleButton("✕") { closeSelf() }
-        titleBar.addView(title)
+        titleBar.addView(avatarView)
+        titleBar.addView(name)
         titleBar.addView(backBtn)
         titleBar.addView(micBtn)
         titleBar.addView(closeBtn)
@@ -162,6 +184,8 @@ class FloatingChatWindowService : Service() {
                 }.getOrDefault(true)
             }
         }
+        // 网页上报角色头像/名字；双击悬浮球读到的屏幕文字经 window.FloatShellOnScreenText 回传
+        web.addJavascriptInterface(FloatBridge(), "FloatShell")
         web.loadUrl(BuildConfig.SITE_URL.trimEnd('/') + "/chat-float")
 
         content.addView(titleBar, LinearLayout.LayoutParams(
@@ -197,6 +221,10 @@ class FloatingChatWindowService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = resources.displayMetrics.widthPixels - w - dp(12f)
             y = dp(110f)
+            // 悬浮窗默认不随键盘 resize：软键盘弹起时 WebView 要压缩高度，
+            // 否则页面底部输入框会被键盘顶出可视区（用户看不到输入框）
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
         }
 
         // 标题栏拖动整窗
@@ -295,7 +323,7 @@ class FloatingChatWindowService : Service() {
         setOnClickListener { onClick() }
     }
 
-    /** 🎤：点一下开始录音识别，再点一下结束；结果回传主网页。 */
+    /** 🎤：点一下开始录音识别，再点一下结束；结果填进本窗输入框。 */
     private fun toggleMic() {
         if (!recording) {
             val granted = androidx.core.content.ContextCompat.checkSelfPermission(
@@ -308,11 +336,62 @@ class FloatingChatWindowService : Service() {
             recording = true
             ShellStt.start(this, "{}") { json ->
                 recording = false
-                MainActivity.deliverSpeechToWeb(json)
+                val text = runCatching { org.json.JSONObject(json).optString("text") }.getOrDefault("")
+                if (text.isNotBlank()) fillInput(text)
             }
         } else {
             recording = false
             ShellStt.stop()
+        }
+    }
+
+    /** 把文字填进 chat-float 页底部输入框（走 React 受控 input 的原生 setter 才会触发状态更新）。 */
+    private fun fillInput(text: String) {
+        val js = """
+            (function(){
+              try {
+                var ta = document.querySelector('.chat-input-textarea');
+                if (!ta) return;
+                var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                setter.call(ta, ta.value + ${org.json.JSONObject.quote(text)});
+                ta.dispatchEvent(new Event('input', { bubbles: true }));
+                ta.focus();
+              } catch (e) {}
+            })();
+        """.trimIndent()
+        chatWeb?.evaluateJavascript(js, null)
+    }
+
+    /** 双击悬浮球读到的屏幕文字：注入 chat-float 页作为上下文发送。 */
+    fun injectScreenText(text: String) {
+        chatWeb?.evaluateJavascript(
+            "window.FloatShellOnScreenText && window.FloatShellOnScreenText(${org.json.JSONObject.quote(text)})",
+            null,
+        )
+    }
+
+    /** 标题栏头像：MascotAvatar 有缓存圆图就用，否则显示深色占位圆。 */
+    private fun applyAvatar(target: ImageView) {
+        val bmp = MascotAvatar.bitmap
+        if (bmp != null) {
+            target.setImageBitmap(bmp)
+        } else {
+            target.setImageDrawable(null)
+        }
+    }
+
+    /** chat-float 页 → 壳侧桥：上报角色头像与名字。 */
+    private inner class FloatBridge {
+        @android.webkit.JavascriptInterface
+        fun setAvatar(url: String) {
+            MascotAvatar.set(this@FloatingChatWindowService, url)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun setTitle(name: String) {
+            val clean = name.trim().take(16)
+            if (clean.isBlank()) return
+            mainHandler.post { nameView?.text = clean }
         }
     }
 
@@ -322,6 +401,9 @@ class FloatingChatWindowService : Service() {
         chatWeb?.destroy()
         chatWeb = null
         rootView = null
+        nameView = null
+        avatarObserver?.let { MascotAvatar.removeObserver(it) }
+        avatarObserver = null
         recording = false
         stopSelf()
     }

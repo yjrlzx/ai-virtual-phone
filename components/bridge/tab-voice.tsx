@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getAndroidShell, loadHuaweiShellSettings, parseShellJson } from "@/lib/huawei-shell/storage";
+import { getAndroidShell, loadHuaweiShellSettings, parseShellJson, readVoiceAssistantConfig, saveVoiceAssistantConfig, VOICE_ASSISTANT_DEFAULT_VOICES, type VoiceAssistantConfig } from "@/lib/huawei-shell/storage";
 import type { HuaweiShellBridge, HuaweiWakeWordMode } from "@/lib/huawei-shell/types";
 import { resolveVoiceConfig } from "@/lib/tts-service";
 import {
@@ -108,6 +108,16 @@ export function TabVoice({ onNotice }: BridgeTabProps) {
   const [speaking, setSpeaking] = useState(false);
   const [templateCount, setTemplateCount] = useState(0);
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
+  // 语音助手 MiniMax 配置：与现实桥设置页同一份 store（resolveVoiceConfig("voice-assistant")）
+  const [voiceCfg, setVoiceCfg] = useState<VoiceAssistantConfig>(() => readVoiceAssistantConfig());
+
+  const updateVoiceCfg = (patch: Partial<VoiceAssistantConfig>) => {
+    setVoiceCfg(prev => {
+      const next = { ...prev, ...patch };
+      saveVoiceAssistantConfig(next);
+      return next;
+    });
+  };
 
   // 用 ref 让全局回调始终读到最新配置，避免反复拆装 window 监听
   const cfgRef = useRef(cfg);
@@ -389,6 +399,59 @@ export function TabVoice({ onNotice }: BridgeTabProps) {
           </div>
           <Switch on={cfg.autoSpeak} onChange={() => updateCfg({ autoSpeak: !cfg.autoSpeak })} label="自动朗读" />
         </div>
+
+        {/* 合成引擎：系统 TTS / MiniMax（与现实桥设置页同一份配置） */}
+        <div style={{ marginTop: 12 }}>
+          <i style={{ fontStyle: "normal", fontSize: 11.5, color: SUB, display: "block", marginBottom: 4 }}>合成引擎</i>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {([["system", "系统 TTS"], ["minimax", "MiniMax 在线"]] as Array<["system" | "minimax", string]>).map(([p, label]) => {
+              const on = voiceCfg.provider === p;
+              return (
+                <button key={p} type="button" onClick={() => updateVoiceCfg({ provider: p })}
+                  style={{
+                    border: "none", borderRadius: 999, padding: "8px 14px", fontSize: 12, fontWeight: 700,
+                    cursor: "pointer", minHeight: 40,
+                    background: on ? ACCENT : "rgba(150,190,230,.15)", color: on ? "#fff" : SUB,
+                  }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {voiceCfg.provider === "minimax" ? (
+          <>
+            <div style={{ marginTop: 10 }}>
+              <i style={{ fontStyle: "normal", fontSize: 11.5, color: SUB, display: "block", marginBottom: 4 }}>API Key（不回显完整值）</i>
+              <input type="password" value={voiceCfg.apiKey} placeholder="MiniMax api key"
+                onChange={e => updateVoiceCfg({ apiKey: e.target.value })} style={INPUT} />
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <i style={{ fontStyle: "normal", fontSize: 11.5, color: SUB, display: "block", marginBottom: 4 }}>音色 voiceId</i>
+              <input type="text" list="hw-voice-assistant-voices" value={voiceCfg.voiceId}
+                onChange={e => updateVoiceCfg({ voiceId: e.target.value })} style={INPUT} />
+              <datalist id="hw-voice-assistant-voices">
+                {VOICE_ASSISTANT_DEFAULT_VOICES.map(v => (
+                  <option key={v.id} value={v.id}>{v.label}</option>
+                ))}
+              </datalist>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <i style={{ fontStyle: "normal", fontSize: 11.5, color: SUB, display: "block", marginBottom: 4 }}>接口地址 baseUrl</i>
+              <input type="text" value={voiceCfg.baseUrl}
+                onChange={e => updateVoiceCfg({ baseUrl: e.target.value })} style={INPUT} />
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <i style={{ fontStyle: "normal", fontSize: 11.5, color: SUB, display: "block", marginBottom: 4 }}>模型 model</i>
+              <input type="text" value={voiceCfg.model} placeholder="speech-01-turbo"
+                onChange={e => updateVoiceCfg({ model: e.target.value })} style={INPUT} />
+            </div>
+            <div style={{ fontSize: 11, color: FAINT, marginTop: 8 }}>
+              语速 / 音调滑块对 MiniMax 同样生效（映射为 voice_setting.speed / pitch）。
+            </div>
+          </>
+        ) : null}
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
           <b style={{ fontSize: 13, color: INK }}>语速</b>

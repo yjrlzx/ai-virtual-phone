@@ -49,10 +49,15 @@ import {
     syncHuaweiLedgerFromShell,
     loadHuaweiHealthSnapshot,
     saveHuaweiHealthSnapshot,
+    readVoiceAssistantConfig,
+    saveVoiceAssistantConfig,
+    VOICE_ASSISTANT_DEFAULT_VOICES,
+    type VoiceAssistantConfig,
     type HuaweiHealthSnapshot,
     type HuaweiPlace,
     type HuaweiShellSettings,
 } from "@/lib/huawei-shell/storage";
+import { resolveVoiceConfig } from "@/lib/tts-service";
 import type {
     HuaweiCustomAction,
     HuaweiCustomActionType,
@@ -119,6 +124,8 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
     const [placesDraft, setPlacesDraft] = useState<HuaweiPlace[]>(() => loadHuaweiShellSettings().whereaboutsPlaces);
     const [placeDraft, setPlaceDraft] = useState<HuaweiPlace>({ name: "", lat: 0, lng: 0, radiusM: 150 });
     const [healthSnapshot, setHealthSnapshot] = useState<HuaweiHealthSnapshot | null>(() => loadHuaweiHealthSnapshot());
+    const [voiceCfg, setVoiceCfg] = useState<VoiceAssistantConfig>(() => readVoiceAssistantConfig());
+    const [voiceTesting, setVoiceTesting] = useState(false);
 
     useEffect(() => {
         const available = isHuaweiShellAvailable();
@@ -142,6 +149,30 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
             return next;
         });
     }, []);
+
+    /* 语音助手 MiniMax：试读一次（先落盘，再按当前 provider 走壳端在线/系统合成） */
+    const testVoiceSpeak = () => {
+        saveVoiceAssistantConfig(voiceCfg);
+        const shell = getAndroidShell();
+        if (!shell?.speak) {
+            onNotice?.("华为壳未连接，无法试听");
+            return;
+        }
+        try {
+            const vc = resolveVoiceConfig("voice-assistant");
+            const payload: Record<string, unknown> = { text: "你好，这是语音助手试听。", queue: false, rate: 1, pitch: 1, languageTag: "zh-CN" };
+            if (vc && vc.provider === "Minimax" && vc.apiKey) {
+                payload.apiKey = vc.apiKey;
+                payload.voiceId = vc.defaultVoice;
+                if (vc.baseUrl) payload.baseUrl = vc.baseUrl;
+                if (vc.model) payload.model = vc.model;
+            }
+            shell.speak(JSON.stringify(payload));
+            onNotice?.(voiceCfg.provider === "minimax" ? "已发 MiniMax 在线合成试听" : "已发系统 TTS 试听");
+        } catch (err) {
+            onNotice?.(err instanceof Error ? err.message : "试听失败");
+        }
+    };
 
     const testPermissionStatus = () => {
         const shell = getAndroidShell();
@@ -1381,6 +1412,80 @@ export function HuaweiShellSettings({ onNotice }: { onNotice?: (msg: string) => 
                         </div>
                     </>
                 )}
+            </div>
+
+            {/* 现实桥能力开关：角色自动感知项 */}
+            <div className="hw-shell-card">
+                <div className="hw-win-dots"><i /><i /><i /></div>
+                <div className="hw-card-title"><Zap size={16} /> 现实桥能力开关（角色自动感知）</div>
+                <p className="hw-field-hint" style={{ marginTop: 0 }}>
+                    系统状态快照自动注入对话；关闭后该项从快照剔除，对应工具也会被拒绝，角色读不到。
+                </p>
+                <label className="hw-field-label hw-toggle-line" style={{ minHeight: 44 }}>
+                    <input type="checkbox" className="hw-check" checked={settings.capBatteryEnabled} onChange={e => updateSettings({ capBatteryEnabled: e.target.checked })} />
+                    电量感知（电量百分比 / 是否充电）
+                </label>
+                <label className="hw-field-label hw-toggle-line" style={{ minHeight: 44 }}>
+                    <input type="checkbox" className="hw-check" checked={settings.capLocationEnabled} onChange={e => updateSettings({ capLocationEnabled: e.target.checked })} />
+                    定位感知（经纬度；关闭后实时天气也不可用）
+                </label>
+                <label className="hw-field-label hw-toggle-line" style={{ minHeight: 44 }}>
+                    <input type="checkbox" className="hw-check" checked={settings.capWeatherEnabled} onChange={e => updateSettings({ capWeatherEnabled: e.target.checked })} />
+                    天气感知（Open-Meteo 免费接口，无需 key）
+                </label>
+            </div>
+
+            {/* 语音助手 MiniMax 配置：与自动朗读页 / 语音通话共用同一 store */}
+            <div className="hw-shell-card">
+                <div className="hw-win-dots"><i /><i /><i /></div>
+                <div className="hw-card-title"><Mic size={16} /> 语音助手（MiniMax）</div>
+                <p className="hw-field-hint" style={{ marginTop: 0 }}>
+                    作用于语音助手、自动朗读、语音通话等所有走 TTS 的入口；系统 TTS 时忽略以下在线参数。
+                </p>
+                <div className="hw-field">
+                    <label className="hw-field-label">合成引擎</label>
+                    <div className="hw-btn-grid">
+                        <button type="button" className={`hw-btn ${voiceCfg.provider === "system" ? "" : "hw-btn-mini"}`} onClick={() => setVoiceCfg(c => ({ ...c, provider: "system" }))} style={voiceCfg.provider === "system" ? { outline: "2px solid var(--hw-accent, #6ab0f3)" } : undefined}>
+                            系统 TTS
+                        </button>
+                        <button type="button" className="hw-btn" onClick={() => setVoiceCfg(c => ({ ...c, provider: "minimax" }))} style={voiceCfg.provider === "minimax" ? { outline: "2px solid var(--hw-accent, #6ab0f3)" } : undefined}>
+                            MiniMax 在线
+                        </button>
+                    </div>
+                </div>
+                {voiceCfg.provider === "minimax" && (
+                    <>
+                        <div className="hw-field">
+                            <label className="hw-field-label">API Key</label>
+                            <input className="hw-input" type="password" value={voiceCfg.apiKey} onChange={e => setVoiceCfg(c => ({ ...c, apiKey: e.target.value }))} placeholder="MiniMax api key（不明文回显）" spellCheck={false} />
+                        </div>
+                        <div className="hw-field">
+                            <label className="hw-field-label">音色 voiceId</label>
+                            <input className="hw-input" list="hw-voice-assistant-voices-settings" value={voiceCfg.voiceId} onChange={e => setVoiceCfg(c => ({ ...c, voiceId: e.target.value }))} placeholder="female-shaonv" spellCheck={false} />
+                            <datalist id="hw-voice-assistant-voices-settings">
+                                {VOICE_ASSISTANT_DEFAULT_VOICES.map(v => (
+                                    <option key={v.id} value={v.id}>{v.label}</option>
+                                ))}
+                            </datalist>
+                        </div>
+                        <div className="hw-field">
+                            <label className="hw-field-label">接口地址 baseUrl</label>
+                            <input className="hw-input" value={voiceCfg.baseUrl} onChange={e => setVoiceCfg(c => ({ ...c, baseUrl: e.target.value }))} placeholder="https://api.minimaxi.com/v1" spellCheck={false} />
+                        </div>
+                        <div className="hw-field">
+                            <label className="hw-field-label">模型 model</label>
+                            <input className="hw-input" value={voiceCfg.model} onChange={e => setVoiceCfg(c => ({ ...c, model: e.target.value }))} placeholder="speech-01-turbo" spellCheck={false} />
+                        </div>
+                    </>
+                )}
+                <div className="hw-field-row">
+                    <button type="button" className="hw-btn" onClick={() => { saveVoiceAssistantConfig(voiceCfg); onNotice?.("语音助手配置已保存"); }}>
+                        <RefreshCw size={14} /> 保存配置
+                    </button>
+                    <button type="button" className="hw-btn hw-btn-mini" onClick={testVoiceSpeak} disabled={busy !== null}>
+                        <Volume2 size={14} /> 试听
+                    </button>
+                </div>
             </div>
 
             {/* 快速测试 */}

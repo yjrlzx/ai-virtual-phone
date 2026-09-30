@@ -26,6 +26,7 @@ import { characterWorkspace, agentComputerRequest, isAgentComputerConfigured } f
 import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, HUAWEI_SHELL_CAPABILITY_ID, LIFELINE_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
 import { bridgeConnection, loadBridgeDataItems, loadBridgeShortcutActions, readAllBridgeStateSnapshots, readBridgeStateSnapshot } from "./reality-bridge/storage";
 import { getAndroidShell, invokeShellJson, loadHuaweiCustomActions, loadHuaweiFootprint, loadHuaweiHealthSnapshot, loadHuaweiShellSettings, loadHuaweiTriggerRules, pushLockedPackagesToShell, readHuaweiLedger, readLockedPackagesFromShell, saveHuaweiTriggerRules, syncHuaweiLedgerFromShell } from "./huawei-shell/storage";
+import { fetchWeatherText } from "./huawei-shell/system-snapshot";
 import type { HuaweiLedgerRecord } from "./huawei-shell/storage";
 import type { HuaweiCustomAction, HuaweiTriggerRule } from "./huawei-shell/types";
 import { WECHAT_PACKAGE, type PaymentSource } from "./huawei-shell/types";
@@ -1050,6 +1051,7 @@ async function executeRealityBridgeTool(call: ToolCall, context?: ToolExecutionC
 function isHuaweiShellToolName(name: string): boolean {
     return name === "查看手机状态"
         || name === "查询位置"
+        || name === "实时天气"
         || name === "查看当前应用"
         || name === "查看通知"
         || name === "查看记账"
@@ -1147,11 +1149,13 @@ function huaweiTimeLabel(ts: unknown): string {
 }
 
 function huaweiStatusTool(): ToolResult {
+    const settings = loadHuaweiShellSettings();
     const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getStatus ? shell.getStatus() : null));
     if (!result.ok) return huaweiToolFail("查看手机状态", result.error);
     const r = result.data;
     const parts: string[] = [];
-    if (typeof r.battery === "number") parts.push(`电量 ${r.battery}%`);
+    // 电量受现实桥开关控制：关闭后不返回电量
+    if (settings.capBatteryEnabled && typeof r.battery === "number") parts.push(`电量 ${r.battery}%`);
     if (typeof r.volume === "number") parts.push(`媒体音量 ${r.volume}`);
     parts.push(r.network ? "网络已连接" : "网络未连接");
     parts.push(r.accessibility ? "无障碍已开启" : "无障碍未开启");
@@ -1161,12 +1165,37 @@ function huaweiStatusTool(): ToolResult {
 }
 
 function huaweiLocationTool(): ToolResult {
+    const settings = loadHuaweiShellSettings();
+    if (!settings.capLocationEnabled) {
+        return huaweiToolFail("查询位置", "定位能力已在现实桥设置中关闭（现实桥 → 能力开关）");
+    }
     const result = invokeShellJson<Record<string, unknown>>(shell => (shell.getLocation ? shell.getLocation() : null));
     if (!result.ok) return huaweiToolFail("查询位置", result.error);
     const lat = Number(result.data.lat);
     const lng = Number(result.data.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return huaweiToolFail("查询位置", "定位结果缺少经纬度");
     return huaweiToolOk("查询位置", `纬度 ${lat.toFixed(5)}，经度 ${lng.toFixed(5)}`);
+}
+
+/** 实时天气：取当前位置经纬度 → Open-Meteo 免费接口（网页侧走网络，无需 key）。 */
+async function huaweiWeatherTool(): Promise<ToolResult> {
+    const settings = loadHuaweiShellSettings();
+    if (!settings.capWeatherEnabled) {
+        return huaweiToolFail("实时天气", "天气能力已在现实桥设置中关闭（现实桥 → 能力开关）");
+    }
+    if (!settings.capLocationEnabled) {
+        return huaweiToolFail("实时天气", "定位能力已关闭，天气需要当前位置");
+    }
+    const result = invokeShellJson<Record<string, number>>(shell => (shell.getLocation ? shell.getLocation() : null));
+    if (!result.ok) return huaweiToolFail("实时天气", result.error);
+    const lat = Number(result.data.lat);
+    const lng = Number(result.data.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return huaweiToolFail("实时天气", "定位结果缺少经纬度");
+    }
+    const weather = await fetchWeatherText(lat, lng);
+    if (!weather) return huaweiToolFail("实时天气", "天气接口暂时拿不到结果");
+    return huaweiToolOk("实时天气", `当前位置（纬度${lat.toFixed(3)}，经度${lng.toFixed(3)}）${weather}`);
 }
 
 function huaweiCurrentAppTool(): ToolResult {
@@ -1467,6 +1496,7 @@ async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
     switch (call.name) {
         case "查看手机状态": return huaweiStatusTool();
         case "查询位置": return huaweiLocationTool();
+        case "实时天气": return await huaweiWeatherTool();
         case "查看当前应用": return huaweiCurrentAppTool();
         case "查看通知": return huaweiNotificationsTool(args);
         case "查看记账": return huaweiPaymentsTool(args);
@@ -1529,6 +1559,7 @@ async function executeHuaweiShellTool(call: ToolCall): Promise<ToolResult> {
 const HUAWEI_TOOL_PERMISSION_LEVEL: Record<string, "standard" | "accessibility" | "debugger" | "admin" | "root"> = {
     "查看手机状态": "standard",
     "查询位置": "standard",
+    "实时天气": "standard",
     "查看当前应用": "standard",
     "查看记账": "standard",
     "打开应用": "standard",

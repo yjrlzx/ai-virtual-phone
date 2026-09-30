@@ -77,6 +77,19 @@ export function TabSystem({ onNotice }: BridgeTabProps) {
   const [btAvailable, setBtAvailable] = useState<boolean | null>(null);
   const [bonded, setBonded] = useState<BondedDevice[]>([]);
 
+  // 系统控制权限状态：null = 未读取成功
+  const [perm, setPerm] = useState<{ writeSettings: boolean; shizuku: boolean; bluetoothConnect: boolean } | null>(null);
+
+  const readPerm = useCallback(() => {
+    const r = callShell<{ writeSettings: boolean; shizuku: boolean; bluetoothConnect: boolean }>(s => s.getSystemControlStatus?.());
+    if (r.ok) setPerm({ writeSettings: r.writeSettings, shizuku: r.shizuku, bluetoothConnect: r.bluetoothConnect });
+    else setPerm(null);
+  }, []);
+
+  const openSetting = (target: string) => {
+    callShell(s => s.openPermissionSettings?.(target));
+  };
+
   // 系统设置读写
   const [ns, setNs] = useState<"system" | "secure" | "global">("global");
   const [settingKey, setSettingKey] = useState("");
@@ -108,7 +121,10 @@ export function TabSystem({ onNotice }: BridgeTabProps) {
   useEffect(() => {
     readSwitches();
     readBluetooth();
-  }, [readSwitches, readBluetooth]);
+    readPerm();
+  }, [readSwitches, readBluetooth, readPerm]);
+
+  const refreshAll = () => { readSwitches(); readBluetooth(); readPerm(); };
 
   const applyBrightness = (v: number) => {
     setBrightness(v);
@@ -222,6 +238,12 @@ export function TabSystem({ onNotice }: BridgeTabProps) {
         </div>
         <input type="range" min={0} max={100} value={brightness} style={sliderStyle}
           onChange={e => applyBrightness(Number(e.target.value))} />
+        {perm && !perm.writeSettings ? (
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11.5, color: "#e8b4b4" }}>需要「修改系统设置」权限才能调亮度</span>
+            <button type="button" style={BTN} onClick={() => { openSetting("write_settings"); }}>去系统设置开启</button>
+          </div>
+        ) : null}
       </div>
 
       {/* 音量 */}
@@ -243,6 +265,16 @@ export function TabSystem({ onNotice }: BridgeTabProps) {
       {/* 飞行模式 / WiFi */}
       <div style={{ ...CARD, marginTop: 12 }}>
         <b style={{ fontSize: 13.5, color: INK, display: "block", marginBottom: 2 }}>网络开关</b>
+        {perm && !perm.shizuku ? (
+          <div style={{ marginTop: 6, marginBottom: 4, padding: "8px 10px", borderRadius: 8, background: "rgba(232,180,180,.12)" }}>
+            <div style={{ fontSize: 11.5, color: "#e8b4b4", lineHeight: 1.6 }}>
+              系统限制：普通 App 无法直接切换飞行模式/WiFi，需要先授权 Shizuku。
+              未授权时点开关只会提示失败，不会假装成功。
+            </div>
+            <button type="button" style={{ ...BTN, marginTop: 6 }}
+              onClick={() => { callShell(s => s.requestShizukuPermission?.()); }}>请求 Shizuku 授权</button>
+          </div>
+        ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid rgba(150,190,230,.15)" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13.5, fontWeight: 700, color: INK }}>飞行模式</div>
@@ -264,7 +296,7 @@ export function TabSystem({ onNotice }: BridgeTabProps) {
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-        <button type="button" style={BTN_GHOST} onClick={readSwitches}>刷新网络状态</button>
+        <button type="button" style={BTN_GHOST} onClick={refreshAll}>刷新状态</button>
       </div>
 
       {/* 蓝牙 */}
@@ -280,6 +312,15 @@ export function TabSystem({ onNotice }: BridgeTabProps) {
           </div>
           <Switch on={btEnabled === true} onChange={toggleBluetooth} label="蓝牙" />
         </div>
+        {perm && !perm.bluetoothConnect ? (
+          <div style={{ padding: "0 0 11px" }}>
+            <div style={{ fontSize: 11.5, color: "#e8b4b4", lineHeight: 1.6 }}>
+              需要蓝牙权限（BLUETOOTH_CONNECT）才能开关/列出设备
+            </div>
+            <button type="button" style={{ ...BTN, marginTop: 6 }}
+              onClick={() => { callShell(s => s.requestBluetoothPermission?.()); }}>去授权蓝牙</button>
+          </div>
+        ) : null}
         <div style={{ padding: "11px 0 4px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>已配对设备</span>
@@ -389,8 +430,8 @@ export function TabSystem({ onNotice }: BridgeTabProps) {
       </div>
 
       <p style={{ fontSize: 11, color: FAINT, lineHeight: 1.6, marginTop: 10 }}>
-        飞行模式 / WiFi 经 Shizuku 执行系统命令，操作后约 1 秒自动回读最新状态；亮度与音量实时下发。
-        蓝牙 / 媒体键 / 设置读写 / 文件管理均为壳侧实时桥方法，未连接时按钮禁用。
+        亮度需「修改系统设置」特殊权限；飞行模式/WiFi 需 Shizuku 授权（系统限制，普通 App 不可直接切换）；
+        蓝牙在 Android 12+ 需授权 BLUETOOTH_CONNECT。每项缺权限时上面会出现引导按钮，授权后点「刷新状态」回读。
       </p>
     </div>
   );
