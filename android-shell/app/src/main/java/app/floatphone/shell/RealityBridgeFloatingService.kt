@@ -28,9 +28,10 @@ import kotlin.math.hypot
  *
  *  - 单击（短按未拖动）→ 打开/收起悬浮聊天小窗（FloatingChatWindowService）；
  *  - 双击 → 无障碍遍历当前屏幕抓文字，塞进悬浮对话窗发给角色；无障碍未开时引导去开启；
- *  - 长按（超过 600ms 未拖动）→ 震动一下，球缩到屏幕边缘半透明收起态；
+ *  - 长按（超过 600ms 未拖动）→ 震动反馈并直接开始语音听写，结果填进悬浮窗输入框；
  *  - 拖动松手后自动吸附到最近的屏幕左/右边缘。
  *
+ * 球上叠两个头像：主圆 = 角色头像（MascotAvatar），右下角小圆标 = 用户头像（未配置时显示默认图标）。
  * 球初始贴右边缘、位于状态栏下方；需要 悬浮窗 权限。
  */
 class RealityBridgeFloatingService : Service() {
@@ -58,11 +59,12 @@ class RealityBridgeFloatingService : Service() {
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballPx = 0
     private var ballAvatarObserver: (() -> Unit)? = null
+    private var badgeView: ImageView? = null
+    private var mainAvatarView: ImageView? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
     private var longFired = false
-    private var collapsed = false
 
     private var lastTapAt = 0L
     private var lastTapX = 0f
@@ -95,19 +97,38 @@ class RealityBridgeFloatingService : Service() {
         val wm = getSystemService(WINDOW_SERVICE) as? WindowManager ?: return
         windowManager = wm
 
-        // 高对比圆形球：品牌蓝底 + 白描边 + 白图标/角色头像，深浅壁纸都看得见
-        val ball = ImageView(this).apply {
+        // 球：FrameLayout 叠两层 —— 主圆（角色头像，蓝底白描边）+ 右下角小圆标（用户头像）
+        val ball = android.widget.FrameLayout(this)
+        val mainAvatar = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(0xFF4F8CFF.toInt())
                 setStroke(dp(2f).toInt(), android.graphics.Color.WHITE)
             }
-            setPadding(dp(9f), dp(9f), dp(9f), dp(9f))
             alpha = 0.95f
         }
-        applyBallAvatar(ball)
-        val observer: () -> Unit = { applyBallAvatar(ball) }
+        ball.addView(mainAvatar, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        // 右下角用户头像角标：白描边区分于主圆；无用户头像时显示灰色默认小圆
+        val badge = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF8A93A0.toInt())
+                setStroke(dp(1.5f).toInt(), android.graphics.Color.WHITE)
+            }
+        }
+        badgeView = badge
+        val badgeSize = dp(18f)
+        ball.addView(badge, android.widget.FrameLayout.LayoutParams(
+            badgeSize, badgeSize, Gravity.BOTTOM or Gravity.END,
+        ))
+        mainAvatarView = mainAvatar
+        applyBallAvatar()
+        val observer: () -> Unit = { applyBallAvatar() }
         ballAvatarObserver = observer
         MascotAvatar.addObserver(observer)
         ballPx = dp(46f)
@@ -143,7 +164,7 @@ class RealityBridgeFloatingService : Service() {
                     paramsY = params.y
                     moved = false
                     longFired = false
-                    // 长按：600ms 内没有拖动 → 触发收起态切换
+                    // 长按：600ms 内没有拖动 → 开始语音听写
                     val lp = Runnable {
                         if (!moved) {
                             longFired = true
@@ -246,16 +267,22 @@ class RealityBridgeFloatingService : Service() {
         }.getOrDefault("")
     }
 
-    /** 球上的头像：有角色圆图就用，否则退回默认白图标。 */
-    private fun applyBallAvatar(ball: ImageView) {
+    /** 刷新球上两个头像：主圆 = 角色头像，角标 = 用户头像；都取不到时退默认图标。 */
+    private fun applyBallAvatar() {
+        val main = mainAvatarView ?: return
         val bmp = MascotAvatar.bitmap
-        if (bmp != null) ball.setImageBitmap(bmp) else ball.setImageResource(R.drawable.ic_stat)
+        if (bmp != null) main.setImageBitmap(bmp) else main.setImageResource(R.drawable.ic_stat)
+        val badge = badgeView
+        val ubmp = MascotAvatar.userBitmap
+        if (badge != null) {
+            if (ubmp != null) badge.setImageBitmap(ubmp) else badge.setImageResource(android.R.drawable.ic_menu_myplaces)
+        }
     }
 
-    /** 长按：震动一下并切换边缘半透明收起态。 */
+    /** 长按：震动反馈并打开小窗直接开始语音听写，识别结果自动填进输入框。 */
     private fun onLongPress() {
         vibrate()
-        toggleCollapse()
+        FloatingChatWindowService.startVoiceDictation(this)
     }
 
     private fun vibrate() {
@@ -278,23 +305,6 @@ class RealityBridgeFloatingService : Service() {
         runCatching { wm.updateViewLayout(v, params) }
     }
 
-    /** 收起态：缩到屏幕右缘只露半个球、半透明；展开态：回到边缘正常不透明度。 */
-    private fun toggleCollapse() {
-        val wm = windowManager ?: return
-        val v = ballView ?: return
-        val params = ballParams ?: return
-        val scrW = resources.displayMetrics.widthPixels
-        collapsed = !collapsed
-        if (collapsed) {
-            v.alpha = 0.30f
-            params.x = scrW - ballPx / 2
-        } else {
-            v.alpha = 0.92f
-            params.x = if (params.x + ballPx / 2 < scrW / 2) 0 else scrW - ballPx - dp(16f)
-        }
-        runCatching { wm.updateViewLayout(v, params) }
-    }
-
     private fun createChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CH_FLOAT, "悬浮球", NotificationManager.IMPORTANCE_MIN).apply {
@@ -308,7 +318,7 @@ class RealityBridgeFloatingService : Service() {
         NotificationCompat.Builder(this, CH_FLOAT)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("小手机 · 现实桥")
-            .setContentText("单击打开角色对话，双击截图速聊")
+            .setContentText("单击聊天，双击读屏，长按语音")
             .setOngoing(true)
             .setContentIntent(
                 PendingIntent.getActivity(
@@ -327,6 +337,8 @@ class RealityBridgeFloatingService : Service() {
         runCatching { ballView?.let { windowManager?.removeView(it) } }
         ballView = null
         ballParams = null
+        badgeView = null
+        mainAvatarView = null
         super.onDestroy()
     }
 }

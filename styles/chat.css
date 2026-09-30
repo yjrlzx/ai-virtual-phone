@@ -5266,7 +5266,7 @@
   outline: 0;
   background: transparent;
   color: #fff;
-  font-size: calc(13.5px*var(--app-text-scale,1));
+  font-size: 16px;
   line-height: 1.35;
 }
 

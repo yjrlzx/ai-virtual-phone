@@ -6,7 +6,7 @@
 // 客户端断连（request.signal abort / stream cancel）时退订，避免监听泄漏。
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
-import { subscribeShellNotify, type ShellNotify } from "@/lib/server/shell-bus";
+import { subscribeShellNotify, subscribeLifelineSync, type ShellNotify, type LifelineSyncEvent } from "@/lib/server/shell-bus";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,6 +21,7 @@ export async function GET(request: Request) {
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
+  let unsubscribeLifeline: (() => void) | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let closed = false;
 
@@ -41,6 +42,10 @@ export async function GET(request: Request) {
         write(`data: ${JSON.stringify(notify)}\n\n`);
       });
 
+      unsubscribeLifeline = subscribeLifelineSync(account.id, (ev: LifelineSyncEvent) => {
+        write(`data: ${JSON.stringify(ev)}\n\n`);
+      });
+
       heartbeat = setInterval(() => {
         // SSE 注释行做心跳，防中间代理/网关 idle 超时断流
         write(": ping\n\n");
@@ -51,6 +56,7 @@ export async function GET(request: Request) {
         closed = true;
         if (heartbeat) clearInterval(heartbeat);
         unsubscribe?.();
+        unsubscribeLifeline?.();
         try {
           controller.close();
         } catch {
@@ -64,6 +70,7 @@ export async function GET(request: Request) {
       closed = true;
       if (heartbeat) clearInterval(heartbeat);
       unsubscribe?.();
+      unsubscribeLifeline?.();
     },
   });
 

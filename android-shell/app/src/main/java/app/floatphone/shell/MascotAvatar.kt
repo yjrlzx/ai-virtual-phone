@@ -24,6 +24,7 @@ object MascotAvatar {
 
     private const val PREFS = "float_shell"
     private const val KEY_URL = "mascot_avatar_url"
+    private const val KEY_USER_URL = "user_avatar_url"
 
     private fun prefs(ctx: Context) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -32,6 +33,9 @@ object MascotAvatar {
         private set
 
     @Volatile var bitmap: Bitmap? = null
+        private set
+
+    @Volatile var userBitmap: Bitmap? = null
         private set
 
     private val main = Handler(Looper.getMainLooper())
@@ -47,14 +51,18 @@ object MascotAvatar {
         observers.remove(cb)
     }
 
-    /** 服务创建时调用：从 SharedPreferences 恢复上次头像。 */
+    /** 服务创建时调用：从 SharedPreferences 恢复角色与用户头像。 */
     fun initFromPrefs(ctx: Context) {
-        val saved = prefs(ctx).getString(KEY_URL, null)?.takeIf { it.isNotBlank() } ?: return
-        url = saved
-        applyUrl(ctx, saved)
+        prefs(ctx).getString(KEY_URL, null)?.takeIf { it.isNotBlank() }?.let {
+            url = it
+            applyUrl(ctx, it) { bmp -> bitmap = bmp }
+        }
+        prefs(ctx).getString(KEY_USER_URL, null)?.takeIf { it.isNotBlank() }?.let {
+            applyUrl(ctx, it) { bmp -> userBitmap = bmp }
+        }
     }
 
-    /** 网页上报头像（data: URI 或同源/绝对 URL；blob: 等壳侧拉不到的格式忽略）。 */
+    /** 网页上报角色头像（data: URI 或同源/绝对 URL；blob: 等壳侧拉不到的格式忽略）。 */
     fun set(ctx: Context, raw: String?) {
         val u = raw?.trim().orEmpty()
         prefs(ctx).edit().putString(KEY_URL, u.ifBlank { null }).apply()
@@ -65,14 +73,26 @@ object MascotAvatar {
             return
         }
         url = u
-        applyUrl(ctx, u)
+        applyUrl(ctx, u) { bmp -> bitmap = bmp }
     }
 
-    private fun applyUrl(ctx: Context, u: String) {
-        thread(name = "mascot-avatar") {
+    /** 网页上报用户头像（悬浮球右下角角标；未上报时角标显示默认图标）。 */
+    fun setUser(ctx: Context, raw: String?) {
+        val u = raw?.trim().orEmpty()
+        prefs(ctx).edit().putString(KEY_USER_URL, u.ifBlank { null }).apply()
+        if (u.isBlank()) {
+            userBitmap = null
+            notifyChange()
+            return
+        }
+        applyUrl(ctx, u) { bmp -> userBitmap = bmp }
+    }
+
+    private fun applyUrl(ctx: Context, u: String, slot: (Bitmap?) -> Unit) {
+        thread(name = "avatar-decode") {
             val bmp = runCatching { decode(u) }.getOrNull()
             main.post {
-                if (bmp != null) bitmap = circularCrop(bmp)
+                slot(if (bmp != null) circularCrop(bmp) else null)
                 notifyChange()
             }
         }

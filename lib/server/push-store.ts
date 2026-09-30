@@ -71,6 +71,12 @@ function db(): DatabaseSync {
   )`);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due ON scheduled_jobs(fired, run_at)`);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_user ON scheduled_jobs(user_id, fired, run_at)`);
+  conn.exec(`CREATE TABLE IF NOT EXISTS lifeline_state (
+    user_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0
+  )`);
   return conn;
 }
 
@@ -191,4 +197,38 @@ export function listDueJobs(nowMs: number, limit: number): ScheduledJobRow[] {
 
 export function markJobFired(id: string): void {
   db().prepare("UPDATE scheduled_jobs SET fired = 1 WHERE id = ?").run(id);
+}
+
+// ── lifeline 云同步（一行 per user，JSON blob + updated_at，last-write-wins） ──
+
+export type LifelineStateRow = {
+  state: string;
+  updated_at: number;
+  version: number;
+};
+
+export function getLifelineState(userId: string): LifelineStateRow | null {
+  const row = db()
+    .prepare("SELECT state, updated_at, version FROM lifeline_state WHERE user_id = ?")
+    .get(userId) as LifelineStateRow | undefined;
+  return row ?? null;
+}
+
+/**
+ * LWW upsert。仅当传入 updatedAt >= 服务端现有 updated_at 时写入，
+ * version 自增。返回写入后的行；被服务端较新数据驳回时返回 null。
+ */
+export function upsertLifelineState(userId: string, state: string, updatedAt: number): LifelineStateRow | null {
+  const existing = getLifelineState(userId);
+  if (existing && updatedAt < existing.updated_at) return null;
+  const nextVersion = (existing?.version ?? 0) + 1;
+  db().prepare(
+    `INSERT INTO lifeline_state (user_id, state, updated_at, version)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       state = excluded.state,
+       updated_at = excluded.updated_at,
+       version = excluded.version`,
+  ).run(userId, state, updatedAt, nextVersion);
+  return { state, updated_at: updatedAt, version: nextVersion };
 }

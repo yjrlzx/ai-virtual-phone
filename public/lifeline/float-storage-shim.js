@@ -10,14 +10,13 @@
  *    （collection='lifeline'，主键=storage key）。
  *
  * 2) float Next 同源部署（components/lifeline-app.tsx 用 <iframe src="/lifeline/index.html">
- *    挂载，无 window.AiPhone）：数据主源是服务端 SQLite（/api/kv/*）。
- *    这里用同步 XHR 预灌 lifeLineState_v2 进内存 Map，保证 lifeline 依赖的同步
- *    getItem 不阻塞；setItem/removeItem 后 fire-and-forget POST 到 /api/kv/set|del。
- *    失败只 console.warn，绝不抛错、不阻塞同步流程。这样 iframe 内的读写与宿主
- *    kv-db 落同一张 SQLite 表，清浏览器缓存后数据不丢。
+ *    挂载，无 window.AiPhone）：数据主源是服务端 SQLite（/api/lifeline/sync，
+ *    表 lifeline_state，一行 per user，JSON blob + updated_at，last-write-wins）。
+ *    启动用同步 XHR 预灌；setItem(主键) 后防抖 2.5s POST；同时监听
+ *    /api/push/stream 的 lifeline_sync 事件，他端改了就 reload 拉新。
  *
- * 3) 直接用普通浏览器打开 index.html（file:// 或静态托管，无 /api/kv）：探测失败，
- *    本脚本什么都不做，原样保留原生 localStorage，网页照常使用。
+ * 3) 直接用普通浏览器打开 index.html（file:// 或静态托管，无 /api/lifeline/sync）：
+ *    探测失败，本脚本什么都不做，原样保留原生 localStorage。
  * ------------------------------------------------------------------
  */
 (function () {
@@ -26,9 +25,9 @@
   /* ===== 可配置常量 ===== */
   var DB_KEY = 'lifeLineState_v2';          // lifeline 主数据键
   var COLLECTION = 'lifeline';               // float 集合名（已在 [\w.-] 白名单内）
+  var UPLOAD_DEBOUNCE_MS = 2500;             // 写后防抖上传窗口
 
-  // 提前抓住原生 localStorage 引用：后面要在替换前做一次性遗留数据迁移，
-  // 也用于失败时判断。同源 iframe 里 window.localStorage 与宿主共享同一个 Storage。
+  // 提前抓住原生 localStorage 引用：一次性遗留数据迁移用。
   var nativeLS = (typeof window !== 'undefined') ? window.localStorage : null;
 
   /* ==================================================================
@@ -145,8 +144,6 @@
 
       var hasMain = (DB_KEY in store) && store[DB_KEY] != null;
       if (hasMain) {
-        // 存储里已有数据，但 lifeline 此前以空数据启动过，且用户还没动过 → 刷新一次
-        // 让第二次启动时同步 getItem 命中真实数据；用 window.name 防死循环
         if (bootSawEmpty && !dbKeyWritten && !alreadyReloaded) {
           try {
             window.name = 'llShimReloaded=1';
@@ -161,7 +158,6 @@
       console.warn('llShim: preload list failed', e);
     }
 
-    // shim 一执行就发起预灌（异步）
     try {
       var p = AiPhone.db.list(COLLECTION, { limit: 500 });
       if (p && typeof p.then === 'function') {
@@ -176,87 +172,93 @@
   }
 
   /* ==================================================================
-   * 环境 2/3：无 window.AiPhone。先探测是否在 float Next 同源（/api/kv 可用）。
-   * 用同步 XHR：必须在 lifeline 主脚本执行前把 DB_KEY 灌进内存，否则 lifeline
-   * 启动时的同步 getItem 会拿到空。探测失败（file://、静态托管、API 5xx）→
-   * 环境 3，什么都不做，保留原生 localStorage。
+   * 环境 2/3：无 window.AiPhone。先探测 /api/lifeline/sync 是否可用。
+   * 同步 XHR：必须在 lifeline 主脚本执行前把主键灌进内存。探测失败 → 环境 3。
    * ================================================================== */
-  var cloudValue = null;
-  var cloudProbeOk = false;
+  var serverState = null;
+  var serverUpdatedAt = 0;
+  var probeOk = false;
   try {
     var xhr = new XMLHttpRequest();
-    // async=false：同源小请求，启动时阻塞几十毫秒，换取同步读语义正确
-    xhr.open('GET', '/api/kv/get?key=' + encodeURIComponent(DB_KEY), false);
+    xhr.open('GET', '/api/lifeline/sync', false);
     xhr.send();
     if (xhr.status === 200) {
       var data = JSON.parse(xhr.responseText);
       if (data && data.ok) {
-        cloudProbeOk = true;
-        cloudValue = (typeof data.value === 'string') ? data.value : null;
+        probeOk = true;
+        serverState = (typeof data.state === 'string') ? data.state : null;
+        serverUpdatedAt = Number(data.updatedAt) || 0;
       }
     }
   } catch (e) {
-    // 探测失败：按普通浏览器环境处理，不动原生 localStorage
-    cloudProbeOk = false;
+    probeOk = false;
   }
 
-  if (!cloudProbeOk) {
-    // 环境 3：直接打开 index.html，原生 localStorage 即可用，不破坏它
+  if (!probeOk) {
+    // 环境 3：直接打开 index.html，原生 localStorage 即可用
     return;
   }
 
-  /* ===== 环境 2：同源 float 部署，内存 Map + /api/kv 持久层 ===== */
+  /* ===== 环境 2：同源 float 部署，内存 Map + /api/lifeline/sync 持久层 ===== */
   var cloudStore = Object.create(null);
+  var localUpdatedAt = serverUpdatedAt;   // 本地已知最新时间戳（LWW 判据）
+  var uploadTimer = null;
 
-  // 预灌主键。云端为空但浏览器原生 localStorage 里还有遗留副本（用户曾在同源下
-  // 直接用过 lifeline）→ 把它上传云端后清掉，完成一次性自愈迁移。
-  if (cloudValue != null) {
-    cloudStore[DB_KEY] = cloudValue;
+  if (serverState != null) {
+    cloudStore[DB_KEY] = serverState;
   } else if (nativeLS) {
+    // 云端为空但浏览器原生 localStorage 有遗留副本 → 上传后清掉，一次性自愈迁移
     try {
       var legacy = nativeLS.getItem(DB_KEY);
       if (legacy != null) {
         cloudStore[DB_KEY] = legacy;
-        // fire-and-forget 上传；失败仅警告
+        var legacyAt = Date.now();
+        localUpdatedAt = legacyAt;
         try {
-          var upXhr = new XMLHttpRequest();
-          upXhr.open('POST', '/api/kv/set', true);
-          upXhr.setRequestHeader('Content-Type', 'application/json');
-          upXhr.send(JSON.stringify({ key: DB_KEY, value: legacy }));
-        } catch (upErr) { console.warn('llShim: legacy cloud upload failed', upErr); }
+          var up = new XMLHttpRequest();
+          up.open('POST', '/api/lifeline/sync', true);
+          up.setRequestHeader('Content-Type', 'application/json');
+          up.send(JSON.stringify({ state: legacy, updatedAt: legacyAt }));
+        } catch (upErr) { console.warn('llShim: legacy upload failed', upErr); }
         try { nativeLS.removeItem(DB_KEY); } catch (rmErr) {}
       }
-    } catch (legacyErr) { /* 读遗留失败忽略 */ }
+    } catch (legacyErr) { /* 忽略 */ }
   }
 
-  function cloudPersistSet(key, value) {
+  function pushToCloud() {
+    var value = cloudStore[DB_KEY];
+    if (value == null) return;
+    var at = Date.now();
+    localUpdatedAt = at;
     try {
       var x = new XMLHttpRequest();
-      x.open('POST', '/api/kv/set', true);
+      x.open('POST', '/api/lifeline/sync', true);
       x.setRequestHeader('Content-Type', 'application/json');
       x.onload = function () {
         if (x.status < 200 || x.status >= 300) {
-          console.warn('llShim: kv set failed', key, x.status);
+          console.warn('llShim: lifeline sync failed', x.status);
+          return;
         }
+        try {
+          var resp = JSON.parse(x.responseText);
+          if (resp && resp.ok && typeof resp.updatedAt === 'number') {
+            localUpdatedAt = resp.updatedAt;
+          } else if (resp && resp.conflict && typeof resp.state === 'string') {
+            // 服务端版本更新：直接用服务端数据重载，让 lifeline 重新读
+            cloudStore[DB_KEY] = resp.state;
+            localUpdatedAt = Number(resp.updatedAt) || localUpdatedAt;
+            location.reload();
+          }
+        } catch (e) { /* 忽略 */ }
       };
-      x.onerror = function () { console.warn('llShim: kv set network error', key); };
-      x.send(JSON.stringify({ key: key, value: value }));
-    } catch (e) { console.warn('llShim: kv set error', key, e); }
+      x.onerror = function () { console.warn('llShim: lifeline sync network error'); };
+      x.send(JSON.stringify({ state: value, updatedAt: at }));
+    } catch (e) { console.warn('llShim: lifeline sync error', e); }
   }
 
-  function cloudPersistDel(key) {
-    try {
-      var x = new XMLHttpRequest();
-      x.open('POST', '/api/kv/del', true);
-      x.setRequestHeader('Content-Type', 'application/json');
-      x.onload = function () {
-        if (x.status < 200 || x.status >= 300) {
-          console.warn('llShim: kv del failed', key, x.status);
-        }
-      };
-      x.onerror = function () { console.warn('llShim: kv del network error', key); };
-      x.send(JSON.stringify({ key: key }));
-    } catch (e) { console.warn('llShim: kv del error', key, e); }
+  function scheduleUpload() {
+    if (uploadTimer) clearTimeout(uploadTimer);
+    uploadTimer = setTimeout(pushToCloud, UPLOAD_DEBOUNCE_MS);
   }
 
   var cloudShim = {
@@ -267,17 +269,14 @@
     setItem: function (key, value) {
       key = String(key); value = String(value);
       cloudStore[key] = value;
-      cloudPersistSet(key, value);
+      if (key === DB_KEY) { scheduleUpload(); }
     },
     removeItem: function (key) {
       key = String(key);
       delete cloudStore[key];
-      cloudPersistDel(key);
     },
     clear: function () {
-      var keys = Object.keys(cloudStore);
       cloudStore = Object.create(null);
-      keys.forEach(function (k) { cloudPersistDel(k); });
     },
     key: function (index) {
       var ks = Object.keys(cloudStore);
@@ -299,6 +298,23 @@
       console.warn('llShim: cannot install cloud localStorage proxy', defineErr);
     }
   }
+
+  /* ===== 跨端近实时：监听推送流，他端改了就重载拉新 ===== */
+  try {
+    if (typeof EventSource !== 'undefined') {
+      var es = new EventSource('/api/push/stream');
+      es.onmessage = function (ev) {
+        try {
+          var msg = JSON.parse(ev.data);
+          if (msg && msg.type === 'lifeline_sync' &&
+              typeof msg.updatedAt === 'number' && msg.updatedAt > localUpdatedAt) {
+            location.reload();
+          }
+        } catch (e) { /* 非 JSON / 心跳注释，忽略 */ }
+      };
+      es.onerror = function () { /* EventSource 自带重连，不处理 */ };
+    }
+  } catch (e) { console.warn('llShim: sse listen failed', e); }
 
   window.__llFloatBridge = true;
   window.__llShimReady = {

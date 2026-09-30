@@ -23,6 +23,7 @@ import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { getAndroidShell, loadHuaweiShellSettings } from "@/lib/huawei-shell/storage";
+import { loadWebCallRingtoneUrl, playIncomingRingtone } from "@/lib/call-settings";
 
 /** 华为壳原生语音识别（免云端）是否可用：window.AndroidShell.startListening 存在即视为可用。 */
 const huaweiNativeSttAvailable = typeof window !== "undefined"
@@ -77,7 +78,17 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         !iosDeviceRef.current && isCallRecordingSupported() && resolveCloudSttConfig(session.contactId) !== null,
     );
     const holdToTalk = holdToTalkRef.current;
-    const androidTextInputOnlyRef = useRef(isAndroidBrowser() && !holdToTalkRef.current);
+    // Web Speech API（webkitSpeechRecognition）在 Android Chrome 也可用；
+    // 有它就允许免提直说，不必退化成纯文字。
+    const webSpeechSupportedRef = useRef(
+        typeof window !== "undefined"
+        && Boolean((window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition
+            || (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition),
+    );
+    const webSpeechSupported = webSpeechSupportedRef.current;
+    const androidTextInputOnlyRef = useRef(
+        isAndroidBrowser() && !holdToTalkRef.current && !webSpeechSupportedRef.current,
+    );
     const androidTextInputOnly = androidTextInputOnlyRef.current;
     const playCallAudio = iosDevice ? playAudioBlob : playAudioBlobViaMediaElement;
     const keyboardOffsetStyle = useCallKeyboardOffsetStyle();
@@ -152,12 +163,13 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         if (window.speechSynthesis) window.speechSynthesis.cancel();
     }, [minimized]);
 
-    // 来电等待接听：循环振动 + 华为壳来电铃声（微信式提醒；铃声开关与超时在设置页可配）
+    // 来电等待接听：循环振动 + 网页铃声 + 华为壳原生铃声（微信式提醒）
     useEffect(() => {
         if (initiator !== "character" || callState !== "CONNECTING") return;
-        const stop = startIncomingCallVibration();
-        let ringStopped = false;
+        const stopVib = startIncomingCallVibration();
         let shell: { stopRing?: () => void } | null = null;
+        // 网页侧铃声：URL 非空时 HTMLAudioElement 循环播放；空串/null 不播（壳原生或仅振动）
+        const webRingtone = playIncomingRingtone(loadWebCallRingtoneUrl());
         try {
             if (huaweiNativeSttAvailable) {
                 const s = getAndroidShell();
@@ -169,8 +181,8 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             }
         } catch { /* 响铃失败不影响接通流程 */ }
         return () => {
-            stop();
-            if (!ringStopped) { ringStopped = true; }
+            stopVib();
+            webRingtone.stop();
             try { if (shell && typeof shell.stopRing === "function") shell.stopRing(); } catch { /* 忽略 */ }
         };
     }, [initiator, callState]);
@@ -595,12 +607,14 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     // IDLE 时自动开启监听（按住说话模式无自动监听，识别只在按住期间发生）
     useEffect(() => {
         if (holdToTalk) return;
-        if (inputMode === "text" && sttRef.current) {
+        if (androidTextInputOnly) return;
+        if (isMuted && sttRef.current) {
             sttRef.current.abort();
             sttRef.current = null;
             setInterimText("");
+            return;
         }
-        if (!androidTextInputOnly && inputMode === "voice" && (callState === "IDLE" || callState === "AI_SPEAKING") && !isMuted && !minimized) {
+        if ((callState === "IDLE" || callState === "AI_SPEAKING") && !isMuted && !minimized) {
             // 短暂延迟让 UI 过渡完成；AI 朗读期间也保持监听热，支持 barge-in 打断
             const timer = setTimeout(() => {
                 if ((stateRef.current === "IDLE" || stateRef.current === "AI_SPEAKING") && !minimizedRef.current) {
@@ -609,12 +623,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             }, 500);
             return () => clearTimeout(timer);
         }
-        // 静音时停止监听
-        if (isMuted && sttRef.current) {
-            sttRef.current.abort();
-            sttRef.current = null;
-        }
-    }, [androidTextInputOnly, holdToTalk, callState, isMuted, inputMode, minimized, startListening]);
+    }, [androidTextInputOnly, holdToTalk, callState, isMuted, minimized, startListening]);
 
     const handleInputModeToggle = useCallback(() => {
         if (androidTextInputOnly) {
@@ -874,13 +883,6 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 </button>
             )}
 
-            {/* 自动监听路径下：右上角小切钮切文字输入 */}
-            {!androidTextInputOnly && !holdToTalk && callState !== "CONNECTING" && callState !== "ENDED" && inputMode === "voice" && (
-                <button type="button" className="vcsx-text-toggle" onClick={handleInputModeToggle}>
-                    文字
-                </button>
-            )}
-
             {/* 顶部居中：来电铃声滚动 / 通话计时 */}
             <div className="vcsx-topline">
                 {callState === "CONNECTING" && initiator === "character" ? (
@@ -960,8 +962,8 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 </div>
             </div>
 
-            {/* 文字输入面板（回落） */}
-            {inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" && (
+            {/* 文字输入面板：通话中始终保留，语音/打字并存不强制切换 */}
+            {callState !== "CONNECTING" && callState !== "ENDED" && (
                 <form
                     className="call-text-input-panel voicecall-text-input-panel call-text-input-row"
                     onSubmit={(e) => { e.preventDefault(); handleTextSubmit(); }}

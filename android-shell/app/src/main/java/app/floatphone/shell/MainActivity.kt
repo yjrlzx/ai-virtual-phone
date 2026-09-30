@@ -1418,6 +1418,45 @@ class MainActivity : AppCompatActivity() {
                 .toString()
         }.getOrElse { errJson(it.message) }
 
+        /**
+         * 网页把已生成的 blob/导出文件落盘到公共「下载」目录（WebView 不会自动存 blob:）。
+         * filename 由网页给；base64 为不带 data: 前缀的纯 base64。Q+ 走 MediaStore Downloads，低版本写公共目录并刷新媒体库。
+         */
+        @JavascriptInterface
+        fun saveDownload(filename: String, base64: String): String = runCatching {
+            val safe = filename.trim().ifBlank { "download.json" }
+            val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, safe)
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/json")
+                    put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values,
+                ) ?: return@runCatching """{"ok":false,"error":"无法创建下载条目"}"""
+                contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                values.clear()
+                values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val f = java.io.File(dir, safe)
+                f.writeBytes(bytes)
+                @Suppress("DEPRECATION")
+                android.media.MediaScannerConnection.scanFile(this@MainActivity, arrayOf(f.absolutePath), null, null)
+            }
+            runOnUiThread {
+                Toast.makeText(this, "已保存到下载目录：$safe", Toast.LENGTH_LONG).show()
+            }
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("filename", safe)
+                .put("bytes", bytes.size)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
         /** 删除文件或目录（目录递归删除）。 */
         @JavascriptInterface
         fun deleteFile(path: String): String = runCatching {

@@ -52,3 +52,28 @@ export function subscribeShellNotify(userId: string, listener: ShellBusListener)
 export function countShellListeners(userId: string): number {
   return getBus().listenerCount(channelKey(userId));
 }
+
+// ── lifeline 云同步频道：一端 POST 后，服务端 emit，他端 SSE 收到重拉 ──
+
+export type LifelineSyncEvent = {
+  type: "lifeline_sync";
+  updatedAt: number;
+  version: number;
+};
+
+function lifelineChannelKey(userId: string): string {
+  return `lifeline:${userId}`;
+}
+
+export function emitLifelineSync(userId: string, ev: LifelineSyncEvent): boolean {
+  return getBus().emit(lifelineChannelKey(userId), ev);
+}
+
+export function subscribeLifelineSync(userId: string, listener: (ev: LifelineSyncEvent) => void): () => void {
+  const key = lifelineChannelKey(userId);
+  const instance = getBus();
+  instance.on(key, listener);
+  return () => {
+    instance.off(key, listener);
+  };
+}

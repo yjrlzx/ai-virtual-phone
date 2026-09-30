@@ -48,6 +48,9 @@ class FloatingChatWindowService : Service() {
         @Volatile
         private var instance: FloatingChatWindowService? = null
 
+        @Volatile
+        private var pendingVoice = false
+
         /** 打开小窗（幂等：已在显示则不动）。网页 openFloatingChat 与唤醒词命中走这里。 */
         fun show(context: Context) {
             instance?.ensureShown() ?: run {
@@ -66,6 +69,18 @@ class FloatingChatWindowService : Service() {
         /** 无障碍抓屏得到的文字，塞进悬浮对话窗发给角色。 */
         fun injectScreenText(context: Context, text: String) {
             instance?.injectScreenText(text)
+        }
+
+        /** 长按悬浮球：打开小窗并直接开始语音听写，识别结果填进输入框。 */
+        fun startVoiceDictation(context: Context) {
+            pendingVoice = true
+            show(context)
+            instance?.let { inst ->
+                inst.mainHandler.postDelayed({
+                    pendingVoice = false
+                    inst.beginMic()
+                }, 700L)
+            }
         }
     }
 
@@ -102,6 +117,10 @@ class FloatingChatWindowService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureShown()
+        if (pendingVoice) {
+            pendingVoice = false
+            mainHandler.postDelayed({ beginMic() }, 500L)
+        }
         return START_NOT_STICKY
     }
 
@@ -330,24 +349,31 @@ class FloatingChatWindowService : Service() {
 
     /** 🎤：点一下开始录音识别，再点一下结束；结果填进本窗输入框。 */
     private fun toggleMic() {
-        if (!recording) {
-            val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.RECORD_AUDIO,
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (!granted) {
-                Toast.makeText(this, "缺少麦克风权限，请在系统设置中授权", Toast.LENGTH_SHORT).show()
-                return
-            }
-            recording = true
-            ShellStt.start(this, "{}") { json ->
-                recording = false
-                val text = runCatching { org.json.JSONObject(json).optString("text") }.getOrDefault("")
-                if (text.isNotBlank()) fillInput(text)
-            }
-        } else {
-            recording = false
-            ShellStt.stop()
+        if (recording) stopMic() else beginMic()
+    }
+
+    /** 开始听写（长按悬浮球与标题栏 🎤 共用）。 */
+    fun beginMic() {
+        if (recording) return
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            Toast.makeText(this, "缺少麦克风权限，请在系统设置中授权", Toast.LENGTH_SHORT).show()
+            return
         }
+        recording = true
+        Toast.makeText(this, "正在听，请说话…", Toast.LENGTH_SHORT).show()
+        ShellStt.start(this, "{}") { json ->
+            recording = false
+            val text = runCatching { org.json.JSONObject(json).optString("text") }.getOrDefault("")
+            if (text.isNotBlank()) fillInput(text)
+        }
+    }
+
+    private fun stopMic() {
+        recording = false
+        ShellStt.stop()
     }
 
     /** 把文字填进 chat-float 页底部输入框（走 React 受控 input 的原生 setter 才会触发状态更新）。 */
@@ -390,6 +416,11 @@ class FloatingChatWindowService : Service() {
         @android.webkit.JavascriptInterface
         fun setAvatar(url: String) {
             MascotAvatar.set(this@FloatingChatWindowService, url)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun setUserAvatar(url: String) {
+            MascotAvatar.setUser(this@FloatingChatWindowService, url)
         }
 
         @android.webkit.JavascriptInterface
