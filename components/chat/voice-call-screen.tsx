@@ -900,7 +900,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             <button
                 type="button"
                 className="vcsx-min-btn"
-                style={{ left: "auto", right: 14, top: "max(14px, env(safe-area-inset-top))", zIndex: 50, width: 44, height: 44 }}
+                style={{ left: "auto", right: 14, top: "max(14px, env(safe-area-inset-top))", zIndex: 100, width: 48, height: 48, pointerEvents: "auto" }}
                 onClick={() => setShowCallSettings(true)}
                 aria-label="通话设置"
                 title="通话外观设置"

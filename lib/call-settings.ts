@@ -115,9 +115,72 @@ export function resolveCallRingtoneUrl(characterId: string): string | null {
 
 // ── 铃声播放器 ──
 
+export type BuiltInRingtone = { id: string; name: string };
+
+export const BUILT_IN_RINGTONES: BuiltInRingtone[] = [
+    { id: "classic", name: "经典叮咚" },
+    { id: "soft", name: "轻柔提示" },
+    { id: "pulse", name: "电子脉冲" },
+    { id: "rising", name: "渐强铃音" },
+];
+
+function playBuiltinRingtone(id: string): { stop: () => void } {
+    if (typeof window === "undefined" || typeof AudioContext === "undefined") return { stop: () => {} };
+    let ctx: AudioContext | null = null;
+    let stopped = false;
+    let timer: number | null = null;
+    try {
+        ctx = new AudioContext();
+        const playNote = (freq: number, start: number, dur: number, gainVal = 0.15) => {
+            if (!ctx) return;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.frequency.value = freq;
+            osc.type = "sine";
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(gainVal, start + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+            osc.start(start); osc.stop(start + dur);
+        };
+        const playLoop = () => {
+            if (stopped || !ctx) return;
+            const t = ctx.currentTime;
+            if (id === "classic") {
+                playNote(880, t, 0.3); playNote(660, t + 0.35, 0.5);
+            } else if (id === "soft") {
+                playNote(720, t, 0.4, 0.1); playNote(720, t + 0.6, 0.4, 0.1);
+            } else if (id === "pulse") {
+                playNote(1200, t, 0.08, 0.12); playNote(1200, t + 0.15, 0.08, 0.12); playNote(1200, t + 0.3, 0.08, 0.12);
+            } else if (id === "rising") {
+                playNote(440, t, 0.3); playNote(587, t + 0.3, 0.3); playNote(880, t + 0.6, 0.5, 0.2);
+            }
+        };
+        playLoop();
+        timer = window.setInterval(playLoop, 2000);
+    } catch {
+        ctx = null;
+    }
+    return {
+        stop: () => {
+            stopped = true;
+            if (timer) window.clearInterval(timer);
+            if (ctx) { try { ctx.close(); } catch {} }
+        },
+    };
+}
+
+export function previewBuiltinRingtone(id: string): { stop: () => void } {
+    return playBuiltinRingtone(id);
+}
+
 export function playIncomingRingtone(url: string | null): { stop: () => void } {
     if (typeof window === "undefined") return { stop: () => {} };
     if (!url) return { stop: () => {} };
+    // 内置合成铃声
+    if (url.startsWith("builtin:")) {
+        return playBuiltinRingtone(url.slice(8));
+    }
     let audio: HTMLAudioElement | null = null;
     try {
         audio = new Audio(url);

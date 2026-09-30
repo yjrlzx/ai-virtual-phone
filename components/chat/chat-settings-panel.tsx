@@ -45,7 +45,7 @@ import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
 import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, type LucideIcon } from "lucide-react";
-import { loadCallAppearance, saveCallAppearance } from "@/lib/call-settings";
+import { loadCallAppearance, saveCallAppearance, BUILT_IN_RINGTONES, previewBuiltinRingtone } from "@/lib/call-settings";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -300,6 +300,7 @@ export function ChatSettingsPanel({
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     // 通话外观（按角色存 kv）
     const [callAppearance, setCallAppearance] = useState(() => loadCallAppearance(session.contactId));
+    const ringtoneFileRef = useRef<HTMLInputElement | null>(null);
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
     // 自定义状态栏（状态区）
     const [statusRegion, setStatusRegion] = useState<StatusRegionConfig>(() => getStatusRegionConfig(session.id));
@@ -1222,37 +1223,60 @@ export function ChatSettingsPanel({
                         </div>
                         <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setVoiceBackground, "voiceBackground")} className="hidden" />
                     </label>
-                    <label className="menu-item">
-                        <ChatInfoIcon icon={Music} color={BINDING_ACCENTS.voice} />
-                        <div className="menu-label-group">
-                            <span className="menu-label">通话铃声</span>
-                            <span className="menu-desc">角色来电时播放（选本地音乐文件）</span>
+                    <div className="menu-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <ChatInfoIcon icon={Music} color={BINDING_ACCENTS.voice} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">通话铃声</span>
+                                <span className="menu-desc">角色来电时播放</span>
+                            </div>
+                            <div className="menu-right">
+                                {callAppearance.ringtoneUrl ? (
+                                    <>
+                                        <span className="menu-desc mr-1">{callAppearance.ringtoneUrl === "" ? "静音" : callAppearance.ringtoneUrl.startsWith("builtin:") ? BUILT_IN_RINGTONES.find(r => r.id === callAppearance.ringtoneUrl!.slice(8))?.name || "内置" : callAppearance.ringtoneUrl.startsWith("data:") ? "本地音乐" : "自定义"}</span>
+                                        <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => { e.preventDefault(); const next = { ...callAppearance, ringtoneUrl: null }; setCallAppearance(next); saveCallAppearance(session.contactId, next); }}>清除</button>
+                                    </>
+                                ) : (
+                                    <span className="menu-desc mr-1">跟随系统</span>
+                                )}
+                            </div>
                         </div>
-                        <div className="menu-right">
-                            {callAppearance.ringtoneUrl ? (
-                                <>
-                                    <span className="menu-desc mr-1">{callAppearance.ringtoneUrl === "" ? "静音" : callAppearance.ringtoneUrl.startsWith("data:") ? "本地音乐" : "自定义"}</span>
-                                    <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => { e.preventDefault(); const next = { ...callAppearance, ringtoneUrl: null }; setCallAppearance(next); saveCallAppearance(session.contactId, next); }}>清除</button>
-                                </>
-                            ) : (
-                                <span className="menu-desc mr-1">跟随系统</span>
-                            )}
-                            <ChevronRight size={16} />
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 44 }}>
+                            {BUILT_IN_RINGTONES.map(r => (
+                                <button key={r.id} type="button"
+                                    style={{
+                                        minHeight: 36, padding: "4px 12px", borderRadius: 18, fontSize: 12, cursor: "pointer",
+                                        border: callAppearance.ringtoneUrl === `builtin:${r.id}` ? "2px solid var(--c-icon-active)" : "1px solid var(--c-border)",
+                                        background: callAppearance.ringtoneUrl === `builtin:${r.id}` ? "color-mix(in srgb, var(--c-icon-active) 15%, transparent)" : "transparent",
+                                        color: "var(--c-text)",
+                                    }}
+                                    onClick={() => {
+                                        const next = { ...callAppearance, ringtoneUrl: `builtin:${r.id}` };
+                                        setCallAppearance(next); saveCallAppearance(session.contactId, next);
+                                        previewBuiltinRingtone(r.id);
+                                    }}>
+                                    {r.name}
+                                </button>
+                            ))}
+                            <button type="button"
+                                style={{ minHeight: 36, padding: "4px 12px", borderRadius: 18, fontSize: 12, cursor: "pointer", border: "1px solid var(--c-border)", background: "transparent", color: "var(--c-text)" }}
+                                onClick={() => ringtoneFileRef.current?.click()}>
+                                本地音乐
+                            </button>
+                            <input ref={ringtoneFileRef} type="file" accept="audio/*" className="hidden"
+                                onChange={e => {
+                                    const f = e.target.files?.[0];
+                                    if (!f) return;
+                                    const reader = new FileReader();
+                                    reader.onload = () => {
+                                        const next = { ...callAppearance, ringtoneUrl: String(reader.result) };
+                                        setCallAppearance(next); saveCallAppearance(session.contactId, next);
+                                    };
+                                    reader.readAsDataURL(f);
+                                    e.target.value = "";
+                                }} />
                         </div>
-                        <input type="file" accept="audio/*" className="hidden"
-                            onChange={e => {
-                                const f = e.target.files?.[0];
-                                if (!f) return;
-                                const reader = new FileReader();
-                                reader.onload = () => {
-                                    const next = { ...callAppearance, ringtoneUrl: String(reader.result) };
-                                    setCallAppearance(next);
-                                    saveCallAppearance(session.contactId, next);
-                                };
-                                reader.readAsDataURL(f);
-                                e.target.value = "";
-                            }} />
-                    </label>
+                    </div>
                     <label className="menu-item">
                         <ChatInfoIcon icon={Video} color={BINDING_ACCENTS.voice} />
                         <div className="menu-label-group">
