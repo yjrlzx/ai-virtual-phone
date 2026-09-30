@@ -7,6 +7,8 @@ import { createCipheriv, createHash, randomBytes, randomUUID } from "node:crypto
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
+import { getWeixinConfig } from "@/lib/server/weixin-access";
+import { insertWeixinInbox } from "@/lib/server/push-store";
 
 export const runtime = "nodejs";
 
@@ -410,7 +412,67 @@ async function handleSendFile(payload: SendFileRequest) {
     return NextResponse.json({ ok: true });
 }
 
+// ── 微信公众号服务器配置验签（GET）与消息接收（POST XML） ──
+
+function verifyWeixinSignature(token: string, timestamp: string, nonce: string, signature: string): boolean {
+  const arr = [token, timestamp, nonce].sort();
+  const hash = createHash("sha1").update(arr.join("")).digest("hex");
+  return hash === signature;
+}
+
+function parseWeixinXml(xml: string): { fromUser: string; msgType: string; content: string; msgId: string } | null {
+  const grab = (tag: string): string => {
+    const m = xml.match(new RegExp(`<${tag}><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>|<${tag}>([^<]*)</${tag}>`));
+    return m ? (m[1] || m[2] || "").trim() : "";
+  };
+  const fromUser = grab("FromUserName");
+  const msgType = grab("MsgType");
+  const content = grab("Content");
+  const msgId = grab("MsgId") || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  if (!fromUser || !msgType) return null;
+  return { fromUser, msgType, content, msgId };
+}
+
+export async function GET(request: Request) {
+  const cfg = getWeixinConfig();
+  if (!cfg) return new NextResponse("weixin not configured", { status: 404 });
+  const url = new URL(request.url);
+  const signature = url.searchParams.get("signature") || "";
+  const timestamp = url.searchParams.get("timestamp") || "";
+  const nonce = url.searchParams.get("nonce") || "";
+  const echostar = url.searchParams.get("echostar") || "";
+  if (!verifyWeixinSignature(cfg.token, timestamp, nonce, signature)) {
+    return new NextResponse("invalid signature", { status: 403 });
+  }
+  return new NextResponse(echostar, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+}
+
 export async function POST(request: Request) {
+    const contentType = request.headers.get("content-type") || "";
+    if (contentType.includes("xml") || contentType.includes("text/plain")) {
+      const cfg = getWeixinConfig();
+      if (cfg) {
+        const url = new URL(request.url);
+        const signature = url.searchParams.get("signature") || "";
+        const timestamp = url.searchParams.get("timestamp") || "";
+        const nonce = url.searchParams.get("nonce") || "";
+        if (!verifyWeixinSignature(cfg.token, timestamp, nonce, signature)) {
+          return new NextResponse("invalid signature", { status: 403 });
+        }
+        const xml = await request.text();
+        const parsed = parseWeixinXml(xml);
+        if (parsed && (parsed.msgType === "text" || parsed.msgType === "image")) {
+          insertWeixinInbox({
+            id: parsed.msgId,
+            openid: parsed.fromUser,
+            msgType: parsed.msgType,
+            content: parsed.content || (parsed.msgType === "image" ? "[图片]" : ""),
+          });
+        }
+        return new NextResponse("success", { headers: { "Content-Type": "text/plain" } });
+      }
+    }
+
     let payload: WeixinRequest;
     try {
         payload = (await request.json()) as WeixinRequest;

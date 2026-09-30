@@ -176,11 +176,12 @@ class PushService : Service() {
     private fun handleSseData(raw: String) {
         runCatching {
             val msg = JSONObject(raw)
-            if (msg.optString("type") == "hello") return
+            val type = msg.optString("type")
+            if (type == "hello" || type == "lifeline_sync") return
             val title = msg.optString("title").ifEmpty { "小手机" }
             val text = msg.optString("body")
             // 来电：全屏来电通知（任何一步失败回落普通通知，主路不受影响）
-            if (msg.optString("type") == "call") {
+            if (type == "call") {
                 val shown = runCatching {
                     showIncomingCallNotification(
                         msg.optString("characterName").ifEmpty { title },

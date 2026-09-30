@@ -77,6 +77,15 @@ function db(): DatabaseSync {
     updated_at INTEGER NOT NULL,
     version INTEGER NOT NULL DEFAULT 0
   )`);
+  conn.exec(`CREATE TABLE IF NOT EXISTS weixin_inbox (
+    id TEXT PRIMARY KEY,
+    openid TEXT NOT NULL,
+    msg_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    replied INTEGER NOT NULL DEFAULT 0
+  )`);
+  conn.exec(`CREATE INDEX IF NOT EXISTS idx_weixin_inbox_pending ON weixin_inbox(replied, created_at)`);
   return conn;
 }
 
@@ -231,4 +240,33 @@ export function upsertLifelineState(userId: string, state: string, updatedAt: nu
        version = excluded.version`,
   ).run(userId, state, updatedAt, nextVersion);
   return { state, updated_at: updatedAt, version: nextVersion };
+}
+
+// ── 微信公众号入站消息（用户在公众号发的消息先落库，浏览器端拉取生成回复） ──
+
+export type WeixinInboxRow = {
+  id: string;
+  openid: string;
+  msg_type: string;
+  content: string;
+  created_at: number;
+  replied: number;
+};
+
+export function insertWeixinInbox(row: { id: string; openid: string; msgType: string; content: string }): void {
+  db().prepare(
+    `INSERT INTO weixin_inbox (id, openid, msg_type, content, created_at, replied)
+     VALUES (?, ?, ?, ?, ?, 0)`,
+  ).run(row.id, row.openid, row.msgType, row.content, Date.now());
+}
+
+export function listPendingWeixinInbox(limit = 20): WeixinInboxRow[] {
+  return db().prepare(
+    `SELECT id, openid, msg_type, content, created_at, replied FROM weixin_inbox
+     WHERE replied = 0 ORDER BY created_at ASC LIMIT ?`,
+  ).all(limit) as WeixinInboxRow[];
+}
+
+export function markWeixinInboxReplied(id: string): void {
+  db().prepare("UPDATE weixin_inbox SET replied = 1 WHERE id = ?").run(id);
 }

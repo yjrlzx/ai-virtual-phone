@@ -138,6 +138,7 @@ import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { setMascotContext } from "@/lib/mascot-context";
 import { DESKTOP_WIDGETS_CHANGED_EVENT } from "@/lib/mascot-events";
 import { useWeixinBridge } from "@/lib/use-weixin-bridge";
+import { startWeixinMpBridge } from "@/lib/weixin-mp-bridge";
 import { startWeixinCloudRealtimeSync } from "@/lib/weixin-cloud-sync";
 import { WeixinSyncToast } from "@/components/weixin-sync-toast";
 import { sendBrowserNotification } from "@/lib/browser-notification";
@@ -1831,6 +1832,11 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
 
   // WeChat iLink Bot bridge (polls messages for all enabled bots)
   useWeixinBridge();
+
+  // 微信公众号桥：轮询 /api/weixin/inbox，char 回复后走客服消息推回
+  useEffect(() => {
+    startWeixinMpBridge();
+  }, []);
 
   // Listen for mascot navigation events
   useEffect(() => {
