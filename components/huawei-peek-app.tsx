@@ -314,6 +314,7 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   /* ---- 派生数据：只在 storeTick（设置保存）或壳推送状态真正变化时才重读 localStorage。
      原来每次渲染都现读十几次，切 tab / 打字 / 15s 轮询都会触发，中端 WebView 上明显掉帧。 ---- */
   const derived = useMemo(() => {
+    try {
     const companion = loadCharacters()[0];
     const cname = readCompanionName(companion?.name);
     const companionMeta = readCompanionMeta();
@@ -353,6 +354,15 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
       companionActions, guardEvents, menstrualLabel, targetApps, customLines,
       mConfig, callSettings,
     };
+    } catch (e) {
+      console.warn("[peek] derived fallback", e);
+      return {
+        companion: undefined as any, cname: "", companionMeta: readCompanionMeta(), dayCount: 0,
+        nextAnni: undefined, focusGoal: 0, companionActions: [], guardEvents: [],
+        menstrualLabel: "", targetApps: [], customLines: [], mConfig: { enabled: false } as any,
+        callSettings: {} as any,
+      };
+    }
   }, [storeTick, status, currentApp, locked, footprint]);
 
   const {
@@ -362,9 +372,9 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
   } = derived;
 
   /* ---- 设置面板草稿 ---- */
-  const [nameDraft, setNameDraft] = useState(() => readCompanionName(loadCharacters()[0]?.name));
-  const [startDateDraft, setStartDateDraft] = useState(() => readCompanionMeta().startDate ?? "");
-  const [goalDraft, setGoalDraft] = useState(() => String(readFocusGoalMin()));
+  const [nameDraft, setNameDraft] = useState(() => { try { return readCompanionName(loadCharacters()[0]?.name); } catch { return ""; } });
+  const [startDateDraft, setStartDateDraft] = useState(() => { try { return readCompanionMeta().startDate ?? ""; } catch { return ""; } });
+  const [goalDraft, setGoalDraft] = useState(() => { try { return String(readFocusGoalMin()); } catch { return "30"; } });
   const [newAnniName, setNewAnniName] = useState("");
   const [newAnniDate, setNewAnniDate] = useState("");
   const [newLineDraft, setNewLineDraft] = useState("");
