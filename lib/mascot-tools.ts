@@ -3047,26 +3047,17 @@ async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult
 
 /** 发起语音通话（归电）：响铃 + 弹出来电界面。壳/会话不可用时返回"对方暂时无法接听"。 */
 function handleInitiateCall(args: Record<string, unknown>): ToolResult {
-    if (typeof window === "undefined") {
-        return { name: "发起通话", success: false, error: "对方暂时无法接听" };
-    }
+    if (typeof window === "undefined") { logTool("发起通话", false, "无window"); return { name: "发起通话", success: false, error: "对方暂时无法接听" }; }
     try {
         const chars = loadCharacters();
         const companion = chars[0];
-        // 找到与该角色最近的 1:1 会话作为来电落点
         const sessions = loadChatSessions();
         const session = sessions
             .filter(s => !s.isGroup && companion && s.contactId === companion.id)
             .sort((a, b) => Date.parse(String(b.updatedAt ?? 0)) - Date.parse(String(a.updatedAt ?? 0)))[0];
-        if (!session || !companion) {
-            return { name: "发起通话", success: false, error: "对方暂时无法接听" };
-        }
-        // 用户关闭了归电开关
+        if (!session || !companion) { logTool("发起通话", false, "无会话"); return { name: "发起通话", success: false, error: "对方暂时无法接听" }; }
         const appearance = loadCallAppearance(companion.id);
-        if (!appearance.callEnabled) {
-            return { name: "发起通话", success: false, error: "用户关闭了归电，不要打给她" };
-        }
-        // 响铃+震动（受来电样式里的开关控制；与掌心窗读同一份配置）
+        if (!appearance.callEnabled) { logTool("发起通话", false, "归电被用户关闭"); return { name: "发起通话", success: false, error: "用户关闭了归电，不要打给她" }; }
         const callSettings = readCallSettings();
         if (callSettings.ringEnabled) {
             try {
@@ -3077,15 +3068,14 @@ function handleInitiateCall(args: Record<string, unknown>): ToolResult {
         window.dispatchEvent(new CustomEvent("ai-call-trigger", {
             detail: { sessionId: session.id, type: "voice", characterName: companion.name },
         }));
+        logTool("发起通话", true, companion.name);
         const headline = typeof args.headline === "string" && args.headline.trim() ? args.headline.trim() : "";
         return {
             name: "发起通话",
             success: true,
             data: headline ? `已向用户发起语音通话（${headline}）` : "已向用户发起语音通话",
         };
-    } catch {
-        return { name: "发起通话", success: false, error: "对方暂时无法接听" };
-    }
+    } catch (e) { logTool("发起通话", false, String(e)); return { name: "发起通话", success: false, error: "对方暂时无法接听" }; }
 }
 
 /** 护眼休息：触发 5 分钟屏幕休息。 */
