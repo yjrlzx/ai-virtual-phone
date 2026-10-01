@@ -289,40 +289,10 @@ function HomeDashboard({ shellAvailable, todayCount, ruleStats, accOk, shizukuRe
       </button>
 
       {/* 情绪日记 */}
-      <div style={{ ...CARD, marginTop: 12, padding: 14 }}>
-        <b style={{ fontSize: 14, color: INK }}>情绪日记</b>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-          {["开心","平静","烦躁","难过","焦虑","累","委屈","想他","饿","困","生气","想家","迷茫","充实","轻松","紧张","害羞","得意","emo","还好"].map(m => (
-            <button key={m} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12, border: "1px solid rgba(128,128,128,0.3)", background: "transparent", cursor: "pointer" }}
-              onClick={() => {
-                try {
-                  const key = `mood_diary_${new Date().toISOString().slice(0,10)}`;
-                  const existing = localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)!) : { tags: [] };
-                  existing.tags = existing.tags.includes(m) ? existing.tags.filter((t: string) => t !== m) : [...existing.tags, m];
-                  localStorage.setItem(key, JSON.stringify(existing));
-                } catch {}
-              }}>{m}</button>
-          ))}
-        </div>
-      </div>
+      <MoodDiaryCard />
 
       {/* 焦虑趋势（7天） */}
-      <div style={{ ...CARD, marginTop: 12, padding: 14 }}>
-        <b style={{ fontSize: 14, color: INK }}>焦虑趋势（近7天）</b>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 60, marginTop: 10 }}>
-          {[6,5,4,3,2,1,0].map(d => {
-            const day = new Date(Date.now() - d*86400000).toISOString().slice(0,10);
-            const diary = localStorage.getItem(`mood_diary_${day}`);
-            const anxiety = diary ? (JSON.parse(diary).tags?.length ? 40 : 20) : 0;
-            return (
-              <div key={d} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                <div style={{ width: "100%", height: Math.max(4, anxiety * 0.5), background: "#ff6b6b", borderRadius: 3 }} />
-                <span style={{ fontSize: 9, color: FAINT }}>{day.slice(5)}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <AnxietyTrendCard />
 
       {/* 大卡片入口列表 */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
