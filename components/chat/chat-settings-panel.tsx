@@ -1339,7 +1339,10 @@ export function ChatSettingsPanel({
                     <div className="menu-item">
                         <div className="menu-label-group"><span className="menu-label">心情BGM</span><span className="menu-desc">焦虑时自动放白噪音</span></div>
                         <div className="menu-right">
-                            <input type="checkbox" defaultChecked={localStorage.getItem("bgm_enabled") !== "0"} onChange={e => localStorage.setItem("bgm_enabled", e.target.checked ? "1" : "0")} />
+                            <input type="checkbox" defaultChecked={localStorage.getItem("bgm_enabled") !== "0"} onChange={e => {
+                                localStorage.setItem("bgm_enabled", e.target.checked ? "1" : "0");
+                                if (!e.target.checked) { import("@/lib/bgm").then(m => m.stopBGM()); }
+                            }} />
                         </div>
                     </div>
                     <div className="menu-item">
@@ -1349,7 +1352,16 @@ export function ChatSettingsPanel({
                         </div>
                     </div>
                     <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">睡眠</span><span className="menu-desc">昨晚入睡：{localStorage.getItem("last_sleep") || "未知"}</span></div>
+                        <div className="menu-label-group"><span className="menu-label">睡眠</span><span className="menu-desc">
+                            {(() => {
+                                const t = localStorage.getItem("last_sleep");
+                                if (!t) return "昨晚入睡：未知";
+                                const [h, m] = t.split(":").map(Number);
+                                const now = new Date();
+                                const slept = (now.getHours() - h) + (now.getMinutes() - m) / 60;
+                                return `昨晚 ${h}:${m} 睡，约睡了 ${Math.max(0, slept).toFixed(1)} 小时`;
+                            })()}
+                        </span></div>
                         <div className="menu-right">
                             <button onClick={() => localStorage.setItem("last_sleep", new Date().toTimeString().slice(0,5))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-icon-active)" }}>标记入睡</button>
                         </div>
