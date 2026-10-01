@@ -1169,6 +1169,9 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
     _messagesCache.push(newMsg);
     dbPutMessage(newMsg);
 
+    // 云端同步：把最后一条消息推到 kv-db
+    try { kvSet(`chat_sync_${newMsg.sessionId}`, JSON.stringify({ lastMessageId: newMsg.id, role: newMsg.role, content: getChatMessagePreview(newMsg) || "", ts: newMsg.createdAt })); } catch { /* ignore */ }
+
     // Auto update session last message only for records that can produce a list preview.
     // 优化：直接增量更新内存会话缓存并异步写单条，避免每次发送都走 loadChatSessions +
     // saveChatSessions 触发全量会话预览重算（会话/消息多了以后会明显卡顿）。
