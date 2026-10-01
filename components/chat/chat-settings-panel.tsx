@@ -47,6 +47,7 @@ import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-se
 import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, Bell, Heart, type LucideIcon } from "lucide-react";
 import { loadCallAppearance, saveCallAppearance, BUILT_IN_RINGTONES, previewBuiltinRingtone } from "@/lib/call-settings";
 import { kvGet, kvSet } from "@/lib/kv-db";
+import { LifestylePages } from "@/components/lifestyle/LifestylePages";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -301,6 +302,7 @@ export function ChatSettingsPanel({
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     // 通话外观（按角色存 kv）
     const [callAppearance, setCallAppearance] = useState(() => loadCallAppearance(session.contactId));
+    const [lifestylePage, setLifestylePage] = useState<string | null>(null);
     const ringtoneFileRef = useRef<HTMLInputElement | null>(null);
     const ringtonePreviewStopRef = useRef<(() => void) | null>(null);    const [isPinned, setIsPinned] = useState(session.isPinned || false);
     // 自定义状态栏（状态区）
@@ -832,6 +834,7 @@ export function ChatSettingsPanel({
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
     return (
+        <>
         <PageShell title="聊天信息" onBack={onClose} className="absolute inset-0 z-[100]">
             <div className="page-menu chat-info-menu">
                 {/* Basic Info & Search */}
@@ -1315,58 +1318,15 @@ export function ChatSettingsPanel({
                 {/* 生活助手 */}
                 <div className="menu-group" style={{ marginTop: 16 }}>
                     <div style={{ fontSize: 12, color: "var(--c-faint)", padding: "4px 12px 8px" }}>生活助手</div>
-                    <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">喝水</span><span className="menu-desc">今天已喝 {kvGet(`water_${new Date().toISOString().slice(0,10)}`) || 0} 杯</span></div>
-                        <div className="menu-right">
-                            <button className="menu-desc" onClick={() => {
-                                const today = new Date().toISOString().slice(0,10);
-                                const cur = parseInt(kvGet(`water_${today}`) || "0") + 1;
-                                kvSet(`water_${today}`, String(cur));
-                            }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-icon-active)" }}>+1杯</button>
-                        </div>
-                    </div>
-                    <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">经期</span><span className="menu-desc">上次：{kvGet("period_last") || "未设置"}</span></div>
-                        <div className="menu-right">
-                            <input type="date" defaultValue={kvGet("period_last") || ""} onChange={e => kvSet("period_last", e.target.value)} style={{ padding: 4, borderRadius: 4, border: "1px solid rgba(128,128,128,0.3)" }} />
-                        </div>
-                    </div>
-                    <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">锁屏纸条</span><span className="menu-desc">{kvGet("locker_note") || "今天也要加油"}</span></div>
-                        <div className="menu-right">
-                            <input type="text" defaultValue={kvGet("locker_note") || ""} placeholder="写一句..." onChange={e => kvSet("locker_note", e.target.value)} style={{ padding: 4, borderRadius: 4, border: "1px solid rgba(128,128,128,0.3)", width: 120 }} />
-                        </div>
-                    </div>
-                    <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">心情BGM</span><span className="menu-desc">焦虑时自动放白噪音</span></div>
-                        <div className="menu-right">
-                            <input type="checkbox" defaultChecked={kvGet("bgm_enabled") !== "0"} onChange={e => {
-                                kvSet("bgm_enabled", e.target.checked ? "1" : "0");
-                                if (!e.target.checked) { import("@/lib/bgm").then(m => m.stopBGM()); }
-                            }} />
-                        </div>
-                    </div>
-                    <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">记一餐</span><span className="menu-desc">{kvGet(`food_${new Date().toISOString().slice(0,10)}`) || "今天还没记"}</span></div>
-                        <div className="menu-right">
-                            <button onClick={() => { const d = prompt("吃了什么？"); if (d) kvSet(`food_${new Date().toISOString().slice(0,10)}`, d); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-icon-active)" }}>记录</button>
-                        </div>
-                    </div>
-                    <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">睡眠</span><span className="menu-desc">
-                            {(() => {
-                                const t = kvGet("last_sleep");
-                                if (!t) return "昨晚入睡：未知";
-                                const [h, m] = t.split(":").map(Number);
-                                const now = new Date();
-                                const slept = (now.getHours() - h) + (now.getMinutes() - m) / 60;
-                                return `昨晚 ${h}:${m} 睡，约睡了 ${Math.max(0, slept).toFixed(1)} 小时`;
-                            })()}
-                        </span></div>
-                        <div className="menu-right">
-                            <button onClick={() => kvSet("last_sleep", new Date().toTimeString().slice(0,5))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-icon-active)" }}>标记入睡</button>
-                        </div>
-                    </div>
+                    {["mood-diary:情绪日记","water:喝水","period:经期","note:锁屏纸条","todo:我们的清单","pomodoro:番茄钟"].map(p => {
+                        const [key, label] = p.split(":");
+                        return (
+                            <div className="menu-item" key={key} onClick={() => setLifestylePage(key)}>
+                                <div className="menu-label-group"><span className="menu-label">{label}</span></div>
+                                <div className="menu-right"><ChevronRight size={16} /></div>
+                            </div>
+                        );
+                    })}
                 </div>
 
                 {/* Advanced */}
@@ -1917,5 +1877,8 @@ export function ChatSettingsPanel({
                 </div>
             )}
         </PageShell>
+        {lifestylePage && <LifestylePages page={lifestylePage} onBack={() => setLifestylePage(null)} />}
+        </>
     );
 }
+
