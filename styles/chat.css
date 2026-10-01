@@ -724,10 +724,10 @@
 
 .chat-input-bar .chat-input-actions {
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-around;
   align-items: center;
-  gap: 16px;
-  padding: 4px 0 0;
+  gap: 8px;
+  padding: 4px 8px 0;
 }
 
 .chat-input-bar .chat-input-actions .ui-bare-btn {

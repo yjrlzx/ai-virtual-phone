@@ -706,7 +706,6 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     };
 
     const startRecording = async () => {
-        if (inputLocked) return;
         try {
             if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
                 return;
@@ -731,18 +730,22 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
             };
             rec.start();
             recordStartRef.current = Date.now();
-            setRecording(true);
-            setRecordingSec(0);
             recordTickRef.current = window.setInterval(() => setRecordingSec(Math.floor((Date.now() - recordStartRef.current) / 1000)), 200);
         } catch (err) {
-            // 麦克风权限被拒绝，静默失败
+            // 麦克风权限被拒绝：录音条已显示，松手时 chunks 为空自动取消
         }
     };
 
     const recordStartYRef = useRef(0);
     const handleRecordStart = (e: React.PointerEvent) => {
         e.preventDefault();
+        if (inputLocked) return;
         recordStartYRef.current = e.clientY;
+        // 立刻显示录音状态条，不等 getUserMedia
+        recordStartRef.current = Date.now();
+        setRecording(true);
+        setRecordCancel(false);
+        setRecordingSec(0);
         startRecording();
     };
     const handleRecordMove = (e: React.PointerEvent) => {
