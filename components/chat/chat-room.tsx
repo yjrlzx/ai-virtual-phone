@@ -746,7 +746,6 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                 reader.readAsDataURL(blob);
             };
             rec.start();
-            recordTickRef.current = window.setInterval(() => setRecordingSec(Math.floor((Date.now() - recordStartRef.current) / 1000)), 200);
             // 边录边转文字
             try {
                 const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -784,8 +783,12 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         slideUpRef.current = false;
         transcriptRef.current = "";
         chunksRef.current = [];
-        // 秒数立刻开始跳
-        recordTickRef.current = window.setInterval(() => setRecordingSec(Math.floor((Date.now() - recordStartRef.current) / 1000)), 200);
+        // 秒数立刻开始跳，60秒自动停
+        recordTickRef.current = window.setInterval(() => {
+            const sec = Math.floor((Date.now() - recordStartRef.current) / 1000);
+            setRecordingSec(sec);
+            if (sec >= 60) stopRecording(false);
+        }, 200);
         startRecording();
     };
     const handleRecordMove = (e: React.PointerEvent) => {
@@ -798,6 +801,20 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         if (!recording) return;
         stopRecording(slideUpRef.current);
     };
+
+    // 录音期间 window 级兜底：pointerup/cancel 都结束录音
+    useEffect(() => {
+        if (!recording) return;
+        const up = () => handleRecordEnd();
+        window.addEventListener("pointerup", up);
+        window.addEventListener("pointercancel", up);
+        window.addEventListener("blur", up);
+        return () => {
+            window.removeEventListener("pointerup", up);
+            window.removeEventListener("pointercancel", up);
+            window.removeEventListener("blur", up);
+        };
+    }, [recording]);
 
     const resetTextareaHeight = () => {
         if (textareaRef.current) textareaRef.current.style.height = "auto";
