@@ -1005,40 +1005,6 @@ export function HuaweiPeekApp({ onClose, onNotice }: { onClose: () => void; onNo
               </button>
             </div>
 
-            {/* mosaic：左宽 今日专注 / 右窄 下一件事 */}
-            <div style={{ display: "flex", gap: 9, marginBottom: 12 }}>
-              <div style={{ ...CARD, flex: "1.25 1 0", marginBottom: 0, display: "flex", flexDirection: "column" }}>
-                <div style={LABEL}>今日专注</div>
-                <div style={{ fontSize: 30, fontWeight: 800, color: ICE_DEEP, lineHeight: 1.1, marginTop: 6 }}>
-                  {focusMinutes}<span style={{ fontSize: 13, color: INK_SOFT, fontWeight: 600 }}> 分</span>
-                </div>
-                <div style={{ fontSize: 11, color: INK_FAINT, marginTop: 4 }}>
-                  {focusing ? "专注中 · 今日累计" : "今日累计"} · 目标 {focusGoal} 分钟
-                </div>
-                <div style={{
-                  marginTop: "auto", height: 4, borderRadius: 2,
-                  background: "rgba(126,200,255,.25)", overflow: "hidden",
-                }}>
-                  <div style={{
-                    width: `${Math.min((focusMinutes / focusGoal) * 100, 100)}%`,
-                    height: "100%", borderRadius: 2,
-                    background: `linear-gradient(90deg,${ICE},${ICE_DEEP})`,
-                    transition: "width .4s",
-                  }} />
-                </div>
-              </div>
-
-              <div style={{ ...CARD, flex: "1 1 0", marginBottom: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                <div style={LABEL}>下一件事</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: INK, marginTop: 5 }}>
-                  {nextRule ? nextRule.r.name : "晚间无安排"}
-                </div>
-                <div style={{ fontSize: 10.5, color: INK_FAINT, marginTop: 3 }}>
-                  {nextRule ? triggerLabel(nextRule.d, nextRule.r.time!) : "把时间留给自己"}
-                </div>
-              </div>
-            </div>
-
             {/* 此刻状态：一段连贯文案 */}
             <div style={CARD}>
               <div style={{ fontSize: 15, fontWeight: 800, color: INK }}>此刻状态</div>

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <script src="float-storage-shim.js"></script>
@@ -9351,135 +9351,20 @@ input[type=date]{ padding-right:34px !important; }
   .mac-titlebar { display: none !important; }
   .mac-window { border-radius: 0 !important; }
 }
-        
+
+/* 移动端性能：手机 WebView 上 backdrop-filter 高斯模糊会在滚动时持续重绘合成，是卡顿主因，全局关闭；
+   底栏改实色背景。box-shadow 保留（仅绘制一次，开销小）。 */
+@media (max-width: 768px) {
+  *, *::before, *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  aside.sidebar { background: rgba(255,255,255,0.98) !important; }
+}
+
+
 </style>
-<link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><link rel="stylesheet" href="assets/katex/katex.min.css">
-<script src="assets/katex/katex.min.js"></script>
-<script src="assets/katex/auto-render.min.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"></head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"></head>
 <body>
     <div class="mac-window">
         <div class="mac-titlebar">
@@ -13520,17 +13405,33 @@ function saveErrFromModal(){
   save(); closeErrModal(); errCtx.subject=subj; errCtx.page=1;
   renderErrors(); toast('已录入错题');
 }
+// KaTeX 懒加载：首页/其他页不加载，首次进错题或知识本时才注入 css+js，加载完回调渲染公式
+var _llKatexLoading=false, _llKatexReady=false, _llKatexQueue=[];
+function llEnsureKaTeX(runAfter){
+  if(_llKatexReady && window.renderMathInElement){ runAfter(); return; }
+  _llKatexQueue.push(runAfter);
+  if(_llKatexLoading) return;
+  _llKatexLoading=true;
+  function loadScript(src, cb){ var s=document.createElement('script'); s.src=src; s.onload=cb; s.onerror=cb; document.head.appendChild(s); }
+  var link=document.createElement('link'); link.rel='stylesheet'; link.href='assets/katex/katex.min.css'; document.head.appendChild(link);
+  loadScript('assets/katex/katex.min.js', function(){
+    loadScript('assets/katex/auto-render.min.js', function(){
+      _llKatexReady=true; _llKatexQueue.forEach(function(f){ try{f();}catch(e){} }); _llKatexQueue=[];
+    });
+  });
+}
+function llRenderMathIn(el){
+  if(!el || !window.renderMathInElement) return;
+  renderMathInElement(el,{delimiters:[
+    {left:'$$',right:'$$',display:true},
+    {left:'$',right:'$',display:false},
+    {left:'\\(',right:'\\)',display:false},
+    {left:'\\[',right:'\\]',display:true}
+  ],throwOnError:false});
+}
 function renderErrors(){
   renderErrorStats(); renderErrorTabs(); renderErrorList(); renderErrorPager();
-  if(window.renderMathInElement){
-    var el=document.getElementById('errors');
-    if(el) renderMathInElement(el,{delimiters:[
-      {left:'$$',right:'$$',display:true},
-      {left:'$',right:'$',display:false},
-      {left:'\\(',right:'\\)',display:false},
-      {left:'\\[',right:'\\]',display:true}
-    ],throwOnError:false});
-  }
+  llEnsureKaTeX(function(){ var el=document.getElementById('errors'); if(el) llRenderMathIn(el); });
 }
 L.pageRenders['errors']=renderErrors;
 
@@ -13627,15 +13528,7 @@ function saveKnowFromModal(){
 }
 function renderKnowledge(){
   renderKnowledgeTabs(); renderKnowledgeList(); renderKnowledgePager();
-  if(window.renderMathInElement){
-    var el=document.getElementById('knowledge');
-    if(el) renderMathInElement(el,{delimiters:[
-      {left:'$$',right:'$$',display:true},
-      {left:'$',right:'$',display:false},
-      {left:'\\(',right:'\\)',display:false},
-      {left:'\\[',right:'\\]',display:true}
-    ],throwOnError:false});
-  }
+  llEnsureKaTeX(function(){ var el=document.getElementById('knowledge'); if(el) llRenderMathIn(el); });
 }
 L.pageRenders['knowledge']=renderKnowledge;
 L.pageRenders['zhenti']=function(){
