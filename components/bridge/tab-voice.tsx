@@ -271,11 +271,12 @@ export function TabVoice({ onNotice }: BridgeTabProps) {
   const doEnroll = () => {
     const shell = getAndroidShell();
     if (!shell) { onNotice?.("安卓壳未连接"); return; }
+    onNotice?.("开始录制，请说出唤醒词");
     try {
       const parsed = parseShellJson<{ ok?: boolean; templates?: number; error?: string }>(shell.enrollWakeWord?.());
       if (parsed?.ok && typeof parsed.templates === "number") {
         setTemplateCount(parsed.templates);
-        onNotice?.(`已录 ${parsed.templates}/3 条模板`);
+        onNotice?.(`录制完成，已录 ${parsed.templates}/3 条模板`);
       } else {
         onNotice?.(parsed?.error ?? "录制失败");
       }

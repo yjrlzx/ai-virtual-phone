@@ -182,27 +182,9 @@ function ChatFloatContent() {
         }
     }, [enterToSend, chat.isThinking, handleSend]);
 
-    // 悬浮窗角色：优先用户上次选的，否则陆知行，否则第一个
-    const [floatCharId, setFloatCharId] = useState<string>(() => {
-        try { return localStorage.getItem("float_char_id") || "char_luzhixing_seed"; } catch { return "char_luzhixing_seed"; }
-    });
-    const floatChar = (() => {
-        try {
-            const chars = loadCharacters();
-            return chars.find(c => c.id === floatCharId) || chars.find(c => c.id === "char_luzhixing_seed") || chars[0];
-        } catch { return null; }
-    })();
-    const nickname = floatChar?.name || settings.nickname || DEFAULT_MASCOT_DISPLAY_NAME;
-    const cycleChar = () => {
-        try {
-            const chars = loadCharacters();
-            if (chars.length < 2) return;
-            const idx = chars.findIndex(c => c.id === floatCharId);
-            const next = chars[(idx + 1) % chars.length];
-            setFloatCharId(next.id);
-            localStorage.setItem("float_char_id", next.id);
-        } catch { /* ignore */ }
-    };
+    // 悬浮窗固定和陆知行聊
+    const floatChar = (() => { try { const chars = loadCharacters(); return chars.find(c => c.id === "char_luzhixing_seed") || chars[0]; } catch { return null; } })();
+    const nickname = floatChar?.name || "陆知行";
 
     // 角色对话被用户关闭（mascot settings chatEnabled=false）：给一个真实的「选择角色」入口，
     // 跳主站角色页。同 host 链接会被壳留在小窗 WebView 内。
@@ -240,7 +222,7 @@ function ChatFloatContent() {
                 padding: "6px 12px", borderBottom: "0.5px solid var(--c-input-border, rgba(128,128,128,0.25))",
                 fontSize: 13, fontWeight: 600,
             }}>
-                <span onClick={cycleChar} style={{ flex: "1 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}>
+                <span style={{ flex: "1 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {nickname}
                 </span>
                 <span style={{
@@ -337,7 +319,7 @@ function ChatFloatContent() {
                     enterKeyHint={enterToSend ? "send" : "enter"}
                     className="chat-input-textarea"
                     placeholder={`跟${nickname}聊聊...`}
-                    style={{ flex: "1 1 auto", resize: "none", padding: "8px 10px", fontSize: 14, lineHeight: 1.4 }}
+                    style={{ flex: "1 1 auto", resize: "none", padding: "10px 14px", fontSize: 16, lineHeight: 1.4, minHeight: 44, maxHeight: 120, borderRadius: 22, border: "none", background: "var(--c-input-bg, rgba(128,128,128,0.12))", outline: "none" }}
                 />
                 <button
                     type="button"

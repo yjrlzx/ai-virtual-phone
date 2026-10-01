@@ -569,6 +569,14 @@ class MainActivity : AppCompatActivity() {
             org.json.JSONObject().put("ok", true).put("at", "$h:${"%02d".format(m)}").toString()
         }.getOrElse { errJson(it.message) }
 
+        /** 复制文本到系统剪贴板。 */
+        @JavascriptInterface
+        fun copyText(text: String): String = runCatching {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("float", text))
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { errJson(it.message) }
+
         /** 开关悬浮球（悬浮球双击速聊）。 */
         @JavascriptInterface
         fun setFloating(enabled: Boolean) {

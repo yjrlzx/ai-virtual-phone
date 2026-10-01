@@ -643,6 +643,14 @@ class FloatingChatWindowService : Service() {
             startActivity(intent)
             org.json.JSONObject().put("ok", true).put("at", "$h:${"%02d".format(m)}").toString()
         }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 复制文本到系统剪贴板。 */
+        @android.webkit.JavascriptInterface
+        fun copyText(text: String): String = runCatching {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("float", text))
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
     }
 
     /** ✕：移除小窗并停掉本服务。 */

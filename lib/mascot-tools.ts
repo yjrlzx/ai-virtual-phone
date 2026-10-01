@@ -1553,6 +1553,8 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "截屏": return handleScreenshot();
             case "定位": return handleLocation();
             case "定闹钟": return handleSetAlarm(call.args);
+            case "复制文本": return handleCopyText(call.args);
+            case "下拉快捷设置": return handleQuickSettings();
             case "查天气": return handleWeather();
             case "点文字": return handleClickNodeByText(call.args);
             case "点描述": return handleClickNodeByDescription(call.args);
@@ -3217,9 +3219,36 @@ function handleScreenshot(): ToolResult {
     }
 }
 
-/** 定闹钟：调系统闹钟 App。 */
-function handleSetAlarm(args: Record<string, unknown>): ToolResult {
+/** 复制文本到剪贴板。 */
+function handleCopyText(args: Record<string, unknown>): ToolResult {
     try {
+        const text = typeof args.text === "string" ? args.text : "";
+        if (!text) return { name: "复制文本", success: false, error: "需要 text" };
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { copyText?: (t: string) => string } | null)?.copyText;
+        if (typeof fn !== "function") return { name: "复制文本", success: false, error: "当前不在手机环境" };
+        fn(text);
+        return { name: "复制文本", success: true, data: "已复制" };
+    } catch {
+        return { name: "复制文本", success: false, error: "复制失败" };
+    }
+}
+
+/** 下拉快捷设置面板。 */
+function handleQuickSettings(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { pressKey?: (k: string) => string } | null)?.pressKey;
+        if (typeof fn !== "function") return { name: "下拉快捷设置", success: false, error: "当前不在手机环境或无障碍未开启" };
+        fn("quick_settings");
+        return { name: "下拉快捷设置", success: true, data: "已展开" };
+    } catch {
+        return { name: "下拉快捷设置", success: false, error: "展开失败" };
+    }
+}
+
+/** 定闹钟：调系统闹钟 App。 */
+function handleSetAlarm(args: Record<string, unknown>): ToolResult {    try {
         const hour = Number(args.hour);
         const minute = Number(args.minute);
         const message = typeof args.message === "string" ? args.message : "";
