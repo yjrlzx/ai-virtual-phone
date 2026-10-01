@@ -29,6 +29,9 @@ class IncomingCallActivity : AppCompatActivity() {
         const val EXTRA_CALL_TS = "call_ts"
     }
 
+    private var ringtone: android.media.Ringtone? = null
+    private var vibrator: android.os.Vibrator? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 27) {
@@ -100,6 +103,42 @@ class IncomingCallActivity : AppCompatActivity() {
         root.addView(buttons)
 
         setContentView(root)
+        startRinging()
+    }
+
+    private fun startRinging() {
+        runCatching {
+            val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+            ringtone = android.media.RingtoneManager.getRingtone(this, uri)?.apply {
+                // 强制按铃声流播放，避免静音模式/媒体音量覆盖
+                audioAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                play()
+            }
+            vibrator = (getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator).also { v ->
+                val pattern = longArrayOf(0, 800, 800, 800, 800)
+                if (Build.VERSION.SDK_INT >= 26) {
+                    v.vibrate(android.os.VibrationEffect.createWaveform(pattern, 0))
+                } else {
+                    @Suppress("DEPRECATION")
+                    v.vibrate(pattern, 0)
+                }
+            }
+        }
+    }
+
+    private fun stopRinging() {
+        runCatching { ringtone?.stop() }
+        ringtone = null
+        runCatching { vibrator?.cancel() }
+        vibrator = null
+    }
+
+    override fun onDestroy() {
+        stopRinging()
+        super.onDestroy()
     }
 
     private fun answer(sessionId: String, callTs: Long) {

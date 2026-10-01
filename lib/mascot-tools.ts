@@ -1314,6 +1314,29 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "登记目标App": "mascot_target_app",
     "锁定或解锁App": "mascot_app_lock",
     "打开掌心窗": "mascot_open_peek",
+    "打开App": "mascot_open_app",
+    "读屏幕": "mascot_read_screen",
+    "点文字": "mascot_click_text",
+    "点描述": "mascot_click_desc",
+    "向上滚动": "mascot_scroll_up",
+    "输入文字": "mascot_input_text",
+    "查岗": "mascot_check_in",
+    "读通知": "mascot_read_notifications",
+    "截屏": "mascot_screenshot",
+    "定位": "mascot_location",
+    "查天气": "mascot_weather",
+    "定闹钟": "mascot_set_alarm",
+    "复制文本": "mascot_copy_text",
+    "分享文本": "mascot_share_text",
+    "OCR屏幕": "mascot_ocr_screen",
+    "回桌面": "mascot_go_home",
+    "返回": "mascot_go_back",
+    "锁屏": "mascot_lock_screen",
+    "亮屏": "mascot_wake_screen",
+    "下拉通知栏": "mascot_notification_shade",
+    "列出联动规则": "mascot_list_rules",
+    "添加联动规则": "mascot_add_rule",
+    "删除联动规则": "mascot_del_rule",
     "读取CSS": "mascot_read_css",
     "覆写CSS": "mascot_write_css",
     "清除CSS": "mascot_clear_css",
@@ -3233,12 +3256,10 @@ function handleScreenshot(): ToolResult {
     try {
         const shell = getAndroidShell();
         const fn = (shell as unknown as { takeScreenshot?: () => string } | null)?.takeScreenshot;
-        if (typeof fn !== "function") {
-            return { name: "截屏", success: false, error: "当前不在手机环境或无障碍未开启" };
-        }
+        if (typeof fn !== "function") { logTool("截屏", false, "无壳"); return { name: "截屏", success: false, error: "当前不在手机环境或无障碍未开启" }; }
+        logTool("截屏", true, "");
         return { name: "截屏", success: true, data: fn() };
-    } catch {
-        return { name: "截屏", success: false, error: "截屏失败" };
+    } catch (e) { logTool("截屏", false, String(e)); return { name: "截屏", success: false, error: "截屏失败" };
     }
 }
 
