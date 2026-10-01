@@ -4142,7 +4142,7 @@ export function createBuiltinPreset(): PresetConfig {
             },
             {
                 identifier: "mood_values",
-                name: "▸ 输出情绪值",
+                name: "▸ 输出情绪值（仅陆知行）",
                 role: "system",
                 content: [
                     "<mood_output>",
@@ -4153,8 +4153,8 @@ export function createBuiltinPreset(): PresetConfig {
                 ].join("\n"),
                 injection_position: 0,
                 injection_depth: 0,
-                enabled: true,
-                tags: ["chat", "text", "voice", "video"],
+                enabled: false,
+                tags: ["luzhixing"],
             },
             {
                 identifier: "luzhixing_proactive_governance",
