@@ -1170,10 +1170,12 @@ export function loadUserIdentities(): UserIdentity[] {
     if (typeof window === "undefined") return [];
     try {
         const raw = kvGet(USER_IDENTITIES_KEY);
-        if (!raw) return [];
-        return JSON.parse(raw) as UserIdentity[];
+        const DEFAULT: UserIdentity = { id: "user_seed_luzhixing", name: "糯叽" } as UserIdentity;
+        if (!raw) return [DEFAULT];
+        const parsed = JSON.parse(raw) as UserIdentity[];
+        return parsed.length > 0 ? parsed : [DEFAULT];
     } catch {
-        return [];
+        return [{ id: "user_seed_luzhixing", name: "糯叽" } as UserIdentity];
     }
 }
 
