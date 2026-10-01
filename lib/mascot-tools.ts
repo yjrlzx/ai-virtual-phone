@@ -33,6 +33,7 @@ import { loadCharacters } from "./character-storage";
 import { loadChatSessions } from "./chat-storage";
 import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei-shell/peek-store";
 import { loadCallAppearance } from "./call-settings";
+import { readMood } from "./mood";
 import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell, loadHuaweiTriggerRules, saveHuaweiTriggerRules, appendHuaweiBridgeEvent } from "./huawei-shell/storage";
 
 // ── 通用类型 ────────────────────────────────────────────
@@ -3058,6 +3059,9 @@ function handleInitiateCall(args: Record<string, unknown>): ToolResult {
         if (!session || !companion) { logTool("发起通话", false, "无会话"); return { name: "发起通话", success: false, error: "对方暂时无法接听" }; }
         const appearance = loadCallAppearance(companion.id);
         if (!appearance.callEnabled) { logTool("发起通话", false, "归电被用户关闭"); return { name: "发起通话", success: false, error: "用户关闭了归电，不要打给她" }; }
+        // 焦虑值门槛：低于 30 不主动打
+        const mood = readMood(companion);
+        if (mood.anxiety < 30) { logTool("发起通话", false, `焦虑值${mood.anxiety}太低`); return { name: "发起通话", success: false, error: `她还没让你焦虑到要打电话（焦虑值${mood.anxiety}），别打` }; }
         const callSettings = readCallSettings();
         if (callSettings.ringEnabled) {
             try {

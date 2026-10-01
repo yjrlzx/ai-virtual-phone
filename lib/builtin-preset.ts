@@ -6,7 +6,7 @@ import type { PresetConfig } from "./settings-types";
 import { getCheckPhonePromptTags } from "./checkphone-config";
 
 export const BUILTIN_PRESET_ID = "builtin_default_v1";
-export const BUILTIN_PRESET_VERSION = 269; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
+export const BUILTIN_PRESET_VERSION = 270; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
 
 export function createBuiltinPreset(): PresetConfig {
     const now = Date.now();
@@ -4134,6 +4134,22 @@ export function createBuiltinPreset(): PresetConfig {
                     "<no_inner_monologue>",
                     "不要在可见消息里输出[内心]、【内心】、(内心)、*内心*、（内心）这类内心独白标签。你心里想什么直接在 thinking/reasoning 里完成，输出给用户的消息只保留对话内容本身，不要加旁白。",
                     "</no_inner_monologue>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "text", "voice", "video"],
+            },
+            {
+                identifier: "mood_values",
+                name: "▸ 输出情绪值",
+                role: "system",
+                content: [
+                    "<mood_output>",
+                    "每轮回复结束后，在消息最末尾单独一行输出情绪标签，格式严格为：",
+                    "<mood affinity=72 possessiveness=25 anxiety=15 />",
+                    "三个值都是0-100的整数。affinity=好感度，possessiveness=占有欲，anxiety=焦虑值。根据当前对话情境判断数值变化。这个标签不会显示给用户，系统会自动解析存储。不要在消息正文里提这件事。",
+                    "</mood_output>",
                 ].join("\n"),
                 injection_position: 0,
                 injection_depth: 0,

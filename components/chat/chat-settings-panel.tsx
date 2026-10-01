@@ -44,7 +44,7 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, Bell, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, Bell, Heart, type LucideIcon } from "lucide-react";
 import { loadCallAppearance, saveCallAppearance, BUILT_IN_RINGTONES, previewBuiltinRingtone } from "@/lib/call-settings";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
@@ -1224,6 +1224,15 @@ export function ChatSettingsPanel({
                         </div>
                         <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setVoiceBackground, "voiceBackground")} className="hidden" />
                     </label>
+
+                    {/* 归电开关 */}
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Heart} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">当前情绪</span>
+                            <span className="menu-desc">好感{character?.mood?.affinity ?? 50} · 占有{character?.mood?.possessiveness ?? 20} · 焦虑{character?.mood?.anxiety ?? 10}</span>
+                        </div>
+                    </div>
 
                     {/* 归电开关 */}
                     <div className="menu-item">

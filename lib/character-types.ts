@@ -22,6 +22,9 @@ export type Character = {
   polaroidImageX?: number;
   polaroidImageY?: number;
   polaroidImageZoom?: number;
+
+  // 情绪值（每轮回复更新）
+  mood?: { affinity: number; possessiveness: number; anxiety: number; updatedAt: string };
 };
 
 export type CanvasBgItem = {
