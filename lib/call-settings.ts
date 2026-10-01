@@ -131,6 +131,8 @@ function playBuiltinRingtone(id: string): { stop: () => void } {
     let timer: number | null = null;
     try {
         ctx = new AudioContext();
+        // WebView 自动播放策略：AudioContext 初始 suspended，尝试 resume
+        if (ctx.state === "suspended") { try { void ctx.resume(); } catch {} }
         const playNote = (freq: number, start: number, dur: number, gainVal = 0.15) => {
             if (!ctx) return;
             const osc = ctx.createOscillator();

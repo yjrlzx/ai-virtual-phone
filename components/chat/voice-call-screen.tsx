@@ -22,7 +22,6 @@ import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
-import { CallAppearanceSettings } from "./call-appearance-settings";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { getAndroidShell, loadHuaweiShellSettings } from "@/lib/huawei-shell/storage";
 import { loadWebCallRingtoneUrl, playIncomingRingtone, resolveCallAvatar, resolveCallRingtoneUrl, loadCallAppearance } from "@/lib/call-settings";
@@ -104,8 +103,6 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const [typedText, setTypedText] = useState("");
     const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
     const [showSttWarning, setShowSttWarning] = useState(false);
-    const [showCallSettings, setShowCallSettings] = useState(false);
-
     // 通话头像：挂载时从存储重读最新 character.avatar（聊天里换了头像这里立刻生效）
     const [liveAvatar, setLiveAvatar] = useState<string | null | undefined>(character.avatar);
     useEffect(() => {
@@ -177,9 +174,9 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         if (window.speechSynthesis) window.speechSynthesis.cancel();
     }, [minimized]);
 
-    // 来电等待接听：循环振动 + 网页铃声 + 华为壳原生铃声（微信式提醒）
+    // 呼叫等待接听：循环振动 + 网页铃声 + 华为壳原生铃声（双向都响：char 打过来 / 用户主动打过去）
     useEffect(() => {
-        if (initiator !== "character" || callState !== "CONNECTING") return;
+        if (callState !== "CONNECTING") return;
         const stopVib = startIncomingCallVibration();
         let shell: { stopRing?: () => void } | null = null;
         // 网页侧铃声：URL 非空时 HTMLAudioElement 循环播放；空串/null 不播（壳原生或仅振动）
@@ -1151,20 +1148,6 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                         <button
                             type="button"
                             className="vcsx-fab"
-                            onClick={() => setShowCallSettings(true)}
-                            aria-label="通话设置"
-                        >
-                            <span className="vcsx-fab-circle vcsx-fab-default-circle">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <circle cx="12" cy="12" r="3" />
-                                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                                </svg>
-                            </span>
-                            <span className="vcsx-fab-label">设置</span>
-                        </button>
-                        <button
-                            type="button"
-                            className="vcsx-fab"
                             onClick={() => setIsMuted(!isMuted)}
                             aria-label={isMuted ? "取消静音" : "静音"}
                         >
@@ -1203,14 +1186,6 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 <CallSttWarningDialog
                     onClose={() => setShowSttWarning(false)}
                     onNeverShow={handleNeverShowSttWarning}
-                />
-            )}
-
-            {showCallSettings && (
-                <CallAppearanceSettings
-                    characterId={session.contactId}
-                    characterName={character.name}
-                    onClose={() => setShowCallSettings(false)}
                 />
             )}
         </div>

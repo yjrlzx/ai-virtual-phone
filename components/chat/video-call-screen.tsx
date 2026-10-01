@@ -135,13 +135,13 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         if (window.speechSynthesis) window.speechSynthesis.cancel();
     }, [minimized]);
 
-    // 来电等待接听：循环振动 + 网页铃声（角色配置优先）
+    // 呼叫等待接听：循环振动 + 网页铃声（双向都响）
     useEffect(() => {
-        if (initiator !== "character" || callState !== "CONNECTING") return;
+        if (callState !== "CONNECTING") return;
         const stopVib = startIncomingCallVibration();
         const ring = playIncomingRingtone(resolveCallRingtoneUrl(session.contactId));
         return () => { stopVib(); ring.stop(); };
-    }, [initiator, callState, session.contactId]);
+    }, [callState, session.contactId]);
 
     // Pause WeChat keep-alive while the call holds the mic/audio; restore on exit.
     useEffect(() => {
