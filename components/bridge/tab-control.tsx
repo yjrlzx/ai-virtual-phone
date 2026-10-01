@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { getAndroidShell, parseShellJson } from "@/lib/huawei-shell/storage";
 import type { ShellJsonResult } from "@/lib/huawei-shell/types";
+import { linjianReadScreen, linjianTapText } from "@/lib/linjian-client";
 import {
   CARD,
   BTN,
@@ -40,6 +41,35 @@ function extractClickableTexts(dump: string): string[] {
     if (out.length >= 60) break;
   }
   return out;
+}
+
+/** 从掌心窗 get_screen_nodes 返回的 JSON 里抽取短文本，作为可点文本列表 */
+function extractClickableTextsFromJson(raw: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let nodes: unknown = null;
+  try {
+    const parsed = JSON.parse(raw);
+    nodes = (parsed as { nodes?: unknown[] } | null)?.nodes ?? parsed;
+  } catch {
+    return out;
+  }
+  const walk = (v: unknown) => {
+    if (typeof v === "string") {
+      const t = v.trim();
+      if (t && t.length <= 40 && !seen.has(t)) { seen.add(t); out.push(t); }
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (v && typeof v === "object") {
+      for (const k of ["text", "contentDesc", "desc", "content_description"]) {
+        const val = (v as Record<string, unknown>)[k];
+        if (typeof val === "string" && val.trim()) walk(val);
+      }
+    }
+  };
+  walk(nodes);
+  return out.slice(0, 60);
 }
 
 const NUM_INPUT: CSSProperties = {
@@ -129,10 +159,29 @@ export function TabControl({ onNotice }: BridgeTabProps) {
     }
   };
 
-  const doDump = () => {
-    const shell = getAndroidShell();
-    if (!shell?.dumpScreen) { onNotice?.("安卓壳未连接或不支持读取屏幕"); return; }
+  const doDump = async () => {
     setDumping(true);
+    // 优先掌心窗：拉无障碍节点树
+    try {
+      const lj = await linjianReadScreen();
+      if (lj) {
+        if (lj.ok) {
+          setDumpText(lj.data);
+          const list = extractClickableTextsFromJson(lj.data);
+          setClickables(list);
+          setLastResult({ ok: true, detail: `掌心窗已读屏，识别出 ${list.length} 个可点文本`, at: Date.now() });
+          onNotice?.("掌心窗读屏成功");
+        } else {
+          setLastResult({ ok: false, detail: `掌心窗读屏失败：${lj.error}`, at: Date.now() });
+          onNotice?.(`掌心窗读屏失败：${lj.error}`);
+        }
+        setDumping(false);
+        return;
+      }
+    } catch { /* 回退壳端 */ }
+    // 回退壳端 dumpScreen
+    const shell = getAndroidShell();
+    if (!shell?.dumpScreen) { onNotice?.("安卓壳未连接或不支持读取屏幕"); setDumping(false); return; }
     try {
       const raw = shell.dumpScreen() ?? "";
       setDumpText(raw);
@@ -147,7 +196,21 @@ export function TabControl({ onNotice }: BridgeTabProps) {
     }
   };
 
-  const doClickText = (text: string) => run(`点击「${text}」`, shell => shell.clickText?.(text));
+  const doClickText = async (text: string) => {
+    // 优先掌心窗 tap_text
+    try {
+      const lj = await linjianTapText({ text, match: "contains" });
+      if (lj) {
+        const r: OpResult = lj.ok
+          ? { ok: true, detail: `掌心窗点击「${text}」成功`, at: Date.now() }
+          : { ok: false, detail: `掌心窗点击失败：${lj.error}`, at: Date.now() };
+        setLastResult(r);
+        onNotice?.(r.detail);
+        return;
+      }
+    } catch { /* 回退壳端 */ }
+    run(`点击「${text}」`, shell => shell.clickText?.(text));
+  };
 
   const doInput = () => {
     const t = inputValue;

@@ -7,6 +7,7 @@ import {
   pushLockedPackagesToShell,
   parseShellJson,
 } from "@/lib/huawei-shell/storage";
+import { linjianLockApp, linjianUnlockApp } from "@/lib/linjian-client";
 import type { HuaweiInstalledApp } from "@/lib/huawei-shell/types";
 import {
   CARD,
@@ -74,13 +75,31 @@ export function TabLock({ onNotice }: BridgeTabProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const toggleLock = (pkg: string, label?: string) => {
+  const toggleLock = async (pkg: string, label?: string) => {
     if (busyPkg) return;
     const willLock = !lockedList.includes(pkg);
     const nextList = willLock
       ? [...lockedList, pkg]
       : lockedList.filter(p => p !== pkg);
     setBusyPkg(pkg);
+
+    // 优先掌心窗门禁：配置了就走 server，没配置/连不上回退壳端整表下发
+    try {
+      const lj = willLock
+        ? await linjianLockApp({ package: pkg, app: label, durationMinutes: 0 })
+        : await linjianUnlockApp({ package: pkg, app: label });
+      if (lj) {
+        if (lj.ok) {
+          setLockedList(nextList);
+          onNotice?.(willLock ? `掌心窗已锁定 ${label ?? pkg}` : `掌心窗已解锁 ${label ?? pkg}`);
+        } else {
+          onNotice?.(`掌心窗操作失败：${lj.error}`);
+        }
+        setBusyPkg(null);
+        return;
+      }
+    } catch { /* 回退壳端 */ }
+
     const r = pushLockedPackagesToShell(nextList);
     if (r.ok) {
       setLockedList(nextList);

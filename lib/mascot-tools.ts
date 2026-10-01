@@ -35,6 +35,26 @@ import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei
 import { loadCallAppearance } from "./call-settings";
 import { readMood } from "./mood";
 import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell, loadHuaweiTriggerRules, saveHuaweiTriggerRules, appendHuaweiBridgeEvent } from "./huawei-shell/storage";
+import {
+  linjianLockApp,
+  linjianUnlockApp,
+  linjianReadScreen,
+  linjianTapText,
+  linjianScreenshot,
+  linjianReadNotifications,
+  linjianSetAlarm,
+  linjianGetWeather,
+  linjianGetLocation,
+  type LinjianCall,
+} from "./linjian-client";
+
+/** 掌心窗结果 → ToolResult；null 表示未配置/不可达，调用方继续走壳端。 */
+function linjianToResult(name: string, r: LinjianCall<string>): ToolResult | null {
+  if (!r) return null;
+  return r.ok
+    ? { name, success: true, data: r.data }
+    : { name, success: false, error: r.error };
+}
 
 // ── 通用类型 ────────────────────────────────────────────
 
@@ -1592,19 +1612,19 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "读取陪伴天数": return handleReadCompanionDays();
             case "登记目标App": return handleTargetApp(call.args);
             case "打开App": return handleOpenApp(call.args);
-            case "读屏幕": return handleReadScreen();
+            case "读屏幕": return await handleReadScreen();
             case "查岗": return handleCheckIn();
-            case "读通知": return handleReadNotifications();
-            case "截屏": return handleScreenshot();
-            case "定位": return handleLocation();
-            case "定闹钟": return handleSetAlarm(call.args);
+            case "读通知": return await handleReadNotifications();
+            case "截屏": return await handleScreenshot();
+            case "定位": return await handleLocation();
+            case "定闹钟": return await handleSetAlarm(call.args);
             case "复制文本": return handleCopyText(call.args);
             case "复制屏幕文字": return handleCopyScreenText();
             case "分享文本": return handleShareText(call.args);
             case "OCR屏幕": return handleOcrFromScreen();
             case "下拉快捷设置": return handleQuickSettings();
-            case "查天气": return handleWeather();
-            case "点文字": return handleClickNodeByText(call.args);
+            case "查天气": return await handleWeather();
+            case "点文字": return await handleClickNodeByText(call.args);
             case "点描述": return handleClickNodeByDescription(call.args);
             case "向上滚动": return handleScrollForward();
             case "返回": return handleGoBack();
@@ -1615,7 +1635,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "列出联动规则": return handleListRules();
             case "添加联动规则": return handleAddRule(call.args);
             case "删除联动规则": return handleDelRule(call.args);
-            case "锁定或解锁App": return handleAppLock(call.args);
+            case "锁定或解锁App": return await handleAppLock(call.args);
             case "打开掌心窗": return handleOpenPeek();
 
             default:
@@ -3251,15 +3271,19 @@ function handleOpenApp(args: Record<string, unknown>): ToolResult {
     } catch (e) { logTool("打开App", false, String(e)); return { name: "打开App", success: false, error: "打开 App 失败" }; }
 }
 
-/** 截屏：返回当前屏幕 data URI。 */
-function handleScreenshot(): ToolResult {
-    try {
-        const shell = getAndroidShell();
-        const fn = (shell as unknown as { takeScreenshot?: () => string } | null)?.takeScreenshot;
-        if (typeof fn !== "function") { logTool("截屏", false, "无壳"); return { name: "截屏", success: false, error: "当前不在手机环境或无障碍未开启" }; }
-        logTool("截屏", true, "");
-        return { name: "截屏", success: true, data: fn() };
-    } catch (e) { logTool("截屏", false, String(e)); return { name: "截屏", success: false, error: "截屏失败" };
+/** 截屏：优先掌心窗敲门取新图，未配置/不可达时回退壳端 data URI。 */
+async function handleScreenshot(): Promise<ToolResult> {
+  try {
+    const lj = linjianToResult("截屏", await linjianScreenshot());
+    if (lj) { logTool("截屏", lj.success, lj.success ? "掌心窗" : (lj.error ?? "")); return lj; }
+  } catch { /* 回退壳端 */ }
+  try {
+    const shell = getAndroidShell();
+    const fn = (shell as unknown as { takeScreenshot?: () => string } | null)?.takeScreenshot;
+    if (typeof fn !== "function") { logTool("截屏", false, "无壳"); return { name: "截屏", success: false, error: "当前不在手机环境或无障碍未开启" }; }
+    logTool("截屏", true, "壳端");
+    return { name: "截屏", success: true, data: fn() };
+  } catch (e) { logTool("截屏", false, String(e)); return { name: "截屏", success: false, error: "截屏失败" };
     }
 }
 
@@ -3333,14 +3357,19 @@ function handleQuickSettings(): ToolResult {
     }
 }
 
-/** 定闹钟：调系统闹钟 App。 */
-function handleSetAlarm(args: Record<string, unknown>): ToolResult {    try {
+/** 定闹钟：优先掌心窗下发，回退壳端系统闹钟。 */
+async function handleSetAlarm(args: Record<string, unknown>): Promise<ToolResult> {
+    try {
         const hour = Number(args.hour);
         const minute = Number(args.minute);
         const message = typeof args.message === "string" ? args.message : "";
         if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
             return { name: "定闹钟", success: false, error: "需要 hour(0-23) 和 minute(0-59)" };
         }
+        try {
+            const lj = linjianToResult("定闹钟", await linjianSetAlarm({ hour, minute, message }));
+            if (lj) { logTool("定闹钟", lj.success, lj.success ? "掌心窗" : (lj.error ?? "")); return lj; }
+        } catch { /* 回退壳端 */ }
         const shell = getAndroidShell();
         const fn = (shell as unknown as { setAlarm?: (h: number, m: number, msg: string) => string } | null)?.setAlarm;
         if (typeof fn !== "function") {
@@ -3353,8 +3382,12 @@ function handleSetAlarm(args: Record<string, unknown>): ToolResult {    try {
     }
 }
 
-/** 定位：返回最近已知经纬度。 */
-function handleLocation(): ToolResult {    try {
+/** 定位：优先掌心窗上报位置，无经纬度时回退壳端实时 GPS。 */
+async function handleLocation(): Promise<ToolResult> {    try {
+        try {
+            const lj = linjianToResult("定位", await linjianGetLocation());
+            if (lj) { logTool("定位", lj.success, lj.success ? "掌心窗" : (lj.error ?? "")); return lj; }
+        } catch { /* 回退壳端 */ }
         const shell = getAndroidShell();
         const fn = (shell as unknown as { getLocation?: () => string } | null)?.getLocation;
         if (typeof fn !== "function") {
@@ -3370,9 +3403,13 @@ function handleLocation(): ToolResult {    try {
     }
 }
 
-/** 查天气：先拿定位，再调 open-meteo（免费无 key）。 */
+/** 查天气：优先掌心窗上报城市，回退壳端定位 + open-meteo。 */
 async function handleWeather(): Promise<ToolResult> {
     try {
+        try {
+            const lj = linjianToResult("查天气", await linjianGetWeather());
+            if (lj) { logTool("查天气", lj.success, lj.success ? "掌心窗" : (lj.error ?? "")); return lj; }
+        } catch { /* 回退壳端 */ }
         const shell = getAndroidShell();
         const loc = (shell as unknown as { getLocation?: () => string } | null)?.getLocation;
         if (typeof loc !== "function") return { name: "查天气", success: false, error: "当前不在手机环境" };
@@ -3394,8 +3431,12 @@ async function handleWeather(): Promise<ToolResult> {
     }
 }
 
-/** 读通知：返回最近 10 条通知（标题/内容/包名/时间），char 自己提取微信消息、支付金额、取件码等。 */
-function handleReadNotifications(): ToolResult {    try {
+/** 读通知：掌心窗不对外读通知（隐私），直接走壳端通知使用权。 */
+async function handleReadNotifications(): Promise<ToolResult> {    try {
+        try {
+            const lj = linjianToResult("读通知", await linjianReadNotifications());
+            if (lj) return lj; // 掌心窗未配置时恒为 null，落到壳端
+        } catch { /* 回退壳端 */ }
         const shell = getAndroidShell();
         const fn = (shell as unknown as { getNotifications?: (n: number) => string } | null)?.getNotifications;
         if (typeof fn !== "function") {
@@ -3454,8 +3495,12 @@ function handleCheckIn(): ToolResult {
     }
 }
 
-/** 读屏幕：返回节点树（text/desc/class/clickable）。 */
-function handleReadScreen(): ToolResult {    try {
+/** 读屏幕：优先掌心窗无障碍节点树，回退壳端 readScreenTree。 */
+async function handleReadScreen(): Promise<ToolResult> {    try {
+        try {
+            const lj = linjianToResult("读屏幕", await linjianReadScreen());
+            if (lj) { logTool("读屏幕", lj.success, lj.success ? "掌心窗" : (lj.error ?? "")); return lj; }
+        } catch { /* 回退壳端 */ }
         const shell = getAndroidShell();
         const fn = (shell as unknown as { readScreenTree?: (n: number) => string } | null)?.readScreenTree;
         if (typeof fn !== "function") {
@@ -3468,11 +3513,15 @@ function handleReadScreen(): ToolResult {    try {
     }
 }
 
-/** 按文字点节点。 */
-function handleClickNodeByText(args: Record<string, unknown>): ToolResult {
+/** 按文字点节点：优先掌心窗 tap_text，回退壳端 clickNodeByText。 */
+async function handleClickNodeByText(args: Record<string, unknown>): Promise<ToolResult> {
     try {
         const text = typeof args.text === "string" ? args.text.trim() : "";
         if (!text) return { name: "点文字", success: false, error: "需要 text" };
+        try {
+            const lj = linjianToResult("点文字", await linjianTapText({ text, match: "contains" }));
+            if (lj) { logTool("点文字", lj.success, lj.success ? `掌心窗 ${text}` : (lj.error ?? "")); return lj; }
+        } catch { /* 回退壳端 */ }
         const shell = getAndroidShell();
         const fn = (shell as unknown as { clickNodeByText?: (t: string) => string } | null)?.clickNodeByText;
         if (typeof fn !== "function") {
@@ -3594,23 +3643,29 @@ function handleOpenShade(): ToolResult {
     }
 }
 
-/** 锁定或解锁 App：改门禁列表并推到壳。 */
-function handleAppLock(args: Record<string, unknown>): ToolResult {
+/** 锁定或解锁 App：优先掌心窗门禁，回退壳端 lockPackage/unlockPackage。 */
+async function handleAppLock(args: Record<string, unknown>): Promise<ToolResult> {
     try {
         const action = args.action === "unlock" ? "unlock" : "lock";
         const pkg = typeof args.package === "string" ? args.package.trim() : "";
         if (!pkg) return { name: "锁定或解锁App", success: false, error: "需要包名（package）" };
+        const minutes = Number(args.durationMinutes) || 0;
+        const message = typeof args.message === "string" ? args.message.trim() : "";
+        try {
+            const lj = action === "unlock"
+                ? linjianToResult("锁定或解锁App", await linjianUnlockApp({ package: pkg }))
+                : linjianToResult("锁定或解锁App", await linjianLockApp({ package: pkg, durationMinutes: minutes, message }));
+            if (lj) { logTool(lj.success ? (action === "unlock" ? "解锁App" : "锁定App") : "App门禁", lj.success, lj.success ? "掌心窗" : (lj.error ?? "")); return lj; }
+        } catch { /* 回退壳端 */ }
         const shell = getAndroidShell();
         if (!shell) { logTool("锁定或解锁App", false, "不在手机环境"); return { name: "锁定或解锁App", success: false, error: "当前不在手机环境" }; }
         if (action === "unlock") {
             const fn = (shell as unknown as { unlockPackage?: (p: string) => string }).unlockPackage;
             if (typeof fn !== "function") { logTool("解锁App", false, "壳版本过低"); return { name: "锁定或解锁App", success: false, error: "壳版本过低，不支持解锁" }; }
             fn(pkg);
-            logTool(`解锁App ${pkg}`, true, "");
+            logTool(`解锁App ${pkg}`, true, "壳端");
             return { name: "锁定或解锁App", success: true, data: `已解锁 ${pkg}` };
         }
-        const minutes = Number(args.durationMinutes) || 0;
-        const message = typeof args.message === "string" ? args.message.trim() : "";
         const fn = (shell as unknown as { lockPackage?: (p: string, m: number, msg: string) => string }).lockPackage;
         if (typeof fn !== "function") { logTool("锁定App", false, "壳版本过低"); return { name: "锁定或解锁App", success: false, error: "壳版本过低，不支持定时锁定" }; }
         fn(pkg, minutes, message);
