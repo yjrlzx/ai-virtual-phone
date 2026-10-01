@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getAndroidShell } from "@/lib/huawei-shell/storage";
 import type { HuaweiPermissionStatus } from "@/lib/huawei-shell/types";
 import {
@@ -89,6 +89,17 @@ export function TabPerms({ onNotice }: BridgeTabProps) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 定位：首次读到未授权时自动弹系统授权框（每页生命周期只弹一次）
+  const locationAsked = useRef(false);
+  useEffect(() => {
+    if (!status || locationAsked.current) return;
+    if (status.standard.location) return;
+    locationAsked.current = true;
+    runShellAction("请求定位权限", s => s.requestLocationPermission?.());
+    const t = setTimeout(load, 1500);
+    return () => clearTimeout(t);
+  }, [status, load]);
 
   // 状态每 5 秒随壳自动刷新一次（与顶部概览卡同步）
   useEffect(() => {
@@ -187,6 +198,7 @@ export function TabPerms({ onNotice }: BridgeTabProps) {
           <Section title="管理员权限" rows={[
             { key: "overlay", title: "悬浮窗", desc: "悬浮球 / 速聊浮窗", granted: status.admin.overlay, setting: "overlay" },
             { key: "write", title: "写系统设置", desc: "改亮度 / 音量 / 飞行模式", granted: status.admin.writeSettings, setting: "write_settings" },
+            { key: "battery", title: "电池优化白名单", desc: "前台推送 / 悬浮球不被系统杀死", granted: status.admin.batteryOptimization, setting: "battery" },
             { key: "media", title: "截屏录屏", desc: "MediaProjection 截屏（用时临时授权）", granted: status.admin.mediaProjection },
           ]} />
 

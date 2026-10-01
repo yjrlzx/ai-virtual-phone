@@ -183,7 +183,7 @@ function ChatFloatContent() {
     }, [enterToSend, chat.isThinking, handleSend]);
 
     // 悬浮窗显示当前第一个角色（陆知行），不是默认 AI助手
-    const floatChar = (() => { try { return loadCharacters()[0]; } catch { return null; } })();
+    const floatChar = (() => { try { const chars = loadCharacters(); return chars.find(c => c.id === "char_luzhixing_seed") || chars[0]; } catch { return null; } })();
     const nickname = floatChar?.name || settings.nickname || DEFAULT_MASCOT_DISPLAY_NAME;
 
     // 角色对话被用户关闭（mascot settings chatEnabled=false）：给一个真实的「选择角色」入口，

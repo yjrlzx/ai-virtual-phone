@@ -191,11 +191,25 @@ class PushService : Service() {
                 }.isSuccess
                 if (shown) return
             }
+            // 通知被系统关闭时 heads-up 会被静默吞掉——常驻通知里如实提示，
+            // 用户才知道要去系统设置开通知，而不是以为壳没连上。
+            if (notificationsBlocked()) {
+                updateKeepAlive("收到 ${title} 的消息，但通知权限被关闭，点此去系统设置开启")
+                return
+            }
             showMessageNotification(title, text.ifEmpty { "有新消息" })
         }
     }
 
     // ── 通知 ──
+    /** 系统把本 App 通知整体关掉时，heads-up 会被静默丢弃——常驻通知如实提示，不假装收到。 */
+    private fun notificationsBlocked(): Boolean {
+        val manager = getSystemService(NotificationManager::class.java)
+        if (!manager.areNotificationsEnabled()) return true
+        val channel = manager.getNotificationChannel(CH_MESSAGES) ?: return false
+        return channel.importance == NotificationManager.IMPORTANCE_NONE
+    }
+
     private fun createChannels() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(

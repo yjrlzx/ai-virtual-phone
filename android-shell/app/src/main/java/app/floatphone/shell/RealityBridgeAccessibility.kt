@@ -23,6 +23,9 @@ class RealityBridgeAccessibility : AccessibilityService() {
         fun active(): Boolean = instance != null
         fun current(): RealityBridgeAccessibility? = instance
 
+        private const val PREFS = "float_shell"
+        private const val KEY_LOCKED = "locked_packages"
+
         /** 应用门禁锁定包名集合：命中即强制拦截回桌面。 */
         private val lockedPackages = CopyOnWriteArraySet<String>()
         private var lastEnforced = 0L
@@ -39,14 +42,31 @@ class RealityBridgeAccessibility : AccessibilityService() {
 
         fun isFocusing(): Boolean = System.currentTimeMillis() < focusUntil
 
-        fun setLockedPackages(pkgs: List<String>) {
+        /** 服务连接时从 SharedPreferences 恢复锁定列表（进程死亡/服务重启后不丢）。 */
+        fun loadLockedPackages(ctx: android.content.Context) {
+            val saved = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+                .getStringSet(KEY_LOCKED, emptySet()) ?: emptySet()
+            lockedPackages.clear()
+            lockedPackages.addAll(saved.filter { it.isNotBlank() })
+        }
+
+        private fun persistLockedPackages(ctx: android.content.Context) {
+            ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+                .edit().putStringSet(KEY_LOCKED, lockedPackages.toSet()).apply()
+        }
+
+        fun setLockedPackages(ctx: android.content.Context, pkgs: List<String>) {
             lockedPackages.clear()
             lockedPackages.addAll(pkgs.filter { it.isNotBlank() })
+            persistLockedPackages(ctx)
             recheckGate()
         }
 
-        fun addLockedPackage(pkg: String) {
-            if (pkg.isNotBlank()) lockedPackages.add(pkg)
+        fun addLockedPackage(ctx: android.content.Context, pkg: String) {
+            if (pkg.isNotBlank()) {
+                lockedPackages.add(pkg)
+                persistLockedPackages(ctx)
+            }
             recheckGate()
         }
 
@@ -57,8 +77,9 @@ class RealityBridgeAccessibility : AccessibilityService() {
             svc.maybeEnforceGate(pkg)
         }
 
-        fun removeLockedPackage(pkg: String) {
+        fun removeLockedPackage(ctx: android.content.Context, pkg: String) {
             lockedPackages.remove(pkg)
+            persistLockedPackages(ctx)
         }
 
         fun getLockedPackages(): List<String> = lockedPackages.toList()
@@ -69,6 +90,7 @@ class RealityBridgeAccessibility : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        loadLockedPackages(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

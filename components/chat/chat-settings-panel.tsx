@@ -44,7 +44,7 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, Bell, type LucideIcon } from "lucide-react";
 import { loadCallAppearance, saveCallAppearance, BUILT_IN_RINGTONES, previewBuiltinRingtone } from "@/lib/call-settings";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
@@ -301,8 +301,7 @@ export function ChatSettingsPanel({
     // 通话外观（按角色存 kv）
     const [callAppearance, setCallAppearance] = useState(() => loadCallAppearance(session.contactId));
     const ringtoneFileRef = useRef<HTMLInputElement | null>(null);
-    const ringtonePreviewStopRef = useRef<(() => void) | null>(null);
-    const [isPinned, setIsPinned] = useState(session.isPinned || false);
+    const ringtonePreviewStopRef = useRef<(() => void) | null>(null);    const [isPinned, setIsPinned] = useState(session.isPinned || false);
     // 自定义状态栏（状态区）
     const [statusRegion, setStatusRegion] = useState<StatusRegionConfig>(() => getStatusRegionConfig(session.id));
     const [showStatusRegionDialog, setShowStatusRegionDialog] = useState(false);
@@ -1225,6 +1224,40 @@ export function ChatSettingsPanel({
                         </div>
                         <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setVoiceBackground, "voiceBackground")} className="hidden" />
                     </label>
+
+                    {/* 通话铃声 */}
+                    <div className="menu-item" onClick={() => {
+                        ringtonePreviewStopRef.current?.();
+                        const cur = callAppearance.ringtoneUrl;
+                        const idx = BUILT_IN_RINGTONES.findIndex(r => `builtin:${r.id}` === cur);
+                        const next = BUILT_IN_RINGTONES[(idx + 1) % BUILT_IN_RINGTONES.length];
+                        const updated = { ...callAppearance, ringtoneUrl: `builtin:${next.id}` };
+                        setCallAppearance(updated);
+                        saveCallAppearance(session.contactId, updated);
+                        ringtonePreviewStopRef.current = () => previewBuiltinRingtone(next.id).stop();
+                    }}>
+                        <ChatInfoIcon icon={Bell} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">通话铃声</span>
+                            <span className="menu-desc">
+                                {callAppearance.ringtoneUrl?.startsWith("builtin:")
+                                    ? BUILT_IN_RINGTONES.find(r => `builtin:${r.id}` === callAppearance.ringtoneUrl)?.name || "自定义"
+                                    : callAppearance.ringtoneUrl ? "本地音乐" : "跟随系统"}
+                            </span>
+                        </div>
+                        <div className="menu-right">
+                            {callAppearance.ringtoneUrl && (
+                                <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => {
+                                    e.stopPropagation();
+                                    ringtonePreviewStopRef.current?.();
+                                    const updated = { ...callAppearance, ringtoneUrl: null as string | null };
+                                    setCallAppearance(updated);
+                                    saveCallAppearance(session.contactId, updated);
+                                }}>清除</button>
+                            )}
+                            <ChevronRight size={16} />
+                        </div>
+                    </div>
                 </div>
 
                 {/* Advanced */}

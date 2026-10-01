@@ -327,15 +327,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensurePushService() {
+        // SSE 长连接不依赖通知权限：即使用户拒绝通知授权，也要保持连接，
+        // 之后在系统设置里开启通知后立刻能收到，不重启 App。
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) {
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            PushService.start(this)
         }
+        PushService.start(this)
     }
+
+    /** 网页权限页调用：重新弹通知授权框（用户曾拒绝后引导用）。 */
+    @JavascriptInterface
+    fun requestNotificationPermission(): String = runCatching {
+        if (Build.VERSION.SDK_INT < 33) return """{"ok":true,"already":true}"""
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            == PackageManager.PERMISSION_GRANTED
+        ) return """{"ok":true,"already":true}"""
+        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        """{"ok":true,"message":"已弹出通知授权框"}"""
+    }.getOrElse { errJson(it.message) }
 
     override fun onDestroy() {
         if (Companion.activeActivity === this) Companion.activeActivity = null
@@ -519,7 +531,7 @@ class MainActivity : AppCompatActivity() {
             val arr = org.json.JSONArray(json)
             val pkgs = ArrayList<String>()
             for (i in 0 until arr.length()) pkgs.add(arr.getString(i))
-            RealityBridgeAccessibility.setLockedPackages(pkgs)
+            RealityBridgeAccessibility.setLockedPackages(this@MainActivity, pkgs)
             org.json.JSONObject()
                 .put("ok", true)
                 .put("locked", RealityBridgeAccessibility.getLockedPackages().size)
@@ -773,6 +785,20 @@ class MainActivity : AppCompatActivity() {
                 .put("shizuku", ShizukuAuthorizer.hasPermission())
                 .put("bluetoothConnect", btConnect)
                 .toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 请求定位运行时权限（ACCESS_FINE/COARSE_LOCATION，弹系统授权框）。 */
+        @JavascriptInterface
+        fun requestLocationPermission(): String = runCatching {
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this@MainActivity,
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+                1043,
+            )
+            """{"ok":true,"message":"已弹出定位授权框"}"""
         }.getOrElse { errJson(it.message) }
 
         /** 请求蓝牙运行时权限（API31+ BLUETOOTH_CONNECT，弹系统授权框）。 */
@@ -1115,6 +1141,8 @@ class MainActivity : AppCompatActivity() {
             val notifListener = packageName in enabledListenerPackages
             val overlay = android.provider.Settings.canDrawOverlays(this@MainActivity)
             val writeSettings = android.provider.Settings.System.canWrite(this@MainActivity)
+            val batteryIgnoring = (getSystemService(POWER_SERVICE) as android.os.PowerManager)
+                .isIgnoringBatteryOptimizations(packageName)
             val storage = if (android.os.Build.VERSION.SDK_INT >= 30) android.os.Environment.isExternalStorageManager()
                 else granted(android.Manifest.permission.READ_EXTERNAL_STORAGE)
             val suCmd = (customSuCommand ?: "").trim().ifEmpty { "su" }
@@ -1140,7 +1168,8 @@ class MainActivity : AppCompatActivity() {
                 .put("admin", org.json.JSONObject()
                     .put("mediaProjection", MediaProjectionCapture.projectionToken != null)
                     .put("overlay", overlay)
-                    .put("writeSettings", writeSettings))
+                    .put("writeSettings", writeSettings)
+                    .put("batteryOptimization", batteryIgnoring))
                 .put("root", org.json.JSONObject()
                     .put("available", rootAvailable)
                     .put("granted", rootAvailable)
@@ -1162,6 +1191,7 @@ class MainActivity : AppCompatActivity() {
                 "microphone" -> android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))
                 "bluetooth" -> android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)
                 "wireless" -> android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS)
+                "battery" -> android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
                 "app_details" -> android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))
                 else -> android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
             }

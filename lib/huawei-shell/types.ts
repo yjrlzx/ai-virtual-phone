@@ -67,6 +67,8 @@ export type HuaweiShellBridge = {
     getSystemControlStatus?(): string;
     /** 弹系统授权框请求 BLUETOOTH_CONNECT（API31+）→ {ok, message} */
     requestBluetoothPermission?(): string;
+    /** 弹系统授权框请求定位运行时权限 → {ok, message} */
+    requestLocationPermission?(): string;
 
     /** Shizuku 执行 shell，返回 {ok, stdout, stderr, exitCode}（照搬 Operit 系统操作核心） */
     executeShellCommand?(command: string): string;
@@ -289,7 +291,7 @@ export type HuaweiPermissionStatus = {
         shizukuRunning: boolean;
         shizukuPermission: boolean;
     };
-    admin: { mediaProjection: boolean; overlay: boolean; writeSettings: boolean };
+    admin: { mediaProjection: boolean; overlay: boolean; writeSettings: boolean; batteryOptimization: boolean };
     root: { available: boolean; granted: boolean; hint: string };
 };
 

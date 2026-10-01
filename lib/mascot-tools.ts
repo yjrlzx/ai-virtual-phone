@@ -32,7 +32,7 @@ import { getAndroidShell } from "./huawei-shell/storage";
 import { loadCharacters } from "./character-storage";
 import { loadChatSessions } from "./chat-storage";
 import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei-shell/peek-store";
-import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell } from "./huawei-shell/storage";
+import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell, loadHuaweiTriggerRules, saveHuaweiTriggerRules } from "./huawei-shell/storage";
 
 // ── 通用类型 ────────────────────────────────────────────
 
@@ -1119,6 +1119,39 @@ export const MASCOT_OPEN_APP_TOOL: MascotSubTool = {
     },
 };
 
+export const MASCOT_LIST_RULES_TOOL: MascotSubTool = {
+    name: "列出联动规则",
+    description: "列出当前所有定时/通知联动规则。",
+    parameterSchema: { type: "object", properties: {} },
+};
+
+export const MASCOT_ADD_RULE_TOOL: MascotSubTool = {
+    name: "添加联动规则",
+    description: "新增一条联动规则。time 格式 HH:MM（定时触发），或 notifyPkg 指定通知来源包名。action 取 send_notification/open_app/custom_action。",
+    parameterSchema: {
+        type: "object",
+        properties: {
+            name: { type: "string", description: "规则名" },
+            time: { type: "string", description: "定时触发 HH:MM，如 22:00" },
+            notifyPkg: { type: "string", description: "通知触发的包名，如 com.xingin.xhs" },
+            notifyKeyword: { type: "string", description: "通知关键词匹配" },
+            title: { type: "string", description: "send_notification 的标题" },
+            content: { type: "string", description: "send_notification 的内容" },
+        },
+        required: ["name"],
+    },
+};
+
+export const MASCOT_DEL_RULE_TOOL: MascotSubTool = {
+    name: "删除联动规则",
+    description: "按 id 删除一条联动规则。",
+    parameterSchema: {
+        type: "object",
+        properties: { ruleId: { type: "string" } },
+        required: ["ruleId"],
+    },
+};
+
 export const MASCOT_APP_LOCK_TOOL: MascotSubTool = {
     name: "锁定或解锁App",
     description: "锁定或解锁一个 App（应用门禁）。action 取 lock 或 unlock，package 必填（包名）。适用于用户说'把抖音锁了'。",
@@ -1145,6 +1178,9 @@ const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
     MASCOT_COMPANION_DAYS_TOOL,
     MASCOT_TARGET_APP_TOOL,
     MASCOT_OPEN_APP_TOOL,
+    MASCOT_LIST_RULES_TOOL,
+    MASCOT_ADD_RULE_TOOL,
+    MASCOT_DEL_RULE_TOOL,
     MASCOT_APP_LOCK_TOOL,
     MASCOT_OPEN_PEEK_TOOL,
 ];
@@ -1510,6 +1546,9 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "读取陪伴天数": return handleReadCompanionDays();
             case "登记目标App": return handleTargetApp(call.args);
             case "打开App": return handleOpenApp(call.args);
+            case "列出联动规则": return handleListRules();
+            case "添加联动规则": return handleAddRule(call.args);
+            case "删除联动规则": return handleDelRule(call.args);
             case "锁定或解锁App": return handleAppLock(call.args);
             case "打开掌心窗": return handleOpenPeek();
 
@@ -3089,6 +3128,46 @@ function handleTargetApp(args: Record<string, unknown>): ToolResult {
     } catch {
         return { name: "登记目标App", success: false, error: "登记目标 App 失败" };
     }
+}
+
+function handleListRules(): ToolResult {
+    const rules = loadHuaweiTriggerRules();
+    if (!rules.length) return { name: "列出联动规则", success: true, data: "（没有规则）" };
+    return { name: "列出联动规则", success: true, data: rules.map(r => `${r.id} | ${r.name} | ${r.trigger === "time" ? `定时 ${r.time}` : `通知 ${r.notifyPkg || "任意"}`} | ${r.enabled ? "启用" : "停用"}`).join("\n") };
+}
+
+function handleAddRule(args: Record<string, unknown>): ToolResult {
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (!name) return { name: "添加联动规则", success: false, error: "需要 name" };
+    const rules = loadHuaweiTriggerRules();
+    const time = typeof args.time === "string" ? args.time.trim() : "";
+    const notifyPkg = typeof args.notifyPkg === "string" ? args.notifyPkg.trim() : "";
+    const rule = {
+        id: `rule_${Date.now().toString(36)}`,
+        name,
+        enabled: true,
+        trigger: (time ? "time" : "notification") as "time" | "notification",
+        time: time || undefined,
+        notifyPkg: notifyPkg || undefined,
+        notifyKeyword: typeof args.notifyKeyword === "string" ? args.notifyKeyword : undefined,
+        action: "send_notification" as const,
+        title: typeof args.title === "string" ? args.title : name,
+        content: typeof args.content === "string" ? args.content : "",
+        processMode: "raw" as const,
+    };
+    rules.push(rule);
+    saveHuaweiTriggerRules(rules);
+    return { name: "添加联动规则", success: true, data: `已添加 ${name} (${rule.id})` };
+}
+
+function handleDelRule(args: Record<string, unknown>): ToolResult {
+    const ruleId = typeof args.ruleId === "string" ? args.ruleId : "";
+    if (!ruleId) return { name: "删除联动规则", success: false, error: "需要 ruleId" };
+    const rules = loadHuaweiTriggerRules();
+    const next = rules.filter(r => r.id !== ruleId);
+    if (next.length === rules.length) return { name: "删除联动规则", success: false, error: "找不到规则" };
+    saveHuaweiTriggerRules(next);
+    return { name: "删除联动规则", success: true, data: "已删除" };
 }
 
 /** 直接打开 App：调壳启动器。 */
