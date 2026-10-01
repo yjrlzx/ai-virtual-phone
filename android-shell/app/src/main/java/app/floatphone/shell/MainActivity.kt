@@ -347,7 +347,7 @@ class MainActivity : AppCompatActivity() {
         ) return """{"ok":true,"already":true}"""
         notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         """{"ok":true,"message":"已弹出通知授权框"}"""
-    }.getOrElse { errJson(it.message) }
+    }.getOrElse { """{"ok":false,"error":"${it.message}"}""" }
 
     override fun onDestroy() {
         if (Companion.activeActivity === this) Companion.activeActivity = null
@@ -537,21 +537,6 @@ class MainActivity : AppCompatActivity() {
             svc.takeScreenshotBase64 { r -> result = r; latch.countDown() }
             latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
             org.json.JSONObject(result as Map<*, *>).toString()
-        }.getOrElse { errJson(it.message) }
-
-        /** 最近已知位置（经纬度+精度）。 */
-        @JavascriptInterface
-        fun getLocation(): String = runCatching {
-            val lm = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
-            val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
-                ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
-                ?: return """{"ok":false,"error":"暂无位置，请先打开地图定位一次"}"""
-            org.json.JSONObject()
-                .put("ok", true)
-                .put("lat", loc.latitude)
-                .put("lng", loc.longitude)
-                .put("accuracy", loc.accuracy)
-                .toString()
         }.getOrElse { errJson(it.message) }
 
         /** 定闹钟：交给系统闹钟 App（AlarmClock.ACTION_SET_ALARM，跳过 UI 直接设好）。 */
