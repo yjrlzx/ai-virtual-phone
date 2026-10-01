@@ -269,7 +269,10 @@ class RealityBridgeAccessibility : AccessibilityService() {
     }
 
     /** 按可见文字定位第一个可点击节点并触发点击。返回是否找到并点击。 */
-    fun clickText(text: String): Map<String, Any?> {
+    fun clickText(text: String): Map<String, Any?> = clickNodeByText(text)
+
+    /** 按文字定位可点击节点并点击（语义操作，不依赖坐标）。 */
+    fun clickNodeByText(text: String): Map<String, Any?> {
         return try {
             val root = rootInActiveWindow ?: return mapOf("ok" to false, "error" to "取不到当前窗口")
             val node = findNodeByText(root, text, clickable = true)
@@ -281,6 +284,66 @@ class RealityBridgeAccessibility : AccessibilityService() {
             }
         } catch (t: Throwable) {
             mapOf("ok" to false, "error" to (t.message ?: "点击失败"))
+        }
+    }
+
+    /** 按 contentDescription 定位可点击节点并点击。 */
+    fun clickNodeByDescription(desc: String): Map<String, Any?> {
+        return try {
+            val root = rootInActiveWindow ?: return mapOf("ok" to false, "error" to "取不到当前窗口")
+            var found: AccessibilityNodeInfo? = null
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            while (queue.isNotEmpty() && found == null) {
+                val node = queue.removeFirst()
+                val d = node.contentDescription?.toString()
+                if (!d.isNullOrBlank() && d.contains(desc) && node.isClickable) {
+                    found = node
+                    break
+                }
+                for (i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
+            }
+            val target = found ?: return mapOf("ok" to false, "error" to "没找到可点击的描述")
+            if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) mapOf("ok" to true)
+            else mapOf("ok" to false, "error" to "点击动作被系统拒绝")
+        } catch (t: Throwable) {
+            mapOf("ok" to false, "error" to (t.message ?: "点击失败"))
+        }
+    }
+
+    /** 向前滚动当前屏幕里第一个可滚动节点。 */
+    fun scrollForward(): Map<String, Any?> {
+        return try {
+            val root = rootInActiveWindow ?: return mapOf("ok" to false, "error" to "取不到当前窗口")
+            var target: AccessibilityNodeInfo? = null
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            while (queue.isNotEmpty() && target == null) {
+                val node = queue.removeFirst()
+                if (node.isScrollable) { target = node; break }
+                for (i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
+            }
+            val t = target ?: return mapOf("ok" to false, "error" to "当前屏幕没有可滚动区域")
+            if (t.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) mapOf("ok" to true)
+            else mapOf("ok" to false, "error" to "滚动被系统拒绝")
+        } catch (t: Throwable) {
+            mapOf("ok" to false, "error" to (t.message ?: "滚动失败"))
+        }
+    }
+
+    /** 对当前聚焦的输入框执行 ACTION_SET_TEXT。 */
+    fun setTextOnFocusedField(text: String): Map<String, Any?> {
+        return try {
+            val root = rootInActiveWindow ?: return mapOf("ok" to false, "error" to "取不到当前窗口")
+            val editable = findFocusedEditable(root)
+                ?: return mapOf("ok" to false, "error" to "当前没有聚焦的输入框")
+            val args = android.os.Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            }
+            if (editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) mapOf("ok" to true)
+            else mapOf("ok" to false, "error" to "写入文字被系统拒绝")
+        } catch (t: Throwable) {
+            mapOf("ok" to false, "error" to (t.message ?: "输入失败"))
         }
     }
 

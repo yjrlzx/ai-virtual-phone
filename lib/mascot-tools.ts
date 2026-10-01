@@ -1547,9 +1547,11 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "读取陪伴天数": return handleReadCompanionDays();
             case "登记目标App": return handleTargetApp(call.args);
             case "打开App": return handleOpenApp(call.args);
-            case "点击屏幕": return handleTap(call.args);
+            case "读屏幕": return handleReadScreen();
+            case "点文字": return handleClickNodeByText(call.args);
+            case "点描述": return handleClickNodeByDescription(call.args);
+            case "向上滚动": return handleScrollForward();
             case "返回": return handleGoBack();
-            case "滑动屏幕": return handleSwipe(call.args);
             case "输入文字": return handleInputText(call.args);
             case "回桌面": return handleGoHome();
             case "锁屏": return handleLockScreen();
@@ -3195,23 +3197,67 @@ function handleOpenApp(args: Record<string, unknown>): ToolResult {
     } catch (e) { logTool("打开App", false, String(e)); return { name: "打开App", success: false, error: "打开 App 失败" }; }
 }
 
-/** 点击屏幕坐标：归一化 0..1000（先 dumpScreenTree 读屏拿坐标再点）。 */
-function handleTap(args: Record<string, unknown>): ToolResult {
+/** 读屏幕：返回节点树（text/desc/class/clickable）。 */
+function handleReadScreen(): ToolResult {
     try {
-        const x = Number(args.x);
-        const y = Number(args.y);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
-            return { name: "点击屏幕", success: false, error: "需要坐标 x/y（0..1000）" };
-        }
         const shell = getAndroidShell();
-        const fn = (shell as unknown as { tap?: (x: number, y: number) => string } | null)?.tap;
+        const fn = (shell as unknown as { readScreenTree?: (n: number) => string } | null)?.readScreenTree;
         if (typeof fn !== "function") {
-            return { name: "点击屏幕", success: false, error: "当前不在手机环境或无障碍未开启" };
+            return { name: "读屏幕", success: false, error: "当前不在手机环境或无障碍未开启" };
         }
-        fn(Math.round(x), Math.round(y));
-        return { name: "点击屏幕", success: true, data: `已点击 (${Math.round(x)}, ${Math.round(y)})` };
+        const raw = fn(300);
+        return { name: "读屏幕", success: true, data: raw };
     } catch {
-        return { name: "点击屏幕", success: false, error: "点击失败" };
+        return { name: "读屏幕", success: false, error: "读屏失败" };
+    }
+}
+
+/** 按文字点节点。 */
+function handleClickNodeByText(args: Record<string, unknown>): ToolResult {
+    try {
+        const text = typeof args.text === "string" ? args.text.trim() : "";
+        if (!text) return { name: "点文字", success: false, error: "需要 text" };
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { clickNodeByText?: (t: string) => string } | null)?.clickNodeByText;
+        if (typeof fn !== "function") {
+            return { name: "点文字", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn(text);
+        return { name: "点文字", success: true, data: `已点「${text}」` };
+    } catch {
+        return { name: "点文字", success: false, error: "点击失败" };
+    }
+}
+
+/** 按描述点节点。 */
+function handleClickNodeByDescription(args: Record<string, unknown>): ToolResult {
+    try {
+        const desc = typeof args.desc === "string" ? args.desc.trim() : "";
+        if (!desc) return { name: "点描述", success: false, error: "需要 desc" };
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { clickNodeByDescription?: (d: string) => string } | null)?.clickNodeByDescription;
+        if (typeof fn !== "function") {
+            return { name: "点描述", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn(desc);
+        return { name: "点描述", success: true, data: `已点描述「${desc}」` };
+    } catch {
+        return { name: "点描述", success: false, error: "点击失败" };
+    }
+}
+
+/** 向前滚动。 */
+function handleScrollForward(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { scrollForward?: () => string } | null)?.scrollForward;
+        if (typeof fn !== "function") {
+            return { name: "向上滚动", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn();
+        return { name: "向上滚动", success: true, data: "已滚动一屏" };
+    } catch {
+        return { name: "向上滚动", success: false, error: "滚动失败" };
     }
 }
 
@@ -3227,26 +3273,6 @@ function handleGoBack(): ToolResult {
         return { name: "返回", success: true, data: "已按下返回键" };
     } catch {
         return { name: "返回", success: false, error: "返回失败" };
-    }
-}
-
-/** 滑动屏幕：归一化 0..1000 起终点。 */
-function handleSwipe(args: Record<string, unknown>): ToolResult {
-    try {
-        const x1 = Number(args.x1); const y1 = Number(args.y1);
-        const x2 = Number(args.x2); const y2 = Number(args.y2);
-        if (![x1, y1, x2, y2].every(Number.isFinite)) {
-            return { name: "滑动屏幕", success: false, error: "需要坐标 x1/y1/x2/y2（0..1000）" };
-        }
-        const shell = getAndroidShell();
-        const fn = (shell as unknown as { swipe?: (a: number, b: number, c: number, d: number) => string } | null)?.swipe;
-        if (typeof fn !== "function") {
-            return { name: "滑动屏幕", success: false, error: "当前不在手机环境或无障碍未开启" };
-        }
-        fn(Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2));
-        return { name: "滑动屏幕", success: true, data: `已从 (${Math.round(x1)},${Math.round(y1)}) 滑到 (${Math.round(x2)},${Math.round(y2)})` };
-    } catch {
-        return { name: "滑动屏幕", success: false, error: "滑动失败" };
     }
 }
 

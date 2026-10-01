@@ -626,6 +626,68 @@ class MainActivity : AppCompatActivity() {
                 errJson(t.message)
             }
 
+        /** 读屏幕节点树（语义操作基础）。 */
+        @JavascriptInterface
+        fun readScreenTree(limit: Int): String =
+            RealityBridgeAccessibility.current()?.dumpScreenTree(limit)
+                ?: """{"ok":false,"error":"无障碍服务未开启"}"""
+
+        /** 按文字点节点。 */
+        @JavascriptInterface
+        fun clickNodeByText(text: String): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.clickNodeByText(text)
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 按描述点节点。 */
+        @JavascriptInterface
+        fun clickNodeByDescription(desc: String): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.clickNodeByDescription(desc)
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 向前滚动。 */
+        @JavascriptInterface
+        fun scrollForward(): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.scrollForward()
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 对当前聚焦输入框写文字。 */
+        @JavascriptInterface
+        fun setTextOnFocusedField(text: String): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.setTextOnFocusedField(text)
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
         /** 无障碍长按（归一化 0..1000 坐标）。 */
         @JavascriptInterface
         fun longPress(x: Int, y: Int): String =

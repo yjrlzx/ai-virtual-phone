@@ -496,6 +496,44 @@ class FloatingChatWindowService : Service() {
             org.json.JSONObject(r).toString()
         }.getOrElse { """{"ok":false,"error":"$it"}""" }
 
+        /** 读屏幕节点树。 */
+        @android.webkit.JavascriptInterface
+        fun readScreenTree(limit: Int): String =
+            RealityBridgeAccessibility.current()?.dumpScreenTree(limit)
+                ?: """{"ok":false,"error":"无障碍服务未开启"}"""
+
+        /** 按文字点节点。 */
+        @android.webkit.JavascriptInterface
+        fun clickNodeByText(text: String): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.clickNodeByText(text)
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 按描述点节点。 */
+        @android.webkit.JavascriptInterface
+        fun clickNodeByDescription(desc: String): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.clickNodeByDescription(desc)
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 向前滚动。 */
+        @android.webkit.JavascriptInterface
+        fun scrollForward(): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.scrollForward()
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 对当前聚焦输入框写文字。 */
+        @android.webkit.JavascriptInterface
+        fun setTextOnFocusedField(text: String): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.setTextOnFocusedField(text)
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
         /** 门禁列表代理：悬浮窗里的锁定/解锁工具直接走无障碍服务同一份配置。 */
         @android.webkit.JavascriptInterface
         fun setLockedPackages(json: String): String = runCatching {            val arr = org.json.JSONArray(json)
