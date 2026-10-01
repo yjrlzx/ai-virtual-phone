@@ -1186,6 +1186,17 @@ const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
     MASCOT_DEL_RULE_TOOL,
     MASCOT_APP_LOCK_TOOL,
     MASCOT_OPEN_PEEK_TOOL,
+    { name: "读屏幕", description: "读当前手机屏幕的UI树，返回文字和控件列表", parameterSchema: { type: "object", properties: {} } },
+    { name: "点文字", description: "按文字内容点击屏幕上的按钮", parameterSchema: { type: "object", properties: { text: { type: "string", description: "要点的文字" } }, required: ["text"] } },
+    { name: "点描述", description: "按描述点击屏幕控件", parameterSchema: { type: "object", properties: { desc: { type: "string", description: "控件描述" } }, required: ["desc"] } },
+    { name: "输入文字", description: "在当前输入框输入文字", parameterSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
+    { name: "查岗", description: "查她在用什么App、电量、亮屏", parameterSchema: { type: "object", properties: {} } },
+    { name: "读通知", description: "读最近10条手机通知", parameterSchema: { type: "object", properties: {} } },
+    { name: "截屏", description: "截屏当前屏幕", parameterSchema: { type: "object", properties: {} } },
+    { name: "返回", description: "按返回键", parameterSchema: { type: "object", properties: {} } },
+    { name: "回桌面", description: "回桌面", parameterSchema: { type: "object", properties: {} } },
+    { name: "锁屏", description: "锁屏", parameterSchema: { type: "object", properties: {} } },
+    { name: "发通知", description: "给她发一条手机通知", parameterSchema: { type: "object", properties: { title: { type: "string" }, body: { type: "string" } }, required: ["title","body"] } },
 ];
 
 // ── 文本协议下的工具列表渲染 ─────────────────────────────

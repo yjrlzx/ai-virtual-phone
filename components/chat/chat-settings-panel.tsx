@@ -1311,6 +1311,51 @@ export function ChatSettingsPanel({
                     </div>
                 </div>
 
+                {/* 生活助手 */}
+                <div className="menu-group" style={{ marginTop: 16 }}>
+                    <div style={{ fontSize: 12, color: "var(--c-faint)", padding: "4px 12px 8px" }}>生活助手</div>
+                    <div className="menu-item">
+                        <div className="menu-label-group"><span className="menu-label">喝水</span><span className="menu-desc">今天已喝 {localStorage.getItem(`water_${new Date().toISOString().slice(0,10)}`) || 0} 杯</span></div>
+                        <div className="menu-right">
+                            <button className="menu-desc" onClick={() => {
+                                const today = new Date().toISOString().slice(0,10);
+                                const cur = parseInt(localStorage.getItem(`water_${today}`) || "0") + 1;
+                                localStorage.setItem(`water_${today}`, String(cur));
+                            }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-icon-active)" }}>+1杯</button>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <div className="menu-label-group"><span className="menu-label">经期</span><span className="menu-desc">上次：{localStorage.getItem("period_last") || "未设置"}</span></div>
+                        <div className="menu-right">
+                            <input type="date" defaultValue={localStorage.getItem("period_last") || ""} onChange={e => localStorage.setItem("period_last", e.target.value)} style={{ padding: 4, borderRadius: 4, border: "1px solid rgba(128,128,128,0.3)" }} />
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <div className="menu-label-group"><span className="menu-label">锁屏纸条</span><span className="menu-desc">{localStorage.getItem("locker_note") || "今天也要加油"}</span></div>
+                        <div className="menu-right">
+                            <input type="text" defaultValue={localStorage.getItem("locker_note") || ""} placeholder="写一句..." onChange={e => localStorage.setItem("locker_note", e.target.value)} style={{ padding: 4, borderRadius: 4, border: "1px solid rgba(128,128,128,0.3)", width: 120 }} />
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <div className="menu-label-group"><span className="menu-label">心情BGM</span><span className="menu-desc">焦虑时自动放白噪音</span></div>
+                        <div className="menu-right">
+                            <input type="checkbox" defaultChecked={localStorage.getItem("bgm_enabled") !== "0"} onChange={e => localStorage.setItem("bgm_enabled", e.target.checked ? "1" : "0")} />
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <div className="menu-label-group"><span className="menu-label">记一餐</span><span className="menu-desc">{localStorage.getItem(`food_${new Date().toISOString().slice(0,10)}`) || "今天还没记"}</span></div>
+                        <div className="menu-right">
+                            <button onClick={() => { const d = prompt("吃了什么？"); if (d) localStorage.setItem(`food_${new Date().toISOString().slice(0,10)}`, d); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-icon-active)" }}>记录</button>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <div className="menu-label-group"><span className="menu-label">睡眠</span><span className="menu-desc">昨晚入睡：{localStorage.getItem("last_sleep") || "未知"}</span></div>
+                        <div className="menu-right">
+                            <button onClick={() => localStorage.setItem("last_sleep", new Date().toTimeString().slice(0,5))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-icon-active)" }}>标记入睡</button>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Advanced */}
                 <div className="menu-group">
                     <KeyboardAutoSendDebounceItem sessionId={session.id} />
