@@ -186,11 +186,12 @@ class RealityBridgeAccessibility : AccessibilityService() {
         lastEnforced = now
         if (locked) {
             runCatching {
+                val e = entry ?: return@runCatching
                 val intent = android.content.Intent(this, GateBlockActivity::class.java)
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     .putExtra(GateBlockActivity.EXTRA_PKG, pkg)
-                    .putExtra(GateBlockActivity.EXTRA_MESSAGE, entry.message)
-                    .putExtra(GateBlockActivity.EXTRA_EXPIRES_AT, entry.expiresAt)
+                    .putExtra(GateBlockActivity.EXTRA_MESSAGE, e.message)
+                    .putExtra(GateBlockActivity.EXTRA_EXPIRES_AT, e.expiresAt)
                 startActivity(intent)
             }
         } else {
@@ -354,8 +355,9 @@ class RealityBridgeAccessibility : AccessibilityService() {
             return
         }
         runCatching {
+            // SCREENSHOT_TYPE_ACTIVE_WINDOW = 1（API 30）
             takeScreenshot(
-                android.accessibilityservice.AccessibilityService.SCREENSHOT_TYPE_ACTIVE_WINDOW,
+                1,
                 java.util.concurrent.Executors.newSingleThreadExecutor(),
                 object : AccessibilityService.TakeScreenshotCallback {
                     override fun onSuccess(screenshot: android.accessibilityservice.AccessibilityService.ScreenshotResult) {

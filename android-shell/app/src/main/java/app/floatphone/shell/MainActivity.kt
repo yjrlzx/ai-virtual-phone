@@ -533,7 +533,7 @@ class MainActivity : AppCompatActivity() {
             val svc = RealityBridgeAccessibility.current()
                 ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
             val latch = java.util.concurrent.CountDownLatch(1)
-            var result: Map<String, Any?> = mapOf("ok" to false to "timeout")
+            var result: Map<String, Any?> = mapOf("ok" to false, "error" to "timeout")
             svc.takeScreenshotBase64 { r -> result = r; latch.countDown() }
             latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
             org.json.JSONObject(result as Map<*, *>).toString()
