@@ -652,6 +652,63 @@ class FloatingChatWindowService : Service() {
             cm.setPrimaryClip(android.content.ClipData.newPlainText("float", text))
             org.json.JSONObject().put("ok", true).toString()
         }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 把当前屏幕所有可见文字拼起来写进剪贴板。 */
+        @android.webkit.JavascriptInterface
+        fun copyScreenText(): String = runCatching {
+            val svc = RealityBridgeAccessibility.current()
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            val root = org.json.JSONObject(svc.dumpScreenTree())
+            val sb = StringBuilder()
+            fun walk(node: org.json.JSONObject) {
+                val t = node.optString("text", "")
+                if (t.isNotBlank()) sb.append(t).append("\n")
+                val children = node.optJSONArray("children") ?: return
+                for (i in 0 until children.length()) {
+                    val c = children.optJSONObject(i) ?: continue
+                    walk(c)
+                }
+            }
+            walk(root)
+            val text = sb.toString().trim()
+            if (text.isEmpty()) return """{"ok":false,"error":"屏幕上没有可复制的文字"}"""
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("float", text))
+            org.json.JSONObject().put("ok", true).put("length", text.length).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 系统分享面板分享文本。 */
+        @android.webkit.JavascriptInterface
+        fun shareText(text: String): String = runCatching {
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, text)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(android.content.Intent.createChooser(send, "分享到").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** OCR：节点树文字提取。 */
+        @android.webkit.JavascriptInterface
+        fun ocrFromScreen(): String = runCatching {
+            val svc = RealityBridgeAccessibility.current()
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            val root = org.json.JSONObject(svc.dumpScreenTree())
+            val sb = StringBuilder()
+            fun walk(node: org.json.JSONObject) {
+                val t = node.optString("text", "")
+                val d = node.optString("desc", "")
+                if (t.isNotBlank()) sb.append(t).append("\n")
+                else if (d.isNotBlank()) sb.append(d).append("\n")
+                val children = node.optJSONArray("children") ?: return
+                for (i in 0 until children.length()) {
+                    val c = children.optJSONObject(i) ?: continue
+                    walk(c)
+                }
+            }
+            walk(root)
+            org.json.JSONObject().put("ok", true).put("text", sb.toString().trim()).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
     }
 
     /** ✕：移除小窗并停掉本服务。 */

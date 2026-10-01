@@ -1556,6 +1556,9 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "定位": return handleLocation();
             case "定闹钟": return handleSetAlarm(call.args);
             case "复制文本": return handleCopyText(call.args);
+            case "复制屏幕文字": return handleCopyScreenText();
+            case "分享文本": return handleShareText(call.args);
+            case "OCR屏幕": return handleOcrFromScreen();
             case "下拉快捷设置": return handleQuickSettings();
             case "查天气": return handleWeather();
             case "点文字": return handleClickNodeByText(call.args);
@@ -3219,9 +3222,51 @@ function handleScreenshot(): ToolResult {
     }
 }
 
-/** 复制文本到剪贴板。 */
-function handleCopyText(args: Record<string, unknown>): ToolResult {
+/** 复制屏幕全部可见文字到剪贴板。 */
+function handleCopyScreenText(): ToolResult {
     try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { copyScreenText?: () => string } | null)?.copyScreenText;
+        if (typeof fn !== "function") return { name: "复制屏幕文字", success: false, error: "当前不在手机环境或无障碍未开启" };
+        const r = JSON.parse(fn()) as { ok?: boolean; length?: number; error?: string };
+        if (!r.ok) return { name: "复制屏幕文字", success: false, error: String(r.error || "失败") };
+        return { name: "复制屏幕文字", success: true, data: "已复制 " + (r.length || 0) + " 字" };
+    } catch {
+        return { name: "复制屏幕文字", success: false, error: "失败" };
+    }
+}
+
+/** 调系统分享面板分享文本。 */
+function handleShareText(args: Record<string, unknown>): ToolResult {
+    try {
+        const text = typeof args.text === "string" ? args.text : "";
+        if (!text) return { name: "分享文本", success: false, error: "需要 text" };
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { shareText?: (t: string) => string } | null)?.shareText;
+        if (typeof fn !== "function") return { name: "分享文本", success: false, error: "当前不在手机环境" };
+        fn(text);
+        return { name: "分享文本", success: true, data: "已弹出分享面板" };
+    } catch {
+        return { name: "分享文本", success: false, error: "分享失败" };
+    }
+}
+
+/** OCR：从屏幕节点树提取所有文字。 */
+function handleOcrFromScreen(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { ocrFromScreen?: () => string } | null)?.ocrFromScreen;
+        if (typeof fn !== "function") return { name: "OCR屏幕", success: false, error: "当前不在手机环境或无障碍未开启" };
+        const r = JSON.parse(fn()) as { ok?: boolean; text?: string; error?: string };
+        if (!r.ok) return { name: "OCR屏幕", success: false, error: String(r.error || "失败") };
+        return { name: "OCR屏幕", success: true, data: (r.text || "").slice(0, 2000) };
+    } catch {
+        return { name: "OCR屏幕", success: false, error: "识别失败" };
+    }
+}
+
+/** 复制文本到剪贴板。 */
+function handleCopyText(args: Record<string, unknown>): ToolResult {    try {
         const text = typeof args.text === "string" ? args.text : "";
         if (!text) return { name: "复制文本", success: false, error: "需要 text" };
         const shell = getAndroidShell();
@@ -3316,7 +3361,10 @@ function handleReadNotifications(): ToolResult {    try {
             return { name: "读通知", success: false, error: "当前不在手机环境或未授权通知使用权" };
         }
         const raw = fn(10);
-        return { name: "读通知", success: true, data: raw };
+        // 自动提取取件码
+        const pickupMatch = raw.match(/取件码[：:\s]*([0-9#]{4,8})/);
+        const data = pickupMatch ? `${raw}\n\n[自动提取] 取件码: ${pickupMatch[1]}` : raw;
+        return { name: "读通知", success: true, data };
     } catch {
         return { name: "读通知", success: false, error: "读通知失败" };
     }

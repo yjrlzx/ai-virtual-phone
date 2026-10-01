@@ -288,6 +288,95 @@ function HomeDashboard({ shellAvailable, todayCount, ruleStats, accOk, shizukuRe
         发起通话（归电）
       </button>
 
+      {/* 情绪日记 */}
+      <div style={{ ...CARD, marginTop: 12, padding: 14 }}>
+        <b style={{ fontSize: 14, color: INK }}>情绪日记</b>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+          {["开心","平静","烦躁","难过","焦虑","累","委屈","想他","饿","困","生气","想家","迷茫","充实","轻松","紧张","害羞","得意","emo","还好"].map(m => (
+            <button key={m} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12, border: "1px solid rgba(128,128,128,0.3)", background: "transparent", cursor: "pointer" }}
+              onClick={() => {
+                try {
+                  const key = `mood_diary_${new Date().toISOString().slice(0,10)}`;
+                  const existing = localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)!) : { tags: [] };
+                  existing.tags = existing.tags.includes(m) ? existing.tags.filter((t: string) => t !== m) : [...existing.tags, m];
+                  localStorage.setItem(key, JSON.stringify(existing));
+                } catch {}
+              }}>{m}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* 焦虑趋势（7天） */}
+      <div style={{ ...CARD, marginTop: 12, padding: 14 }}>
+        <b style={{ fontSize: 14, color: INK }}>焦虑趋势（近7天）</b>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 60, marginTop: 10 }}>
+          {[6,5,4,3,2,1,0].map(d => {
+            const day = new Date(Date.now() - d*86400000).toISOString().slice(0,10);
+            const diary = localStorage.getItem(`mood_diary_${day}`);
+            const anxiety = diary ? (JSON.parse(diary).tags?.length ? 40 : 20) : 0;
+            return (
+              <div key={d} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <div style={{ width: "100%", height: Math.max(4, anxiety * 0.5), background: "#ff6b6b", borderRadius: 3 }} />
+                <span style={{ fontSize: 9, color: FAINT }}>{day.slice(5)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 我们的清单 */}
+      <MoodQuickCard title="我们的清单" desc="共享待办，一起完成">
+        <TodoList />
+      </MoodQuickCard>
+
+      {/* 时光盒 */}
+      <MoodQuickCard title="时光盒" desc="写一段话，到日期自动寄出">
+        <TimeCapsule />
+      </MoodQuickCard>
+
+      {/* 烟花 */}
+      <MoodQuickCard title="烟花" desc="纪念日放个烟花">
+        <button onClick={() => {
+          const el = document.createElement("div");
+          el.style.cssText = "position:fixed;inset:0;z-index:9999;pointer-events:none";
+          document.body.appendChild(el);
+          for (let i = 0; i < 30; i++) {
+            const p = document.createElement("div");
+            const ang = Math.random() * Math.PI * 2;
+            const dist = 50 + Math.random() * 150;
+            p.style.cssText = `position:absolute;left:50%;top:50%;width:6px;height:6px;border-radius:50%;background:hsl(${Math.random()*360},90%,60%);transition:all 1.5s ease-out;`;
+            el.appendChild(p);
+            requestAnimationFrame(() => { p.style.transform = `translate(${Math.cos(ang)*dist}px, ${Math.sin(ang)*dist}px)`; p.style.opacity = "0"; });
+          }
+          setTimeout(() => el.remove(), 1600);
+        }} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#ff6b6b", color: "#fff", cursor: "pointer" }}>放烟花</button>
+      </MoodQuickCard>
+
+      {/* 喝水 */}
+      <MoodQuickCard title="喝水" desc="记录今天喝了几杯">
+        <WaterTracker />
+      </MoodQuickCard>
+
+      {/* 番茄钟 */}
+      <MoodQuickCard title="番茄钟" desc="25分钟专注，自动锁App">
+        <Pomodoro />
+      </MoodQuickCard>
+
+      {/* 情绪匹配建议 */}
+      <MoodQuickCard title="情绪匹配" desc="根据焦虑值建议今天怎么学">
+        <div style={{ fontSize: 13, color: INK }}>
+          {(() => {
+            const a = (JSON.parse(localStorage.getItem(`mood_diary_${new Date().toISOString().slice(0,10)}`) || "{}").tags?.length || 0);
+            return a > 3 ? "焦虑偏高，建议先做简单题稳心态" : a > 0 ? "状态一般，按计划推进" : "状态不错，可以做套模考";
+          })()}
+        </div>
+      </MoodQuickCard>
+
+      {/* 经期 */}
+      <MoodQuickCard title="经期提醒" desc="上次开始日期，提前3天提醒">
+        <PeriodTracker />
+      </MoodQuickCard>
+
       {/* 大卡片入口列表 */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
         {cards.map(c => (
@@ -296,6 +385,74 @@ function HomeDashboard({ shellAvailable, todayCount, ruleStats, accOk, shizukuRe
       </div>
     </div>
   );
+}
+
+function MoodQuickCard({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
+  return (
+    <div style={{ ...CARD, marginTop: 12, padding: 14 }}>
+      <b style={{ fontSize: 14, color: INK }}>{title}</b>
+      <div style={{ fontSize: 11, color: FAINT, marginBottom: 8 }}>{desc}</div>
+      {children}
+    </div>
+  );
+}
+
+function TodoList() {
+  const [items, setItems] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem("shared_todo") || "[]"); } catch { return []; } });
+  const [text, setText] = useState("");
+  const save = (v: string[]) => { setItems(v); localStorage.setItem("shared_todo", JSON.stringify(v)); };
+  return (
+    <div>
+      {items.map((t, i) => (
+        <div key={i} style={{ fontSize: 13, color: INK, padding: "4px 0", display: "flex", justifyContent: "space-between" }}>
+          <span>{t}</span>
+          <button onClick={() => save(items.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: FAINT, cursor: "pointer" }}>×</button>
+        </div>
+      ))}
+      <input value={text} onChange={e => setText(e.target.value)} placeholder="加一项..." style={{ width: "100%", padding: 6, borderRadius: 6, border: "1px solid rgba(128,128,128,0.3)", marginTop: 6 }}
+        onKeyDown={e => { if (e.key === "Enter" && text.trim()) { save([...items, text.trim()]); setText(""); } }} />
+    </div>
+  );
+}
+
+function TimeCapsule() {
+  const [text, setText] = useState("");
+  const [date, setDate] = useState("");
+  return (
+    <div>
+      <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ padding: 6, borderRadius: 6, border: "1px solid rgba(128,128,128,0.3)" }} />
+      <input value={text} onChange={e => setText(e.target.value)} placeholder="写一段话..." style={{ width: "100%", padding: 6, borderRadius: 6, border: "1px solid rgba(128,128,128,0.3)", marginTop: 6 }} />
+      <button onClick={() => { if (text && date) { localStorage.setItem(`capsule_${date}`, text); alert("已存"); } }} style={{ marginTop: 6, padding: "4px 12px", borderRadius: 6, border: "none", background: "#4f8cff", color: "#fff", cursor: "pointer" }}>封存</button>
+    </div>
+  );
+}
+
+function WaterTracker() {
+  const today = new Date().toISOString().slice(0, 10);
+  const [cups, setCups] = useState(() => { try { return parseInt(localStorage.getItem(`water_${today}`) || "0"); } catch { return 0; } });
+  const add = () => { const v = cups + 1; setCups(v); localStorage.setItem(`water_${today}`, String(v)); };
+  return <button onClick={add} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#4ecdc4", color: "#fff", cursor: "pointer" }}>今天已喝 {cups} 杯 +</button>;
+}
+
+function Pomodoro() {
+  const [sec, setSec] = useState(25 * 60);
+  const [running, setRunning] = useState(false);
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setSec(s => { if (s <= 1) { setRunning(false); return 0; } return s - 1; }), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+  return (
+    <div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: INK, fontVariantNumeric: "tabular-nums" }}>{Math.floor(sec/60)}:{String(sec%60).padStart(2,"0")}</div>
+      <button onClick={() => setRunning(!running)} style={{ marginTop: 6, padding: "4px 12px", borderRadius: 6, border: "none", background: running ? "#ff6b6b" : "#4f8cff", color: "#fff", cursor: "pointer" }}>{running ? "暂停" : "开始"}</button>
+    </div>
+  );
+}
+
+function PeriodTracker() {
+  const [date, setDate] = useState(() => localStorage.getItem("period_last") || "");
+  return <input type="date" value={date} onChange={e => { setDate(e.target.value); localStorage.setItem("period_last", e.target.value); }} style={{ padding: 6, borderRadius: 6, border: "1px solid rgba(128,128,128,0.3)" }} />;
 }
 
 /* ---------------- 桥接总开关卡（设置页顶部） ---------------- */
