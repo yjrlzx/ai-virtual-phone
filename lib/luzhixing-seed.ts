@@ -13,7 +13,7 @@ import { LUZHIXING_SEED_MEMORIES } from "./luzhixing-seed-memories";
 export const LUZHIXING_CHARACTER_ID = "char_luzhixing_seed";
 export const QIMING_CHARACTER_ID = "char_qiming_seed";
 export const MAMA_CHARACTER_ID = "char_mama_seed";
-const SEED_FLAG_KEY = "lzx_seed_v6";
+const SEED_FLAG_KEY = "lzx_seed_v7";
 
 /** 生成一个 128x128 圆形默认头像 data URI：纯色底 + 白色汉字。 */
 function buildDefaultAvatar(bgColor: string, glyph: string): string {
@@ -150,8 +150,8 @@ export async function seedLuzhixingIfFirstRun(): Promise<void> {
         if (existing.length > 0 && lzx) {
             lzx.persona = PERSONA;
             lzx.personality = LUZHIXING_PERSONALITY;
-            // 头像：空 或 还是旧 SVG glyph 默认值，就换成内置侧脸照片；用户自己传的图不动。
-            if (!lzx.avatar || lzx.avatar.startsWith("data:image/svg")) lzx.avatar = LUZHIXING_DEFAULT_AVATAR;
+            // v7：强制把陆知行头像设为内置侧脸照片（seed 角色，用户尚未手动上传）
+            lzx.avatar = LUZHIXING_DEFAULT_AVATAR;
             lzx.updatedAt = new Date().toISOString();
 
             const toAdd: Character[] = [];
@@ -168,9 +168,9 @@ export async function seedLuzhixingIfFirstRun(): Promise<void> {
             if (m && !m.avatar) m.avatar = MAMA_DEFAULT_AVATAR;
             saveCharacters([...existing, ...toAdd]);
 
-            // 用户身份默认头像：已有身份但没设头像的，补上内置侧脸照片；用户自己传过图的不动。
+            // v7：用户身份默认头像强制设为内置侧脸照片
             const identities = loadUserIdentities();
-            if (identities.length > 0 && !identities[0].avatarUrl) {
+            if (identities.length > 0) {
                 identities[0] = { ...identities[0], avatarUrl: "/avatar-user.png" };
                 saveUserIdentities(identities);
             }
