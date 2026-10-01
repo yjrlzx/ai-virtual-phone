@@ -37,6 +37,7 @@ import {
   mdiHome,
   mdiEye,
   mdiNotebookOutline,
+  mdiHeartOutline,
   mdiHammerWrench,
   mdiGlassCocktail,
   mdiStorefrontOutline,
@@ -77,6 +78,7 @@ const MDI_PATHS: Record<IconId, string> = {
   dwelling: mdiHome,
   huaweibridge: mdiCellphone,
   lifeline: mdiNotebookOutline,
+  lifestyle: mdiHeartOutline,
 };
 
 export function IconGlyph({ id, className }: IconGlyphProps) {
