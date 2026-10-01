@@ -695,12 +695,16 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         const rec = recorderRef.current;
         const stream = streamRef.current;
         if (recordTickRef.current) { window.clearInterval(recordTickRef.current); recordTickRef.current = null; }
+        const dur = Math.max(1, Math.round((Date.now() - recordStartRef.current) / 1000));
         if (rec && rec.state !== "inactive") {
             try { rec.stop(); } catch {}
+        } else if (!shouldCancel && chunksRef.current.length === 0) {
+            // MediaRecorder 没启动成功（权限被拒/不支持）：发占位文字，不静默吞
+            onSendVoice("", dur, "");
         }
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch {} }); streamRef.current = null; }
         recorderRef.current = null;
-        chunksRef.current = [];
+        // 不清 chunksRef：onstop 异步回调里还要读它；onstop 自己清
         // 停语音识别
         if (recognitionRef.current) {
             try { recognitionRef.current.stop(); } catch {}
@@ -742,7 +746,6 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                 reader.readAsDataURL(blob);
             };
             rec.start();
-            recordStartRef.current = Date.now();
             recordTickRef.current = window.setInterval(() => setRecordingSec(Math.floor((Date.now() - recordStartRef.current) / 1000)), 200);
             // 边录边转文字
             try {
@@ -778,6 +781,11 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         setRecording(true);
         setRecordCancel(false);
         setRecordingSec(0);
+        slideUpRef.current = false;
+        transcriptRef.current = "";
+        chunksRef.current = [];
+        // 秒数立刻开始跳
+        recordTickRef.current = window.setInterval(() => setRecordingSec(Math.floor((Date.now() - recordStartRef.current) / 1000)), 200);
         startRecording();
     };
     const handleRecordMove = (e: React.PointerEvent) => {
@@ -6444,6 +6452,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 onTriggerAIResponse={triggerAIResponse}
                 onSendSticker={(name, url) => { setShowStickerPanel(false); sendRichMessage("sticker", { label: name, stickerUrl: url }); }}
                 onSendVoice={(audioDataUrl, durationSec, transcript) => {
+                    if (!audioDataUrl) {
+                        // 录音失败：发文字占位
+                        handleSendText(transcript || `[${durationSec}秒语音]`);
+                        return;
+                    }
                     sendRichMessage("audio", { label: `${durationSec}秒语音` }, transcript || "", audioDataUrl);
                 }}
             />
