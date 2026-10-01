@@ -324,59 +324,6 @@ function HomeDashboard({ shellAvailable, todayCount, ruleStats, accOk, shizukuRe
         </div>
       </div>
 
-      {/* 我们的清单 */}
-      <MoodQuickCard title="我们的清单" desc="共享待办，一起完成">
-        <TodoList />
-      </MoodQuickCard>
-
-      {/* 时光盒 */}
-      <MoodQuickCard title="时光盒" desc="写一段话，到日期自动寄出">
-        <TimeCapsule />
-      </MoodQuickCard>
-
-      {/* 烟花 */}
-      <MoodQuickCard title="烟花" desc="纪念日放个烟花">
-        <button onClick={() => {
-          const el = document.createElement("div");
-          el.style.cssText = "position:fixed;inset:0;z-index:9999;pointer-events:none";
-          document.body.appendChild(el);
-          for (let i = 0; i < 30; i++) {
-            const p = document.createElement("div");
-            const ang = Math.random() * Math.PI * 2;
-            const dist = 50 + Math.random() * 150;
-            p.style.cssText = `position:absolute;left:50%;top:50%;width:6px;height:6px;border-radius:50%;background:hsl(${Math.random()*360},90%,60%);transition:all 1.5s ease-out;`;
-            el.appendChild(p);
-            requestAnimationFrame(() => { p.style.transform = `translate(${Math.cos(ang)*dist}px, ${Math.sin(ang)*dist}px)`; p.style.opacity = "0"; });
-          }
-          setTimeout(() => el.remove(), 1600);
-        }} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#ff6b6b", color: "#fff", cursor: "pointer" }}>放烟花</button>
-      </MoodQuickCard>
-
-      {/* 喝水 */}
-      <MoodQuickCard title="喝水" desc="记录今天喝了几杯">
-        <WaterTracker />
-      </MoodQuickCard>
-
-      {/* 番茄钟 */}
-      <MoodQuickCard title="番茄钟" desc="25分钟专注，自动锁App">
-        <Pomodoro />
-      </MoodQuickCard>
-
-      {/* 情绪匹配建议 */}
-      <MoodQuickCard title="情绪匹配" desc="根据焦虑值建议今天怎么学">
-        <div style={{ fontSize: 13, color: INK }}>
-          {(() => {
-            const a = (JSON.parse(localStorage.getItem(`mood_diary_${new Date().toISOString().slice(0,10)}`) || "{}").tags?.length || 0);
-            return a > 3 ? "焦虑偏高，建议先做简单题稳心态" : a > 0 ? "状态一般，按计划推进" : "状态不错，可以做套模考";
-          })()}
-        </div>
-      </MoodQuickCard>
-
-      {/* 经期 */}
-      <MoodQuickCard title="经期提醒" desc="上次开始日期，提前3天提醒">
-        <PeriodTracker />
-      </MoodQuickCard>
-
       {/* 大卡片入口列表 */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
         {cards.map(c => (
