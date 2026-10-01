@@ -74,6 +74,16 @@
             android:turnScreenOn="true"
             android:theme="@style/Theme.FloatShell" />
 
+        <!-- 应用门禁遮挡页：被锁 App 打开时全屏盖上来 -->
+        <activity
+            android:name=".GateBlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.FloatShell" />
+
         <receiver
             android:name=".CallActionReceiver"
             android:exported="false" />

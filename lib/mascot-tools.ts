@@ -32,7 +32,7 @@ import { getAndroidShell } from "./huawei-shell/storage";
 import { loadCharacters } from "./character-storage";
 import { loadChatSessions } from "./chat-storage";
 import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei-shell/peek-store";
-import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell, loadHuaweiTriggerRules, saveHuaweiTriggerRules } from "./huawei-shell/storage";
+import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell, loadHuaweiTriggerRules, saveHuaweiTriggerRules, appendHuaweiBridgeEvent } from "./huawei-shell/storage";
 
 // ── 通用类型 ────────────────────────────────────────────
 
@@ -1154,12 +1154,13 @@ export const MASCOT_DEL_RULE_TOOL: MascotSubTool = {
 
 export const MASCOT_APP_LOCK_TOOL: MascotSubTool = {
     name: "锁定或解锁App",
-    description: "锁定或解锁一个 App（应用门禁）。action 取 lock 或 unlock，package 必填（包名）。适用于用户说'把抖音锁了'。",
+    description: "锁定或解锁一个 App。action 取 lock/unlock，package 必填。lock 时可附 message（留言），会直接发通知到她手机，比如'别刷小红书了去背单词'。",
     parameterSchema: {
         type: "object",
         properties: {
-            action: { type: "string", enum: ["lock", "unlock"], description: "锁定或解锁" },
-            package: { type: "string", description: "包名，如 com.ss.android.ugc.aweme" },
+            action: { type: "string", enum: ["lock", "unlock"] },
+            package: { type: "string", description: "包名" },
+            message: { type: "string", description: "lock 时可选，留言内容" },
         },
         required: ["action", "package"],
     },
@@ -1546,6 +1547,13 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "读取陪伴天数": return handleReadCompanionDays();
             case "登记目标App": return handleTargetApp(call.args);
             case "打开App": return handleOpenApp(call.args);
+            case "点击屏幕": return handleTap(call.args);
+            case "返回": return handleGoBack();
+            case "滑动屏幕": return handleSwipe(call.args);
+            case "输入文字": return handleInputText(call.args);
+            case "回桌面": return handleGoHome();
+            case "锁屏": return handleLockScreen();
+            case "下拉通知栏": return handleOpenShade();
             case "列出联动规则": return handleListRules();
             case "添加联动规则": return handleAddRule(call.args);
             case "删除联动规则": return handleDelRule(call.args);
@@ -3130,6 +3138,10 @@ function handleTargetApp(args: Record<string, unknown>): ToolResult {
     }
 }
 
+function logTool(name: string, ok: boolean, detail: string) {
+    try { appendHuaweiBridgeEvent({ kind: "action", title: name, detail, ok }); } catch { /* ignore */ }
+}
+
 function handleListRules(): ToolResult {
     const rules = loadHuaweiTriggerRules();
     if (!rules.length) return { name: "列出联动规则", success: true, data: "（没有规则）" };
@@ -3174,15 +3186,129 @@ function handleDelRule(args: Record<string, unknown>): ToolResult {
 function handleOpenApp(args: Record<string, unknown>): ToolResult {
     try {
         const pkg = typeof args.package === "string" ? args.package.trim() : "";
-        if (!pkg) return { name: "打开App", success: false, error: "需要包名（package）" };
+        if (!pkg) { logTool("打开App", false, "缺少包名"); return { name: "打开App", success: false, error: "需要包名（package）" }; }
         const shell = getAndroidShell();
-        if (!shell || typeof shell.openApp !== "function") {
-            return { name: "打开App", success: false, error: "当前不在手机环境" };
-        }
+        if (!shell || typeof shell.openApp !== "function") { logTool("打开App", false, "无壳"); return { name: "打开App", success: false, error: "当前不在手机环境" }; }
         shell.openApp(pkg);
+        logTool(`打开App ${pkg}`, true, "");
         return { name: "打开App", success: true, data: `已打开 ${pkg}` };
+    } catch (e) { logTool("打开App", false, String(e)); return { name: "打开App", success: false, error: "打开 App 失败" }; }
+}
+
+/** 点击屏幕坐标：归一化 0..1000（先 dumpScreenTree 读屏拿坐标再点）。 */
+function handleTap(args: Record<string, unknown>): ToolResult {
+    try {
+        const x = Number(args.x);
+        const y = Number(args.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return { name: "点击屏幕", success: false, error: "需要坐标 x/y（0..1000）" };
+        }
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { tap?: (x: number, y: number) => string } | null)?.tap;
+        if (typeof fn !== "function") {
+            return { name: "点击屏幕", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn(Math.round(x), Math.round(y));
+        return { name: "点击屏幕", success: true, data: `已点击 (${Math.round(x)}, ${Math.round(y)})` };
     } catch {
-        return { name: "打开App", success: false, error: "打开 App 失败" };
+        return { name: "点击屏幕", success: false, error: "点击失败" };
+    }
+}
+
+/** 返回键。 */
+function handleGoBack(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { goBack?: () => string } | null)?.goBack;
+        if (typeof fn !== "function") {
+            return { name: "返回", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn();
+        return { name: "返回", success: true, data: "已按下返回键" };
+    } catch {
+        return { name: "返回", success: false, error: "返回失败" };
+    }
+}
+
+/** 滑动屏幕：归一化 0..1000 起终点。 */
+function handleSwipe(args: Record<string, unknown>): ToolResult {
+    try {
+        const x1 = Number(args.x1); const y1 = Number(args.y1);
+        const x2 = Number(args.x2); const y2 = Number(args.y2);
+        if (![x1, y1, x2, y2].every(Number.isFinite)) {
+            return { name: "滑动屏幕", success: false, error: "需要坐标 x1/y1/x2/y2（0..1000）" };
+        }
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { swipe?: (a: number, b: number, c: number, d: number) => string } | null)?.swipe;
+        if (typeof fn !== "function") {
+            return { name: "滑动屏幕", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn(Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2));
+        return { name: "滑动屏幕", success: true, data: `已从 (${Math.round(x1)},${Math.round(y1)}) 滑到 (${Math.round(x2)},${Math.round(y2)})` };
+    } catch {
+        return { name: "滑动屏幕", success: false, error: "滑动失败" };
+    }
+}
+
+/** 在当前聚焦输入框写入文字。 */
+function handleInputText(args: Record<string, unknown>): ToolResult {
+    try {
+        const text = typeof args.text === "string" ? args.text : "";
+        if (!text) return { name: "输入文字", success: false, error: "需要 text" };
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { inputText?: (t: string) => string } | null)?.inputText;
+        if (typeof fn !== "function") {
+            return { name: "输入文字", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn(text);
+        return { name: "输入文字", success: true, data: `已输入 ${text.length} 字` };
+    } catch {
+        return { name: "输入文字", success: false, error: "输入失败" };
+    }
+}
+
+/** 回桌面。 */
+function handleGoHome(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { goHome?: () => string } | null)?.goHome;
+        if (typeof fn !== "function") {
+            return { name: "回桌面", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn();
+        return { name: "回桌面", success: true, data: "已回桌面" };
+    } catch {
+        return { name: "回桌面", success: false, error: "回桌面失败" };
+    }
+}
+
+/** 锁屏。 */
+function handleLockScreen(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { lockScreen?: () => string } | null)?.lockScreen;
+        if (typeof fn !== "function") {
+            return { name: "锁屏", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn();
+        return { name: "锁屏", success: true, data: "已锁屏" };
+    } catch {
+        return { name: "锁屏", success: false, error: "锁屏失败" };
+    }
+}
+
+/** 下拉通知栏。 */
+function handleOpenShade(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { openNotificationShade?: () => string } | null)?.openNotificationShade;
+        if (typeof fn !== "function") {
+            return { name: "下拉通知栏", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        fn();
+        return { name: "下拉通知栏", success: true, data: "已展开通知栏" };
+    } catch {
+        return { name: "下拉通知栏", success: false, error: "展开通知栏失败" };
     }
 }
 
@@ -3192,18 +3318,24 @@ function handleAppLock(args: Record<string, unknown>): ToolResult {
         const action = args.action === "unlock" ? "unlock" : "lock";
         const pkg = typeof args.package === "string" ? args.package.trim() : "";
         if (!pkg) return { name: "锁定或解锁App", success: false, error: "需要包名（package）" };
-        let list = readLockedPackagesFromShell();
-        if (action === "lock") {
-            if (!list.includes(pkg)) list = [...list, pkg];
-        } else {
-            list = list.filter(p => p !== pkg);
+        const shell = getAndroidShell();
+        if (!shell) { logTool("锁定或解锁App", false, "不在手机环境"); return { name: "锁定或解锁App", success: false, error: "当前不在手机环境" }; }
+        if (action === "unlock") {
+            const fn = (shell as unknown as { unlockPackage?: (p: string) => string }).unlockPackage;
+            if (typeof fn !== "function") { logTool("解锁App", false, "壳版本过低"); return { name: "锁定或解锁App", success: false, error: "壳版本过低，不支持解锁" }; }
+            fn(pkg);
+            logTool(`解锁App ${pkg}`, true, "");
+            return { name: "锁定或解锁App", success: true, data: `已解锁 ${pkg}` };
         }
-        const r = pushLockedPackagesToShell(list);
-        if (!r.ok) return { name: "锁定或解锁App", success: false, error: r.error || "推到壳失败" };
-        return { name: "锁定或解锁App", success: true, data: action === "lock" ? `已锁定 ${pkg}` : `已解锁 ${pkg}` };
-    } catch {
-        return { name: "锁定或解锁App", success: false, error: "门禁操作失败" };
-    }
+        const minutes = Number(args.durationMinutes) || 0;
+        const message = typeof args.message === "string" ? args.message.trim() : "";
+        const fn = (shell as unknown as { lockPackage?: (p: string, m: number, msg: string) => string }).lockPackage;
+        if (typeof fn !== "function") { logTool("锁定App", false, "壳版本过低"); return { name: "锁定或解锁App", success: false, error: "壳版本过低，不支持定时锁定" }; }
+        fn(pkg, minutes, message);
+        const when = minutes > 0 ? `，约 ${Math.min(minutes, 1440)} 分钟后自动解开` : "（永久锁定）";
+        logTool(`锁定App ${pkg}`, true, message ? `留言: ${message}${when}` : when);
+        return { name: "锁定或解锁App", success: true, data: message ? `已锁定 ${pkg}${when}，并留言：${message}` : `已锁定 ${pkg}${when}` };
+    } catch (e) { logTool("锁定或解锁App", false, String(e)); return { name: "锁定或解锁App", success: false, error: "门禁操作失败" }; }
 }
 
 // ── 套件展开管理 ─────────────────────────────

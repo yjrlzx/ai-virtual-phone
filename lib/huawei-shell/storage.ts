@@ -709,8 +709,13 @@ export function interpolateHuaweiTemplate(template: string, values: Record<strin
 
 export function getAndroidShell(): HuaweiShellBridge | null {
     if (typeof window === "undefined") return null;
-    const shell = (window as unknown as { AndroidShell?: HuaweiShellBridge }).AndroidShell;
-    return shell && typeof shell === "object" ? shell : null;
+    const w = window as unknown as { AndroidShell?: HuaweiShellBridge; FloatShell?: HuaweiShellBridge };
+    const shell = w.AndroidShell;
+    if (shell && typeof shell === "object") return shell;
+    // 悬浮窗（chat-float）注入的是 FloatShell：openApp/门禁等方法已对齐，
+    // 网页工具层无感知地复用同一套调用。
+    const floatShell = w.FloatShell;
+    return floatShell && typeof floatShell === "object" ? floatShell : null;
 }
 
 /** 特征检测：是否运行在华为壳 WebView 里（页面侧也用于显示连接状态） */

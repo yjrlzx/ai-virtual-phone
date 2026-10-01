@@ -543,6 +543,89 @@ class MainActivity : AppCompatActivity() {
         fun getLockedPackages(): String =
             org.json.JSONArray(RealityBridgeAccessibility.getLockedPackages()).toString()
 
+        /** 单包锁定：minutes<=0 永久，上限 1440 分钟；message 为 char 留言。 */
+        @JavascriptInterface
+        fun lockPackage(packageName: String, minutes: Int, message: String): String = runCatching {
+            RealityBridgeAccessibility.lockPackage(this@MainActivity, packageName.trim(), minutes, message)
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { errJson(it.message) }
+
+        @JavascriptInterface
+        fun unlockPackage(packageName: String): String = runCatching {
+            RealityBridgeAccessibility.unlockPackage(this@MainActivity, packageName.trim())
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 无障碍点击（归一化 0..1000 坐标）。 */
+        @JavascriptInterface
+        fun tap(x: Int, y: Int): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.tapCoordinate(x, y)
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 返回键：goBack 是 pressKey("back") 的便捷别名。 */
+        @JavascriptInterface
+        fun goBack(): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.pressKey("back")
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 回桌面。 */
+        @JavascriptInterface
+        fun goHome(): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.pressKey("home")
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 锁屏。 */
+        @JavascriptInterface
+        fun lockScreen(): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.pressKey("lock_screen")
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
+        /** 下拉通知栏。 */
+        @JavascriptInterface
+        fun openNotificationShade(): String =
+            try {
+                val r = RealityBridgeAccessibility.current()?.pressKey("notifications")
+                if (r == null) {
+                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                } else {
+                    org.json.JSONObject(r).toString()
+                }
+            } catch (t: Throwable) {
+                errJson(t.message)
+            }
+
         /** 无障碍长按（归一化 0..1000 坐标）。 */
         @JavascriptInterface
         fun longPress(x: Int, y: Int): String =

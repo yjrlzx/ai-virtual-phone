@@ -25,10 +25,19 @@ class RealityBridgeAccessibility : AccessibilityService() {
 
         private const val PREFS = "float_shell"
         private const val KEY_LOCKED = "locked_packages"
+        private const val KEY_LOCK_META = "locked_packages_meta"
 
         /** 应用门禁锁定包名集合：命中即强制拦截回桌面。 */
         private val lockedPackages = CopyOnWriteArraySet<String>()
         private var lastEnforced = 0L
+
+        /** 每条锁定的元数据：到期时间戳（0=永久）+ char 留言。 */
+        class LockEntry(val pkg: String, val expiresAt: Long, val message: String) {
+            fun expired(now: Long): Boolean = expiresAt in 1..now
+            fun minutesLeft(now: Long): Long =
+                if (expiresAt <= 0L) -1L else ((expiresAt - now + 59_999L) / 60_000L).coerceAtLeast(0)
+        }
+        private val lockMeta = java.util.concurrent.ConcurrentHashMap<String, LockEntry>()
 
         /** 专注模式截止时间戳（ms），在此之前拦截除壳自身外的一切前台 App。 */
         private var focusUntil = 0L
@@ -44,22 +53,79 @@ class RealityBridgeAccessibility : AccessibilityService() {
 
         /** 服务连接时从 SharedPreferences 恢复锁定列表（进程死亡/服务重启后不丢）。 */
         fun loadLockedPackages(ctx: android.content.Context) {
-            val saved = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-                .getStringSet(KEY_LOCKED, emptySet()) ?: emptySet()
+            val prefs = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            val saved = prefs.getStringSet(KEY_LOCKED, emptySet()) ?: emptySet()
             lockedPackages.clear()
             lockedPackages.addAll(saved.filter { it.isNotBlank() })
+            lockMeta.clear()
+            runCatching {
+                val arr = org.json.JSONArray(prefs.getString(KEY_LOCK_META, "[]"))
+                val now = System.currentTimeMillis()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val pkg = o.optString("pkg")
+                    if (pkg.isBlank()) continue
+                    val entry = LockEntry(pkg, o.optLong("expiresAt", 0L), o.optString("message", ""))
+                    if (entry.expired(now)) continue
+                    lockMeta[pkg] = entry
+                    lockedPackages.add(pkg)
+                }
+            }
         }
 
         private fun persistLockedPackages(ctx: android.content.Context) {
+            val arr = org.json.JSONArray()
+            for ((pkg, e) in lockMeta) {
+                arr.put(org.json.JSONObject().put("pkg", pkg).put("expiresAt", e.expiresAt).put("message", e.message))
+            }
             ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-                .edit().putStringSet(KEY_LOCKED, lockedPackages.toSet()).apply()
+                .edit()
+                .putStringSet(KEY_LOCKED, lockedPackages.toSet())
+                .putString(KEY_LOCK_META, arr.toString())
+                .apply()
         }
 
         fun setLockedPackages(ctx: android.content.Context, pkgs: List<String>) {
             lockedPackages.clear()
+            lockMeta.clear()
             lockedPackages.addAll(pkgs.filter { it.isNotBlank() })
             persistLockedPackages(ctx)
             recheckGate()
+        }
+
+        /** 带时长 + 留言的锁定：minutes<=0 永久；上限 1440 分钟（24h）。 */
+        fun lockPackage(ctx: android.content.Context, pkg: String, minutes: Int, message: String) {
+            if (pkg.isBlank()) return
+            val m = minutes.coerceIn(0, 1440)
+            val expiresAt = if (m > 0) System.currentTimeMillis() + m * 60_000L else 0L
+            lockMeta[pkg] = LockEntry(pkg, expiresAt, message.trim())
+            lockedPackages.add(pkg)
+            persistLockedPackages(ctx)
+            recheckGate()
+        }
+
+        fun unlockPackage(ctx: android.content.Context, pkg: String) {
+            lockedPackages.remove(pkg)
+            lockMeta.remove(pkg)
+            persistLockedPackages(ctx)
+        }
+
+        /** 某包的当前锁定元数据；已过期自动清除并返回 null。 */
+        fun getLockEntry(pkg: String): LockEntry? {
+            val e = lockMeta[pkg] ?: return null
+            if (e.expired(System.currentTimeMillis())) {
+                lockedPackages.remove(pkg)
+                lockMeta.remove(pkg)
+                return null
+            }
+            return e
+        }
+
+        fun listActiveLocks(): List<LockEntry> {
+            val now = System.currentTimeMillis()
+            val expired = lockMeta.values.filter { it.expired(now) }.map { it.pkg }
+            expired.forEach { lockedPackages.remove(it); lockMeta.remove(it) }
+            return lockMeta.values.sortedBy { it.pkg }
         }
 
         fun addLockedPackage(ctx: android.content.Context, pkg: String) {
@@ -110,13 +176,26 @@ class RealityBridgeAccessibility : AccessibilityService() {
         if (pkg.isNullOrBlank()) return
         val now = System.currentTimeMillis()
         val focusing = now < focusUntil
-        val locked = lockedPackages.contains(pkg)
+        // 过期锁定自动清除，不再拦截
+        val entry = if (lockedPackages.contains(pkg)) getLockEntry(pkg) else null
+        val locked = entry != null
         if (!focusing && !locked) return
         // 专注模式不锁壳自身（否则把现实桥网页也锁掉，无法退出）
         if (focusing && pkg == applicationContext.packageName) return
         if (now - lastEnforced < 1500L) return
         lastEnforced = now
-        performGlobalAction(GLOBAL_ACTION_HOME)
+        if (locked) {
+            runCatching {
+                val intent = android.content.Intent(this, GateBlockActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(GateBlockActivity.EXTRA_PKG, pkg)
+                    .putExtra(GateBlockActivity.EXTRA_MESSAGE, entry.message)
+                    .putExtra(GateBlockActivity.EXTRA_EXPIRES_AT, entry.expiresAt)
+                startActivity(intent)
+            }
+        } else {
+            performGlobalAction(GLOBAL_ACTION_HOME)
+        }
     }
 
     /** 屏幕休息：设定 seconds 秒后自动息屏。 */

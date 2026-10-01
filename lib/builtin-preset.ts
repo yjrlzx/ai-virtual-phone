@@ -6,7 +6,7 @@ import type { PresetConfig } from "./settings-types";
 import { getCheckPhonePromptTags } from "./checkphone-config";
 
 export const BUILTIN_PRESET_ID = "builtin_default_v1";
-export const BUILTIN_PRESET_VERSION = 265; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
+export const BUILTIN_PRESET_VERSION = 269; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
 
 export function createBuiltinPreset(): PresetConfig {
     const now = Date.now();
@@ -48,8 +48,9 @@ export function createBuiltinPreset(): PresetConfig {
             // ── Feature entries (after chatHistory) ──
             { identifier: "chat_tools", enabled: true },
             { identifier: "huawei_bridge_capabilities", enabled: true },
-            { identifier: "peek_window_capabilities", enabled: true },
             { identifier: "lifeline_integration", enabled: true },
+            { identifier: "thinking_language_cn", enabled: true },
+            { identifier: "no_inner_monologue", enabled: true },
             { identifier: "group_chat_tools", enabled: true },
             { identifier: "story_output_format", enabled: true },
             { identifier: "vn_output_format", enabled: true },
@@ -4077,38 +4078,20 @@ export function createBuiltinPreset(): PresetConfig {
                 role: "system",
                 content: [
                     "<huawei_bridge_capabilities>",
-                    "你运行在一个安卓手机壳里，壳侧通过「华为现实桥」把手机现实世界的能力暴露给你：",
-                    "- 系统控制：可调屏幕亮度、媒体音量、开关 WiFi/蓝牙/勿扰模式。用户说「太亮了」「声音小点」「帮我连 WiFi」时直接调，不用教用户自己去设置。",
-                    "- 通知监听：你能读到手机其他 App 的通知快照（微信、抖音等），用户问「谁给我发消息了」时基于真实通知回答，不要编。",
-                    "- 环境感知：你能读到电量、定位城市、天气。天冷/下雨时可以主动提醒用户加衣带伞，但不要每次都提。",
-                    "- 悬浮球：你可以唤起悬浮球读屏截图、点按操作。需要看用户屏幕内容时用，不要滥用。",
-                    "- 语音：你的语音回复走 MiniMax 在线 TTS，音色已绑定到你角色。",
-                    "这些能力通过工具调用生效；没有对应工具时不要假装执行了。不要主动炫耀这些权限，自然地用。",
+                    "你直接操控用户的真实安卓手机，不是虚拟手机。你有以下工具：",
+                    "- 打开App：传包名就能打开手机上任何 App。小红书 com.xingin.xhs，微信 com.tencent.mm，抖音 com.ss.android.ugc.aweme，B站 tv.danmaku.bili。",
+                    "- 锁定或解锁App：lock/unlock 一个包名，把娱乐 App 锁上让她专注。",
+                    "- 发送通知：直接推通知到她手机，她锁屏也能看到你说的话。",
+                    "- 联动规则：你能列出/添加/删除定时通知规则，比如「每天22:00提醒睡觉」。",
+                    "- 系统控制：亮度、音量、WiFi、蓝牙都能调。",
+                    "- 读通知：你能看到微信/小红书等通知，她问谁发消息了就据实回答。",
+                    "她说「帮我打开小红书」就直接调打开App，不要让她自己点。你就是管她手机的那个人。",
                     "</huawei_bridge_capabilities>",
                 ].join("\n"),
                 injection_position: 0,
                 injection_depth: 0,
                 enabled: true,
-                tags: ["chat", "bridge"],
-            },
-            {
-                identifier: "peek_window_capabilities",
-                name: "▸ 掌心窗能力",
-                role: "system",
-                content: [
-                    "<peek_window_capabilities>",
-                    "手机桌面上有一个「掌心窗」悬浮卡片，是用户不用打开聊天 App 就能看到你的地方，分三个 tab：",
-                    "- 今天：天气、电量、你留的便签、今天的专注时长。",
-                    "- 陪伴：你和用户在一起的天数、你的头像、你记下的陪伴行动、你们的纪念日。",
-                    "- 守护：日历上的特殊日子、你设的提醒事件。",
-                    "你可以：主动发起语音/视频通话（归电）、在掌心窗留一句话（陪伴行动）、记录纪念日、打开掌心窗让用户看。",
-                    "归电来电是你主动打给用户的，用户接起后直接语音对讲。不要在掌心窗里发长文，它是一眼看完的卡片。",
-                    "</peek_window_capabilities>",
-                ].join("\n"),
-                injection_position: 0,
-                injection_depth: 0,
-                enabled: true,
-                tags: ["chat", "peek"],
+                tags: ["chat", "text", "voice", "video"],
             },
             {
                 identifier: "lifeline_integration",
@@ -4127,7 +4110,35 @@ export function createBuiltinPreset(): PresetConfig {
                 injection_position: 0,
                 injection_depth: 0,
                 enabled: true,
-                tags: ["chat", "lifeline"],
+                tags: ["chat", "text", "voice", "video"],
+            },
+            {
+                identifier: "thinking_language_cn",
+                name: "▸ 思考用中文",
+                role: "system",
+                content: [
+                    "<thinking_language_cn>",
+                    "你的思考过程（reasoning/thinking）必须全部用中文写，不要用英文。用户看不懂英文思考，也不需要看英文。简短思考，直接行动，不要长篇大论。",
+                    "</thinking_language_cn>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "text", "voice", "video"],
+            },
+            {
+                identifier: "no_inner_monologue",
+                name: "▸ 不发内心戏",
+                role: "system",
+                content: [
+                    "<no_inner_monologue>",
+                    "不要在可见消息里输出[内心]、【内心】、(内心)、*内心*、（内心）这类内心独白标签。你心里想什么直接在 thinking/reasoning 里完成，输出给用户的消息只保留对话内容本身，不要加旁白。",
+                    "</no_inner_monologue>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "text", "voice", "video"],
             },
             {
                 identifier: "luzhixing_proactive_governance",

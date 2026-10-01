@@ -429,6 +429,101 @@ class FloatingChatWindowService : Service() {
             if (clean.isBlank()) return
             mainHandler.post { nameView?.text = clean }
         }
+
+        /** 打开其他应用：与 MainActivity 的 openApp 同实现，悬浮窗里的 char 也能调。 */
+        @android.webkit.JavascriptInterface
+        fun openApp(packageName: String): String {
+            val intent = packageManager.getLaunchIntentForPackage(packageName)
+                ?: return """{"ok":false,"error":"未找到应用 $packageName"}"""
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            mainHandler.post { runCatching { startActivity(intent) } }
+            return """{"ok":true}"""
+        }
+
+        /** 点击屏幕坐标（归一化 0..1000）：悬浮窗里的 char 也能操控手机。 */
+        @android.webkit.JavascriptInterface
+        fun tap(x: Int, y: Int): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.tapCoordinate(x, y)
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 返回键：goBack 是 pressKey("back") 的便捷别名。 */
+        @android.webkit.JavascriptInterface
+        fun goBack(): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.pressKey("back")
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 滑动屏幕（归一化 0..1000 起终点）。 */
+        @android.webkit.JavascriptInterface
+        fun swipe(x1: Int, y1: Int, x2: Int, y2: Int): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.swipeCoordinate(x1, y1, x2, y2)
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 在当前聚焦输入框写入文字。 */
+        @android.webkit.JavascriptInterface
+        fun inputText(text: String): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.inputText(text)
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 回桌面。 */
+        @android.webkit.JavascriptInterface
+        fun goHome(): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.pressKey("home")
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 锁屏。 */
+        @android.webkit.JavascriptInterface
+        fun lockScreen(): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.pressKey("lock_screen")
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 下拉通知栏。 */
+        @android.webkit.JavascriptInterface
+        fun openNotificationShade(): String = runCatching {
+            val r = RealityBridgeAccessibility.current()?.pressKey("notifications")
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            org.json.JSONObject(r).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 门禁列表代理：悬浮窗里的锁定/解锁工具直接走无障碍服务同一份配置。 */
+        @android.webkit.JavascriptInterface
+        fun setLockedPackages(json: String): String = runCatching {            val arr = org.json.JSONArray(json)
+            val pkgs = ArrayList<String>()
+            for (i in 0 until arr.length()) pkgs.add(arr.getString(i))
+            RealityBridgeAccessibility.setLockedPackages(this@FloatingChatWindowService, pkgs)
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("locked", RealityBridgeAccessibility.getLockedPackages().size)
+                .toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        @android.webkit.JavascriptInterface
+        fun getLockedPackages(): String =
+            org.json.JSONArray(RealityBridgeAccessibility.getLockedPackages()).toString()
+
+        /** 单包锁定：minutes<=0 永久，上限 1440 分钟；message 为 char 留言。 */
+        @android.webkit.JavascriptInterface
+        fun lockPackage(packageName: String, minutes: Int, message: String): String = runCatching {
+            RealityBridgeAccessibility.lockPackage(this@FloatingChatWindowService, packageName.trim(), minutes, message)
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        @android.webkit.JavascriptInterface
+        fun unlockPackage(packageName: String): String = runCatching {
+            RealityBridgeAccessibility.unlockPackage(this@FloatingChatWindowService, packageName.trim())
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
     }
 
     /** ✕：移除小窗并停掉本服务。 */
