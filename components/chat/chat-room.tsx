@@ -860,6 +860,42 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     onClose={() => setSuggestClosed(true)}
                 />
             )}
+            {recording ? (
+                <div
+                    onPointerUp={handleRecordEnd}
+                    onPointerCancel={handleRecordEnd}
+                    onPointerMove={handleRecordMove}
+                    style={{
+                        display: "flex", alignItems: "center", gap: 12, height: 48, padding: "0 16px",
+                        borderRadius: 24, cursor: "pointer", touchAction: "none",
+                        background: recordCancel ? "rgba(220,38,38,.15)" : "var(--c-input)",
+                        border: recordCancel ? "1.5px solid rgba(220,38,38,.6)" : "1.5px solid transparent",
+                        transition: "background .15s",
+                    }}
+                >
+                    <span style={{
+                        width: 10, height: 10, borderRadius: 5, flexShrink: 0,
+                        background: recordCancel ? "#dc2626" : "#ef4444",
+                        animation: "vcsxblink 1s ease-in-out infinite",
+                    }} />
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 24, flex: 1 }}>
+                        {Array.from({ length: 16 }).map((_, i) => (
+                            <div key={i} style={{
+                                width: 3, borderRadius: 2,
+                                background: recordCancel ? "#dc2626" : "#22c55e",
+                                height: 6 + Math.abs(Math.sin(Date.now() / 180 + i * 0.7)) * 18,
+                                animation: `vcsxwave 0.${(i % 5) + 3}s ease-in-out infinite alternate`,
+                            }} />
+                        ))}
+                    </div>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: recordCancel ? "#dc2626" : "var(--c-text)", fontVariantNumeric: "tabular-nums" }}>
+                        {Math.floor(recordingSec / 60)}:{String(recordingSec % 60).padStart(2, "0")}
+                    </span>
+                    <span style={{ fontSize: 12, color: recordCancel ? "#dc2626" : "var(--c-icon)", whiteSpace: "nowrap" }}>
+                        {recordCancel ? "松开取消" : "松开发送"}
+                    </span>
+                </div>
+            ) : (
             <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
             <button
                 onPointerDown={handleRecordStart}
@@ -919,6 +955,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
             </button>
             </div>
+            )}
 
             <div className="chat-input-actions">
                 <button
@@ -1011,36 +1048,6 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     characterId={characterId}
                     characterIds={stickerCharacterIds}
                 />
-            )}
-
-            {recording && (
-                <div style={{
-                    position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column",
-                    alignItems: "center", justifyContent: "center",
-                    background: recordCancel ? "rgba(220,38,38,.35)" : "rgba(0,0,0,.45)",
-                    backdropFilter: "blur(4px)",
-                }}>
-                    <div style={{
-                        background: recordCancel ? "#dc2626" : "#22c55e",
-                        borderRadius: 24, padding: "28px 36px", color: "#fff",
-                        display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
-                        minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,.3)",
-                    }}>
-                        <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 40 }}>
-                            {Array.from({ length: 12 }).map((_, i) => (
-                                <div key={i} style={{
-                                    width: 4, borderRadius: 2, background: "rgba(255,255,255,.9)",
-                                    height: 8 + Math.abs(Math.sin(Date.now() / 150 + i)) * 28,
-                                    animation: `vcsxwave 0.${(i % 5) + 3}s ease-in-out infinite alternate`,
-                                }} />
-                            ))}
-                        </div>
-                        <div style={{ fontSize: 18, fontWeight: 700 }}>
-                            {recordCancel ? "松开取消" : `${recordingSec}s`}
-                        </div>
-                        <div style={{ fontSize: 12, opacity: .85 }}>{recordCancel ? "松手取消录音" : "上滑取消 · 松开发送"}</div>
-                    </div>
-                </div>
             )}
         </div>
     );

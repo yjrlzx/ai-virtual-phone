@@ -7235,3 +7235,5 @@
 }
 
 @keyframes vcsxwave { from { transform: scaleY(.3); } to { transform: scaleY(1); } }
+
+@keyframes vcsxblink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
