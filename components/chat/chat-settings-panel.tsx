@@ -47,7 +47,6 @@ import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-se
 import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Music, Bell, Heart, type LucideIcon } from "lucide-react";
 import { loadCallAppearance, saveCallAppearance, BUILT_IN_RINGTONES, previewBuiltinRingtone } from "@/lib/call-settings";
 import { kvGet, kvSet } from "@/lib/kv-db";
-import { LifestylePages } from "@/components/lifestyle/LifestylePages";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -302,7 +301,6 @@ export function ChatSettingsPanel({
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     // 通话外观（按角色存 kv）
     const [callAppearance, setCallAppearance] = useState(() => loadCallAppearance(session.contactId));
-    const [lifestylePage, setLifestylePage] = useState<string | null>(null);
     const ringtoneFileRef = useRef<HTMLInputElement | null>(null);
     const ringtonePreviewStopRef = useRef<(() => void) | null>(null);    const [isPinned, setIsPinned] = useState(session.isPinned || false);
     // 自定义状态栏（状态区）
@@ -1318,15 +1316,6 @@ export function ChatSettingsPanel({
                 {/* 生活助手 */}
                 <div className="menu-group" style={{ marginTop: 16 }}>
                     <div style={{ fontSize: 12, color: "var(--c-faint)", padding: "4px 12px 8px" }}>生活助手</div>
-                    {["mood-diary:情绪日记","water:喝水","period:经期","note:锁屏纸条","todo:我们的清单","pomodoro:番茄钟"].map(p => {
-                        const [key, label] = p.split(":");
-                        return (
-                            <div className="menu-item" key={key} onClick={() => setLifestylePage(key)}>
-                                <div className="menu-label-group"><span className="menu-label">{label}</span></div>
-                                <div className="menu-right"><ChevronRight size={16} /></div>
-                            </div>
-                        );
-                    })}
                 </div>
 
                 {/* Advanced */}
@@ -1877,7 +1866,6 @@ export function ChatSettingsPanel({
                 </div>
             )}
         </PageShell>
-        {lifestylePage && <LifestylePages page={lifestylePage} onBack={() => setLifestylePage(null)} />}
         </>
     );
 }

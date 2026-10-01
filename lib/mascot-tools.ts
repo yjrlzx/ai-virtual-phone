@@ -34,7 +34,6 @@ import { loadChatSessions } from "./chat-storage";
 import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei-shell/peek-store";
 import { loadCallAppearance } from "./call-settings";
 import { readMood } from "./mood";
-import { kvGet, kvSet } from "./kv-db";
 import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell, loadHuaweiTriggerRules, saveHuaweiTriggerRules, appendHuaweiBridgeEvent } from "./huawei-shell/storage";
 
 // ── 通用类型 ────────────────────────────────────────────
@@ -1207,9 +1206,6 @@ const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
     { name: "下拉通知栏", description: "下拉通知栏", parameterSchema: { type: "object", properties: {} } },
     { name: "下拉快捷设置", description: "下拉快捷设置面板", parameterSchema: { type: "object", properties: {} } },
     { name: "发通知", description: "给她发一条手机通知", parameterSchema: { type: "object", properties: { title: { type: "string" }, body: { type: "string" } }, required: ["title","body"] } },
-    { name: "建提醒", description: "自然语言建提醒：到点响。参数：text=提醒内容，at=ISO时间", parameterSchema: { type: "object", properties: { text: { type: "string" }, at: { type: "string", description: "ISO时间，如2026-10-08T15:00" } }, required: ["text","at"] } },
-    { name: "记账", description: "记一笔支出。参数：amount金额，note备注", parameterSchema: { type: "object", properties: { amount: { type: "number" }, note: { type: "string" } }, required: ["amount"] } },
-    { name: "查账", description: "查本月支出汇总", parameterSchema: { type: "object", properties: {} } },
 ];
 
 // ── 文本协议下的工具列表渲染 ─────────────────────────────
@@ -1597,9 +1593,6 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "添加联动规则": return handleAddRule(call.args);
             case "删除联动规则": return handleDelRule(call.args);
             case "锁定或解锁App": return handleAppLock(call.args);
-            case "建提醒": return handleReminder(call.args);
-            case "记账": return handleLedgerAdd(call.args);
-            case "查账": return handleLedgerQuery();
             case "打开掌心窗": return handleOpenPeek();
 
             default:
@@ -3180,41 +3173,6 @@ function handleTargetApp(args: Record<string, unknown>): ToolResult {
 
 function logTool(name: string, ok: boolean, detail: string) {
     try { appendHuaweiBridgeEvent({ kind: "action", title: name, detail, ok }); } catch { /* ignore */ }
-}
-
-function handleReminder(args: Record<string, unknown>): ToolResult {
-    const text = typeof args.text === "string" ? args.text : "";
-    const at = typeof args.at === "string" ? args.at : "";
-    if (!text || !at) return { name: "建提醒", success: false, error: "需要内容和时间" };
-    try {
-        const key = `reminder_${Date.now()}`;
-        kvSet(key, JSON.stringify({ text, at, done: false }));
-        logTool("建提醒", true, `${at} ${text}`);
-        return { name: "建提醒", success: true, data: `已建提醒：${at} ${text}` };
-    } catch (e) { return { name: "建提醒", success: false, error: String(e) }; }
-}
-
-function handleLedgerAdd(args: Record<string, unknown>): ToolResult {
-    const amount = typeof args.amount === "number" ? args.amount : parseFloat(String(args.amount));
-    const note = typeof args.note === "string" ? args.note : "";
-    if (!Number.isFinite(amount)) return { name: "记账", success: false, error: "需要金额" };
-    try {
-        const key = `ledger_${new Date().toISOString().slice(0,7)}`;
-        const list = JSON.parse(kvGet(key) || "[]");
-        list.push({ amount, note, ts: Date.now() });
-        kvSet(key, JSON.stringify(list));
-        logTool("记账", true, `${amount} ${note}`);
-        return { name: "记账", success: true, data: `已记支出 ¥${amount} ${note}` };
-    } catch (e) { return { name: "记账", success: false, error: String(e) }; }
-}
-
-function handleLedgerQuery(): ToolResult {
-    try {
-        const key = `ledger_${new Date().toISOString().slice(0,7)}`;
-        const list = JSON.parse(kvGet(key) || "[]");
-        const total = list.reduce((s: number, r: any) => s + r.amount, 0);
-        return { name: "查账", success: true, data: `本月共 ${list.length} 笔，合计 ¥${total.toFixed(2)}` };
-    } catch (e) { return { name: "查账", success: false, error: String(e) }; }
 }
 
 function handleListRules(): ToolResult {

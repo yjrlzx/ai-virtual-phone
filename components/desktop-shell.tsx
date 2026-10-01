@@ -23,8 +23,6 @@ import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
 import { HuaweiBridgeApp } from "@/components/huawei-bridge-app";
 import { LifelineApp } from "@/components/lifeline-app";
-import { DaodianPage } from "@/components/daodian/DaodianPage";
-import { LifestylePages, LifestyleHome } from "@/components/lifestyle/LifestylePages";
 import { REALITY_BRIDGE_APP_EVENT_NAME, REALITY_BRIDGE_DATA_EVENT } from "@/lib/reality-bridge/types";
 import { XiaohongshuApp } from "@/components/xiaohongshu/xiaohongshu-app";
 import { StoryApp } from "@/components/story/story-app";
@@ -4126,14 +4124,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
     if (activeApp === "cocreate") {
       return <CoCreateApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
-    }
-
-    if (activeApp === "daodian") {
-      return <DaodianPage />;
-    }
-
-    if (activeApp === "lifestyle") {
-      return <LifestyleHome onClose={() => setActiveApp(null)} />;
     }
 
     return activeApp in ICONS
