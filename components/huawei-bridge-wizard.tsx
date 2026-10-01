@@ -2,13 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import {
-  getAndroidShell,
-  loadHuaweiTriggerRules,
-  loadHuaweiCustomActions,
-  loadHuaweiShellSettings,
-  saveHuaweiShellSettings,
-} from "@/lib/huawei-shell/storage";
+import { getAndroidShell, loadHuaweiTriggerRules, loadHuaweiCustomActions, loadHuaweiShellSettings, saveHuaweiShellSettings } from "@/lib/huawei-shell/storage";
+import { loadCharacters } from "@/lib/character-storage";
+import { loadChatSessions } from "@/lib/chat-storage";
 import type { HuaweiShellSettings } from "@/lib/huawei-shell/storage";
 import type { HuaweiPermissionStatus } from "@/lib/huawei-shell/types";
 import {
@@ -272,7 +268,15 @@ function HomeDashboard({ shellAvailable, todayCount, ruleStats, accOk, shizukuRe
       <button
         onClick={() => {
           try {
-            window.dispatchEvent(new CustomEvent("mascot:call-character", { detail: { mode: "voice" } }));
+            const chars = loadCharacters();
+            const companion = chars[0];
+            const sessions = loadChatSessions();
+            const session = sessions
+              .filter((s) => !s.isGroup && companion && s.contactId === companion.id)
+              .sort((a, b) => Date.parse(String(b.updatedAt ?? 0)) - Date.parse(String(a.updatedAt ?? 0)))[0];
+            if (session) {
+              window.dispatchEvent(new CustomEvent("ai-call-trigger", { detail: { sessionId: session.id, type: "voice", characterName: companion?.name } }));
+            }
           } catch { /* ignore */ }
         }}
         style={{
