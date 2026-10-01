@@ -21,6 +21,7 @@ import {
 import { ChatFloatErrorBoundary } from "./error-boundary";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
 import { shouldSendChatInputOnEnter } from "@/lib/chat-input-keyboard";
+import { loadCharacters } from "@/lib/character-storage";
 
 // 轻量纯文本渲染：避免引入 message-bubble.tsx 的 react-markdown/lucide/支付等重依赖，
 // 旧安卓 WebView 跑不动整个 bundle。掌心窗只显示文字气泡，不需要富交互。
@@ -97,7 +98,7 @@ function ChatFloatContent() {
     useEffect(() => {
         const bridge = (window as unknown as { FloatShell?: { setTitle?: (n: string) => void; setAvatar?: (u: string) => void } }).FloatShell;
         if (!bridge) return;
-        bridge.setTitle?.(settings.nickname || DEFAULT_MASCOT_DISPLAY_NAME);
+        bridge.setTitle?.(floatChar?.name || settings.nickname || DEFAULT_MASCOT_DISPLAY_NAME);
         let cancelled = false;
         void resolveMascotImageRef(settings.avatarImage).then(async (url) => {
             if (cancelled || !url) return;
@@ -181,7 +182,9 @@ function ChatFloatContent() {
         }
     }, [enterToSend, chat.isThinking, handleSend]);
 
-    const nickname = settings.nickname || DEFAULT_MASCOT_DISPLAY_NAME;
+    // 悬浮窗显示当前第一个角色（陆知行），不是默认 AI助手
+    const floatChar = (() => { try { return loadCharacters()[0]; } catch { return null; } })();
+    const nickname = floatChar?.name || settings.nickname || DEFAULT_MASCOT_DISPLAY_NAME;
 
     // 角色对话被用户关闭（mascot settings chatEnabled=false）：给一个真实的「选择角色」入口，
     // 跳主站角色页。同 host 链接会被壳留在小窗 WebView 内。
