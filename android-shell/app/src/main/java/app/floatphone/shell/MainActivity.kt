@@ -527,6 +527,33 @@ class MainActivity : AppCompatActivity() {
             org.json.JSONObject().put("ok", true).toString()
         }.getOrElse { errJson(it.message) }
 
+        /** 截屏：返回 data URI（PNG base64）。异步等待最多 5s。 */
+        @JavascriptInterface
+        fun takeScreenshot(): String = runCatching {
+            val svc = RealityBridgeAccessibility.current()
+                ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+            val latch = java.util.concurrent.CountDownLatch(1)
+            var result: Map<String, Any?> = mapOf("ok" to false to "timeout")
+            svc.takeScreenshotBase64 { r -> result = r; latch.countDown() }
+            latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            org.json.JSONObject(result as Map<*, *>).toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 最近已知位置（经纬度+精度）。 */
+        @JavascriptInterface
+        fun getLocation(): String = runCatching {
+            val lm = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
+            val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                ?: return """{"ok":false,"error":"暂无位置，请先打开地图定位一次"}"""
+            org.json.JSONObject()
+                .put("ok", true)
+                .put("lat", loc.latitude)
+                .put("lng", loc.longitude)
+                .put("accuracy", loc.accuracy)
+                .toString()
+        }.getOrElse { errJson(it.message) }
+
         /** 开关悬浮球（悬浮球双击速聊）。 */
         @JavascriptInterface
         fun setFloating(enabled: Boolean) {

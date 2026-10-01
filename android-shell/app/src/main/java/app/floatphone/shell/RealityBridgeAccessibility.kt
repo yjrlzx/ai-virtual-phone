@@ -347,6 +347,40 @@ class RealityBridgeAccessibility : AccessibilityService() {
         }
     }
 
+    /** 截屏：API 30+ 用 AccessibilityService.takeScreenshot，返回 data URI（PNG base64）。 */
+    fun takeScreenshotBase64(cb: (Map<String, Any?>) -> Unit) {
+        if (android.os.Build.VERSION.SDK_INT < 30) {
+            cb(mapOf("ok" to false, "error" to "系统版本不支持无障碍截屏（需 Android 11+）"))
+            return
+        }
+        runCatching {
+            takeScreenshot(
+                android.accessibilityservice.AccessibilityService.SCREENSHOT_TYPE_ACTIVE_WINDOW,
+                java.util.concurrent.Executors.newSingleThreadExecutor(),
+                object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: android.accessibilityservice.AccessibilityService.ScreenshotResult) {
+                        runCatching {
+                            val bitmap = android.graphics.Bitmap.wrapHardwareBuffer(
+                                screenshot.hardwareBuffer, screenshot.colorSpace,
+                            )
+                            val bytes = java.io.ByteArrayOutputStream()
+                            bitmap?.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                ?.compress(android.graphics.Bitmap.CompressFormat.PNG, 80, bytes)
+                            bitmap?.recycle()
+                            screenshot.hardwareBuffer.close()
+                            val b64 = android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP)
+                            cb(mapOf("ok" to true, "dataUri" to "data:image/png;base64,$b64"))
+                        }.onFailure { cb(mapOf("ok" to false, "error" to (it.message ?: "截图失败"))) }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        cb(mapOf("ok" to false, "error" to "截屏失败 code=$errorCode"))
+                    }
+                },
+            )
+        }.onFailure { cb(mapOf("ok" to false, "error" to (it.message ?: "截屏调用失败"))) }
+    }
+
     /** 向输入框写入文字：优先当前焦点可编辑节点，其次按可见文字定位输入框。 */
     fun inputText(text: String): Map<String, Any?> {
         return try {

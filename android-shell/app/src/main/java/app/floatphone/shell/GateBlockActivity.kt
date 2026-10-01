@@ -74,7 +74,7 @@ class GateBlockActivity : Activity() {
         box.addView(avatar)
 
         val title = TextView(this).apply {
-            text = "已锁住 $appLabel"
+            text = "$appLabel 已被陪伴者锁定"
             setTextColor(Color.WHITE)
             textSize = 20f
             setPadding(0, 48, 0, 16)
@@ -83,7 +83,7 @@ class GateBlockActivity : Activity() {
         box.addView(title)
 
         val msg = TextView(this).apply {
-            text = message.ifBlank { "这个 App 现在不能用哦。" }
+            text = (if (message.isBlank()) "这个 App 现在不能用哦。" else "陪伴者说：$message")
             setTextColor(Color.parseColor("#c9ccd4"))
             textSize = 15f
             gravity = Gravity.CENTER

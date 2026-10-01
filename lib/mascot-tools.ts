@@ -1549,6 +1549,10 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "打开App": return handleOpenApp(call.args);
             case "读屏幕": return handleReadScreen();
             case "查岗": return handleCheckIn();
+            case "读通知": return handleReadNotifications();
+            case "截屏": return handleScreenshot();
+            case "定位": return handleLocation();
+            case "查天气": return handleWeather();
             case "点文字": return handleClickNodeByText(call.args);
             case "点描述": return handleClickNodeByDescription(call.args);
             case "向上滚动": return handleScrollForward();
@@ -3196,6 +3200,76 @@ function handleOpenApp(args: Record<string, unknown>): ToolResult {
         logTool(`打开App ${pkg}`, true, "");
         return { name: "打开App", success: true, data: `已打开 ${pkg}` };
     } catch (e) { logTool("打开App", false, String(e)); return { name: "打开App", success: false, error: "打开 App 失败" }; }
+}
+
+/** 截屏：返回当前屏幕 data URI。 */
+function handleScreenshot(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { takeScreenshot?: () => string } | null)?.takeScreenshot;
+        if (typeof fn !== "function") {
+            return { name: "截屏", success: false, error: "当前不在手机环境或无障碍未开启" };
+        }
+        return { name: "截屏", success: true, data: fn() };
+    } catch {
+        return { name: "截屏", success: false, error: "截屏失败" };
+    }
+}
+
+/** 定位：返回最近已知经纬度。 */
+function handleLocation(): ToolResult {
+    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { getLocation?: () => string } | null)?.getLocation;
+        if (typeof fn !== "function") {
+            return { name: "定位", success: false, error: "当前不在手机环境" };
+        }
+        const raw = fn();
+        let s: Record<string, unknown> = {};
+        try { s = JSON.parse(raw) as Record<string, unknown>; } catch { /* ignore */ }
+        if (s.ok === false) return { name: "定位", success: false, error: String(s.error || "定位失败") };
+        return { name: "定位", success: true, data: `纬度 ${s.lat}，经度 ${s.lng}，精度 ±${s.accuracy}m` };
+    } catch {
+        return { name: "定位", success: false, error: "定位失败" };
+    }
+}
+
+/** 查天气：先拿定位，再调 open-meteo（免费无 key）。 */
+async function handleWeather(): Promise<ToolResult> {
+    try {
+        const shell = getAndroidShell();
+        const loc = (shell as unknown as { getLocation?: () => string } | null)?.getLocation;
+        if (typeof loc !== "function") return { name: "查天气", success: false, error: "当前不在手机环境" };
+        const ls = JSON.parse(loc()) as { ok?: boolean; lat?: number; lng?: number; error?: string };
+        if (!ls.ok || ls.lat == null || ls.lng == null) {
+            return { name: "查天气", success: false, error: String(ls.error || "暂无位置") };
+        }
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${ls.lat}&longitude=${ls.lng}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto`;
+        const resp = await fetch(url);
+        const j = (await resp.json()) as { current?: { temperature_2m?: number; relative_humidity_2m?: number; weather_code?: number; wind_speed_10m?: number } };
+        const c = j.current ?? {};
+        return {
+            name: "查天气",
+            success: true,
+            data: `当前 ${c.temperature_2m ?? "?"}°C，湿度 ${c.relative_humidity_2m ?? "?"}%，风速 ${c.wind_speed_10m ?? "?"} km/h`,
+        };
+    } catch {
+        return { name: "查天气", success: false, error: "天气请求失败" };
+    }
+}
+
+/** 读通知：返回最近 10 条通知（标题/内容/包名/时间），char 自己提取微信消息、支付金额、取件码等。 */
+function handleReadNotifications(): ToolResult {    try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { getNotifications?: (n: number) => string } | null)?.getNotifications;
+        if (typeof fn !== "function") {
+            return { name: "读通知", success: false, error: "当前不在手机环境或未授权通知使用权" };
+        }
+        const raw = fn(10);
+        return { name: "读通知", success: true, data: raw };
+    } catch {
+        return { name: "读通知", success: false, error: "读通知失败" };
+    }
 }
 
 /** 查岗：返回当前手机状态快照（前台App/电量/充电/亮屏）。 */
