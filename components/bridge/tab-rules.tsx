@@ -621,8 +621,31 @@ export function TabRules({ onNotice }: BridgeTabProps) {
     onNotice?.(idx >= 0 ? "联动已更新" : "联动已创建");
   }
 
+  const seedDefaults = () => {
+    const existing = loadHuaweiTriggerRules();
+    const defaults: HuaweiTriggerRule[] = [
+      { id: `seed_sleep`, name: "22:00 催睡", enabled: true, trigger: "time", time: "22:00", days: [], action: "send_notification", title: "该睡了", content: "明天5:30起，现在放下手机睡觉。", processMode: "raw" },
+      { id: `seed_wake`, name: "5:30 起床", enabled: true, trigger: "time", time: "05:30", days: [], action: "send_notification", title: "起床了", content: "开始学习，今天也要加油。", processMode: "raw" },
+      { id: `seed_study1`, name: "10:00 学习提醒", enabled: true, trigger: "time", time: "10:00", days: [], action: "send_notification", title: "学习时间", content: "休息一下，喝口水继续。", processMode: "raw" },
+      { id: `seed_study2`, name: "14:00 学习提醒", enabled: true, trigger: "time", time: "14:00", days: [], action: "send_notification", title: "下午学习", content: "下午了，效率最高的时段。", processMode: "raw" },
+      { id: `seed_study3`, name: "20:00 学习提醒", enabled: true, trigger: "time", time: "20:00", days: [], action: "send_notification", title: "晚间学习", content: "晚上是你效率最高的时候，别浪费。", processMode: "raw" },
+      { id: `seed_xhs`, name: "小红书刷太久提醒", enabled: true, trigger: "notification", notifyPkg: "com.xingin.xhs", action: "send_notification", title: "刷太久了", content: "该回去学习了。", processMode: "raw" },
+      { id: `seed_battery`, name: "低电量提醒", enabled: true, trigger: "notification", notifyKeyword: "电量", action: "send_notification", title: "该充电了", content: "手机快没电了，去充电。", processMode: "raw" },
+    ];
+    const merged = [...existing];
+    for (const d of defaults) {
+      if (!merged.find(r => r.id === d.id)) merged.push(d);
+    }
+    saveHuaweiTriggerRules(merged);
+    refresh();
+    onNotice?.("已恢复默认规则");
+  };
+
   return (
     <div style={{ paddingTop: 6 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <button style={{ ...BTN_GHOST, flex: 1 }} onClick={seedDefaults}>恢复默认规则</button>
+      </div>
       {rules.length === 0 && !wizOpen ? (
         <EmptyState
           title="还没有联动规则"

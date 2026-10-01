@@ -1107,6 +1107,18 @@ export const MASCOT_TARGET_APP_TOOL: MascotSubTool = {
     },
 };
 
+export const MASCOT_OPEN_APP_TOOL: MascotSubTool = {
+    name: "打开App",
+    description: "直接打开手机上某个 App。package 必填（包名）。适用于用户说'帮我打开小红书'。小红书包名 com.xingin.xhs，微信 com.tencent.mm，抖音 com.ss.android.ugc.aweme。",
+    parameterSchema: {
+        type: "object",
+        properties: {
+            package: { type: "string", description: "App 包名，如 com.xingin.xhs" },
+        },
+        required: ["package"],
+    },
+};
+
 export const MASCOT_APP_LOCK_TOOL: MascotSubTool = {
     name: "锁定或解锁App",
     description: "锁定或解锁一个 App（应用门禁）。action 取 lock 或 unlock，package 必填（包名）。适用于用户说'把抖音锁了'。",
@@ -1132,6 +1144,7 @@ const MASCOT_STANDALONE_TOOLS: MascotSubTool[] = [
     MASCOT_SCREEN_BREAK_TOOL,
     MASCOT_COMPANION_DAYS_TOOL,
     MASCOT_TARGET_APP_TOOL,
+    MASCOT_OPEN_APP_TOOL,
     MASCOT_APP_LOCK_TOOL,
     MASCOT_OPEN_PEEK_TOOL,
 ];
@@ -1496,6 +1509,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "护眼休息": return handleScreenBreak();
             case "读取陪伴天数": return handleReadCompanionDays();
             case "登记目标App": return handleTargetApp(call.args);
+            case "打开App": return handleOpenApp(call.args);
             case "锁定或解锁App": return handleAppLock(call.args);
             case "打开掌心窗": return handleOpenPeek();
 
@@ -3074,6 +3088,22 @@ function handleTargetApp(args: Record<string, unknown>): ToolResult {
         return { name: "登记目标App", success: true, data: `已把 ${name}${pkg ? `（${pkg}）` : ""} 加到守护目标列表` };
     } catch {
         return { name: "登记目标App", success: false, error: "登记目标 App 失败" };
+    }
+}
+
+/** 直接打开 App：调壳启动器。 */
+function handleOpenApp(args: Record<string, unknown>): ToolResult {
+    try {
+        const pkg = typeof args.package === "string" ? args.package.trim() : "";
+        if (!pkg) return { name: "打开App", success: false, error: "需要包名（package）" };
+        const shell = getAndroidShell();
+        if (!shell || typeof shell.openApp !== "function") {
+            return { name: "打开App", success: false, error: "当前不在手机环境" };
+        }
+        shell.openApp(pkg);
+        return { name: "打开App", success: true, data: `已打开 ${pkg}` };
+    } catch {
+        return { name: "打开App", success: false, error: "打开 App 失败" };
     }
 }
 
