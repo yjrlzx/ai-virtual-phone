@@ -101,6 +101,7 @@ class RealityBridgeAccessibility : AccessibilityService() {
             lockMeta[pkg] = LockEntry(pkg, expiresAt, message.trim())
             lockedPackages.add(pkg)
             persistLockedPackages(ctx)
+            android.util.Log.d("FloatGate", "lockPackage $pkg minutes=$m msg=$message nowLocked=${lockedPackages.joinToString(",")}")
             recheckGate()
         }
 
@@ -188,24 +189,24 @@ class RealityBridgeAccessibility : AccessibilityService() {
         if (pkg.isNullOrBlank()) return
         val now = System.currentTimeMillis()
         val focusing = now < focusUntil
-        // 过期锁定自动清除，不再拦截
         val entry = if (lockedPackages.contains(pkg)) getLockEntry(pkg) else null
         val locked = entry != null
+        android.util.Log.d("FloatGate", "poll pkg=$pkg locked=$locked focusing=$focusing locks=${lockedPackages.joinToString(",")}")
         if (!focusing && !locked) return
-        // 专注模式不锁壳自身（否则把现实桥网页也锁掉，无法退出）
         if (focusing && pkg == applicationContext.packageName) return
         if (now - lastEnforced < 500L) return
         lastEnforced = now
         if (locked) {
             runCatching {
                 val e = entry ?: return@runCatching
+                android.util.Log.d("FloatGate", "launch GateBlock for $pkg msg=${e.message}")
                 val intent = android.content.Intent(this, GateBlockActivity::class.java)
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     .putExtra(GateBlockActivity.EXTRA_PKG, pkg)
                     .putExtra(GateBlockActivity.EXTRA_MESSAGE, e.message)
                     .putExtra(GateBlockActivity.EXTRA_EXPIRES_AT, e.expiresAt)
                 startActivity(intent)
-            }
+            }.onFailure { android.util.Log.e("FloatGate", "launch GateBlock failed", it) }
         } else {
             performGlobalAction(GLOBAL_ACTION_HOME)
         }
