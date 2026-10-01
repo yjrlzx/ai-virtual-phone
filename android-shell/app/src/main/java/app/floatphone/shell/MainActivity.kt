@@ -712,11 +712,13 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun lockScreen(): String =
             try {
-                val r = RealityBridgeAccessibility.current()?.pressKey("lock_screen")
-                if (r == null) {
-                    """{"ok":false,"error":"无障碍服务未开启"}"""
+                val svc = RealityBridgeAccessibility.current()
+                    ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
+                val ok = svc.pressKey("lock_screen")["ok"] as? Boolean ?: false
+                if (ok) {
+                    """{"ok":true}"""
                 } else {
-                    org.json.JSONObject(r).toString()
+                    """{"ok":false,"error":"锁屏需要设备管理员权限（普通 App 无法直接锁屏）"}"""
                 }
             } catch (t: Throwable) {
                 errJson(t.message)

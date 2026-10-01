@@ -484,9 +484,11 @@ class FloatingChatWindowService : Service() {
         /** 锁屏。 */
         @android.webkit.JavascriptInterface
         fun lockScreen(): String = runCatching {
-            val r = RealityBridgeAccessibility.current()?.pressKey("lock_screen")
+            val svc = RealityBridgeAccessibility.current()
                 ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-            org.json.JSONObject(r).toString()
+            val ok = svc.pressKey("lock_screen")["ok"] as? Boolean ?: false
+            if (ok) """{"ok":true}"""
+            else """{"ok":false,"error":"锁屏需要设备管理员权限（普通 App 无法直接锁屏）"}"""
         }.getOrElse { """{"ok":false,"error":"$it"}""" }
 
         /** 下拉通知栏。 */
