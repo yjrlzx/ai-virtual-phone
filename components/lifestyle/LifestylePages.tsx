@@ -17,6 +17,33 @@ function Page({ title, onBack, children }: { title: string; onBack: () => void; 
   );
 }
 
+export function LifestyleHome({ onClose }: { onClose: () => void }) {
+  const [page, setPage] = useState<string | null>(null);
+  if (page) return <LifestylePages page={page} onBack={() => setPage(null)} />;
+  const items = [
+    ["mood-diary", "情绪日记", "选今天的心情"],
+    ["water", "喝水", "记录今天喝了几杯"],
+    ["period", "经期", "记录周期"],
+    ["note", "锁屏纸条", "编辑今天的话"],
+    ["todo", "我们的清单", "共享待办"],
+    ["pomodoro", "番茄钟", "25分钟专注"],
+  ] as const;
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <button onClick={onClose} style={{ minHeight: 44, minWidth: 44, border: "none", background: "none", fontSize: 20 }}>←</button>
+        <b style={{ fontSize: 18 }}>生活助手</b>
+      </div>
+      {items.map(([key, label, desc]) => (
+        <div key={key} onClick={() => setPage(key)} style={{ padding: 14, borderBottom: "1px solid #eee", cursor: "pointer", minHeight: 44 }}>
+          <div style={{ fontSize: 15 }}>{label}</div>
+          <div style={{ fontSize: 12, color: "#999" }}>{desc}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function LifestylePages({ page, onBack }: { page: string; onBack: () => void }) {
   const today = new Date().toISOString().slice(0,10);
   const [, force] = useState(0);
