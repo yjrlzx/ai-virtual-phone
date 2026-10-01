@@ -13825,8 +13825,8 @@ L.renderers=Object.assign({},L.pageRenders);
 // ============================================================
 (function(){
   function _refresh(){
+    // refreshSchedule 已会在 home/today/week/month 任一页面激活时渲染对应视图，无需再单独 renderHome，避免重复全量渲染
     try{ if(typeof refreshSchedule==='function') refreshSchedule(); }catch(e){}
-    try{ if(typeof renderHome==='function') renderHome(); }catch(e){}
   }
   var api = {
     // —— 读 ——

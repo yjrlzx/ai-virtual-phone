@@ -18,10 +18,26 @@ import {
     resolveMascotImageRef,
     subscribeMascotSettings,
 } from "@/lib/mascot-settings";
-import { BilingualTextBlock } from "@/components/chat/message-bubble";
 import { ChatFloatErrorBoundary } from "./error-boundary";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
 import { shouldSendChatInputOnEnter } from "@/lib/chat-input-keyboard";
+
+// 轻量纯文本渲染：避免引入 message-bubble.tsx 的 react-markdown/lucide/支付等重依赖，
+// 旧安卓 WebView 跑不动整个 bundle。掌心窗只显示文字气泡，不需要富交互。
+function FloatText({ text }: { text: string }) {
+    if (!text) return null;
+    const lines = text.split("\n");
+    return (
+        <>
+            {lines.map((line, i) => (
+                <span key={i}>
+                    {i > 0 && <br />}
+                    {line}
+                </span>
+            ))}
+        </>
+    );
+}
 
 // 与 components/chat/mascot-chat-room.tsx 保持一致的消息过滤规则：
 // tool 消息与「（调用工具中…）/（无内容）」占位气泡不在悬浮窗里展示。
@@ -67,14 +83,14 @@ function ChatFloatContent() {
 
     const [inputText, setInputText] = useState("");
     const [enterToSend, setEnterToSend] = useState(
-        () => loadChatAppSettings().enterToSendEnabled === true,
+        () => { try { return loadChatAppSettings().enterToSendEnabled === true; } catch { return false; } },
     );
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
     // 独立 WebView：与主页面同源共享 IndexedDB，需自行触发 hydrate 把角色历史加载进来。
     useEffect(() => {
-        void hydrateMascotChat();
+        void hydrateMascotChat().catch(() => {});
     }, []);
 
     // 上报角色名/头像给壳原生标题栏与悬浮球（壳侧 JS 桥 FloatShell）。
@@ -106,7 +122,7 @@ function ChatFloatContent() {
     }, []);
 
     useEffect(() => {
-        const sync = () => setEnterToSend(loadChatAppSettings().enterToSendEnabled === true);
+        const sync = () => { try { setEnterToSend(loadChatAppSettings().enterToSendEnabled === true); } catch {} };
         window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
         return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
     }, []);
@@ -248,7 +264,7 @@ function ChatFloatContent() {
                                     data-ui={isUser ? "bubble-user" : "bubble-bot"}
                                 >
                                     {text ? (
-                                        <BilingualTextBlock text={text} mode="markdown" defaultExpanded />
+                                        <FloatText text={text} />
                                     ) : null}
                                 </div>
                             </div>

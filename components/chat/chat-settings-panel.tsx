@@ -301,6 +301,7 @@ export function ChatSettingsPanel({
     // 通话外观（按角色存 kv）
     const [callAppearance, setCallAppearance] = useState(() => loadCallAppearance(session.contactId));
     const ringtoneFileRef = useRef<HTMLInputElement | null>(null);
+    const ringtonePreviewStopRef = useRef<(() => void) | null>(null);
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
     // 自定义状态栏（状态区）
     const [statusRegion, setStatusRegion] = useState<StatusRegionConfig>(() => getStatusRegionConfig(session.id));
@@ -368,6 +369,7 @@ export function ChatSettingsPanel({
     // 小卷的状态栏工具写入后广播，这里同步刷新——否则本页状态只在挂载时初始化一次，
     // 面板开着的时候被写入就会停在旧值，表现为「后台写了、前台看不到」。
     // 弹窗正开着时连草稿一起换掉，用户看到的就是小卷刚写的那份，可继续手改。
+    useEffect(() => () => { ringtonePreviewStopRef.current?.(); }, []);
     useEffect(() => {
         const onExternalWrite = (event: Event) => {
             const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
@@ -1234,7 +1236,7 @@ export function ChatSettingsPanel({
                                 {callAppearance.ringtoneUrl ? (
                                     <>
                                         <span className="menu-desc mr-1">{callAppearance.ringtoneUrl === "" ? "静音" : callAppearance.ringtoneUrl.startsWith("builtin:") ? BUILT_IN_RINGTONES.find(r => r.id === callAppearance.ringtoneUrl!.slice(8))?.name || "内置" : callAppearance.ringtoneUrl.startsWith("data:") ? "本地音乐" : "自定义"}</span>
-                                        <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => { e.preventDefault(); const next = { ...callAppearance, ringtoneUrl: null }; setCallAppearance(next); saveCallAppearance(session.contactId, next); }}>清除</button>
+                                        <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => { e.preventDefault(); ringtonePreviewStopRef.current?.(); ringtonePreviewStopRef.current = null; const next = { ...callAppearance, ringtoneUrl: null }; setCallAppearance(next); saveCallAppearance(session.contactId, next); }}>清除</button>
                                     </>
                                 ) : (
                                     <span className="menu-desc mr-1">跟随系统</span>
@@ -1251,9 +1253,10 @@ export function ChatSettingsPanel({
                                         color: "var(--c-text)",
                                     }}
                                     onClick={() => {
+                                        ringtonePreviewStopRef.current?.();
                                         const next = { ...callAppearance, ringtoneUrl: `builtin:${r.id}` };
                                         setCallAppearance(next); saveCallAppearance(session.contactId, next);
-                                        previewBuiltinRingtone(r.id);
+                                        ringtonePreviewStopRef.current = previewBuiltinRingtone(r.id).stop;
                                     }}>
                                     {r.name}
                                 </button>

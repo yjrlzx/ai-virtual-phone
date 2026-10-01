@@ -7,17 +7,18 @@
 import { Component, type ReactNode } from "react";
 
 type Props = { children: ReactNode };
-type State = { hasError: boolean };
+type State = { hasError: boolean; errorMsg: string };
 
 export class ChatFloatErrorBoundary extends Component<Props, State> {
-    state: State = { hasError: false };
+    state: State = { hasError: false, errorMsg: "" };
 
-    static getDerivedStateFromError(): State {
-        return { hasError: true };
+    static getDerivedStateFromError(error: unknown): State {
+        const msg = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        return { hasError: true, errorMsg: msg };
     }
 
-    componentDidCatch(error: unknown) {
-        console.error("[ChatFloat] render error:", error);
+    componentDidCatch(error: unknown, info: React.ErrorInfo) {
+        console.error("[ChatFloat] render error:", error, info);
     }
 
     render() {
@@ -32,9 +33,12 @@ export class ChatFloatErrorBoundary extends Component<Props, State> {
                     }}
                 >
                     <p style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>对话窗加载遇到问题</p>
-                    <p style={{ margin: 0, opacity: 0.65, fontSize: 13, lineHeight: 1.6, maxWidth: 320 }}>
-                        内容本身没有丢。点下面的按钮重新加载一次即可恢复。
-                    </p>
+                    <pre style={{
+                        margin: 0, maxWidth: 360, fontSize: 11, lineHeight: 1.5,
+                        whiteSpace: "pre-wrap", wordBreak: "break-all", opacity: 0.7,
+                        textAlign: "left", fontFamily: "monospace",
+                        background: "rgba(0,0,0,.05)", padding: 8, borderRadius: 8,
+                    }}>{this.state.errorMsg}</pre>
                     <button
                         type="button"
                         onClick={() => {

@@ -596,23 +596,8 @@
     }
   }, 500);
 
-  // Sync button is handled by sync-inject.js
-
-
-  setInterval(function () {
-    var badge = document.getElementById('ll-sync-badge');
-    if (badge) {
-      var icon = badge.querySelector('#ll-sync-icon');
-      var txt = badge.querySelector('#ll-sync-text');
-      if (icon && txt) {
-        var isOnline = icon.textContent.indexOf('🟢') >= 0 || icon.textContent.indexOf('✅') >= 0;
-        var dot = document.getElementById('llSyncDot');
-        var text = document.getElementById('llSyncText');
-        if (dot) dot.className = 'll-sync-dot ' + (isOnline ? 'online' : '');
-        if (text) text.textContent = txt.textContent;
-      }
-    }
-  }, 1000);
+  // 同步徽标轮询已移除：sync-inject.js 在当前 float 构建中不存在，ll-sync-badge 永不生成，
+  // 原 setInterval 每秒空跑 DOM 查询，纯属耗电，故删除。
 
   // FAB + 蹇€熸搷浣?- 宸茬鐢?
   // var fab = document.createElement('div');
