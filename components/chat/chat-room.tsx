@@ -628,7 +628,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStopGeneration: () => void;
     onTriggerAIResponse: () => void;
 	onSendSticker: (name: string, url?: string) => void;
-    onSendVoice: (audioDataUrl: string, durationSec: number) => void;
+    onSendVoice: (audioDataUrl: string, durationSec: number, transcript?: string) => void;
 }>(function ChatTextInputBar({
     characterName,
     characterId,
@@ -687,6 +687,8 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     const recordTickRef = useRef<number | null>(null);
     const slideUpRef = useRef(false);
     const cancelledRef = useRef(false);
+    const recognitionRef = useRef<any>(null);
+    const transcriptRef = useRef("");
 
     const stopRecording = (shouldCancel: boolean) => {
         cancelledRef.current = true;
@@ -699,6 +701,11 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch {} }); streamRef.current = null; }
         recorderRef.current = null;
         chunksRef.current = [];
+        // 停语音识别
+        if (recognitionRef.current) {
+            try { recognitionRef.current.stop(); } catch {}
+            recognitionRef.current = null;
+        }
         setRecording(false);
         setRecordCancel(false);
         setRecordingSec(0);
@@ -726,15 +733,35 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                 const wasCancel = slideUpRef.current;
                 const chunks = chunksRef.current;
                 chunksRef.current = [];
-                if (wasCancel || dur < 1 || chunks.length === 0) return;
+                const text = transcriptRef.current;
+                transcriptRef.current = "";
+                if (wasCancel || chunks.length === 0) return;
                 const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
                 const reader = new FileReader();
-                reader.onload = () => { onSendVoice(String(reader.result), dur); };
+                reader.onload = () => { onSendVoice(String(reader.result), dur, text || undefined); };
                 reader.readAsDataURL(blob);
             };
             rec.start();
             recordStartRef.current = Date.now();
             recordTickRef.current = window.setInterval(() => setRecordingSec(Math.floor((Date.now() - recordStartRef.current) / 1000)), 200);
+            // 边录边转文字
+            try {
+                const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                if (SR) {
+                    const rec2 = new SR();
+                    rec2.lang = "zh-CN";
+                    rec2.continuous = true;
+                    rec2.interimResults = false;
+                    transcriptRef.current = "";
+                    rec2.onresult = (ev: any) => {
+                        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+                            transcriptRef.current += ev.results[i][0].transcript;
+                        }
+                    };
+                    rec2.start();
+                    recognitionRef.current = rec2;
+                }
+            } catch { /* STT 不可用就只发音频 */ }
         } catch (err) {
             // 麦克风权限被拒绝：录音条已显示，松手时 chunks 为空自动取消
         }
@@ -6416,8 +6443,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 onStopGeneration={clearStuckGeneration}
                 onTriggerAIResponse={triggerAIResponse}
                 onSendSticker={(name, url) => { setShowStickerPanel(false); sendRichMessage("sticker", { label: name, stickerUrl: url }); }}
-                onSendVoice={(audioDataUrl, durationSec) => {
-                    sendRichMessage("audio", { label: `${durationSec}秒语音` }, "", audioDataUrl);
+                onSendVoice={(audioDataUrl, durationSec, transcript) => {
+                    sendRichMessage("audio", { label: `${durationSec}秒语音` }, transcript || "", audioDataUrl);
                 }}
             />
             ))}
