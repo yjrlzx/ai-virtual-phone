@@ -58,6 +58,23 @@ export function loadChatPlugins(): InstalledChatPlugin[] {
         && typeof p.code === "string");
 }
 
+/** 首次运行时安装内置插件 */
+export function seedBuiltinPlugins() {
+    const list = loadChatPlugins();
+    if (list.some(p => p.manifest.id === "lifestyle-companion")) return;
+    import("./plugins/lifestyle-companion").then(m => {
+        list.push({
+            manifest: { id: "lifestyle-companion", name: "生活伴侣", apiVersion: 1, version: "1.0.0", description: "情绪日记/喝水/经期" },
+            code: m.LIFESTYLE_COMPANION_PLUGIN_SOURCE,
+            enabled: true,
+            installedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            settings: {},
+        } as any);
+        saveChatPlugins(list);
+    }).catch(() => {});
+}
+
 export function saveChatPlugins(plugins: InstalledChatPlugin[]): void {
     writeJson(PLUGINS_KEY, plugins);
     emit(CHAT_PLUGINS_CHANGED_EVENT);

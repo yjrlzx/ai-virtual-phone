@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import { getAndroidShell, loadHuaweiTriggerRules, loadHuaweiCustomActions, loadHuaweiShellSettings, saveHuaweiShellSettings } from "@/lib/huawei-shell/storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { loadChatSessions } from "@/lib/chat-storage";
+import { kvGet, kvSet } from "@/lib/kv-db";
 import type { HuaweiShellSettings } from "@/lib/huawei-shell/storage";
 import type { HuaweiPermissionStatus } from "@/lib/huawei-shell/types";
 import {
@@ -370,6 +371,55 @@ function Pomodoro() {
 function PeriodTracker() {
   const [date, setDate] = useState(() => localStorage.getItem("period_last") || "");
   return <input type="date" value={date} onChange={e => { setDate(e.target.value); localStorage.setItem("period_last", e.target.value); }} style={{ padding: 6, borderRadius: 6, border: "1px solid rgba(128,128,128,0.3)" }} />;
+}
+
+const MOOD_TAGS = ["开心","平静","烦躁","难过","焦虑","累","委屈","想他","饿","困","生气","想家","迷茫","充实","轻松","紧张","害羞","得意","emo","还好"];
+
+function MoodDiaryCard() {
+  const today = new Date().toISOString().slice(0,10);
+  const [, force] = useState(0);
+  const current = (() => { try { return JSON.parse(kvGet(`mood_diary_${today}`) || '{"tags":[]}'); } catch { return { tags: [] }; } })();
+  return (
+    <div style={{ ...CARD, marginTop: 12, padding: 14 }}>
+      <b style={{ fontSize: 14, color: INK }}>情绪日记</b>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+        {MOOD_TAGS.map(m => {
+          const active = current.tags.includes(m);
+          return (
+            <button key={m} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12, border: active ? "1.5px solid #ff6b6b" : "1px solid rgba(128,128,128,0.3)", background: active ? "rgba(255,107,107,0.15)" : "transparent", cursor: "pointer" }}
+              onClick={() => {
+                const tags = active ? current.tags.filter((t: string) => t !== m) : [...current.tags, m];
+                kvSet(`mood_diary_${today}`, JSON.stringify({ tags, ts: Date.now() }));
+                force(n => n + 1);
+              }}>{m}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AnxietyTrendCard() {
+  const { loadCharacters } = require("@/lib/character-storage");
+  const chars = loadCharacters();
+  const c = chars[0];
+  const today = c?.mood?.anxiety ?? 0;
+  return (
+    <div style={{ ...CARD, marginTop: 12, padding: 14 }}>
+      <b style={{ fontSize: 14, color: INK }}>他的焦虑值：{today}</b>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 60, marginTop: 10 }}>
+        {[0,1,2,3,4,5,6].map(i => {
+          const v = i === 6 ? today : 0;
+          return (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              <div style={{ width: "100%", height: Math.max(4, v * 0.5), background: "#ff6b6b", borderRadius: 3 }} />
+              <span style={{ fontSize: 9, color: FAINT }}>{i === 6 ? "今天" : ""}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /* ---------------- 桥接总开关卡（设置页顶部） ---------------- */
