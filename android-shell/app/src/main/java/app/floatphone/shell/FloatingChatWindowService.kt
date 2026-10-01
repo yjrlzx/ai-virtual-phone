@@ -658,18 +658,13 @@ class FloatingChatWindowService : Service() {
         fun copyScreenText(): String = runCatching {
             val svc = RealityBridgeAccessibility.current()
                 ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-            val root = org.json.JSONObject(svc.dumpScreenTree())
+            val arr = org.json.JSONArray(svc.dumpScreenTree())
             val sb = StringBuilder()
-            fun walk(node: org.json.JSONObject) {
+            for (i in 0 until arr.length()) {
+                val node = arr.optJSONObject(i) ?: continue
                 val t = node.optString("text", "")
                 if (t.isNotBlank()) sb.append(t).append("\n")
-                val children = node.optJSONArray("children") ?: return
-                for (i in 0 until children.length()) {
-                    val c = children.optJSONObject(i) ?: continue
-                    walk(c)
-                }
             }
-            walk(root)
             val text = sb.toString().trim()
             if (text.isEmpty()) return """{"ok":false,"error":"屏幕上没有可复制的文字"}"""
             val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -693,20 +688,15 @@ class FloatingChatWindowService : Service() {
         fun ocrFromScreen(): String = runCatching {
             val svc = RealityBridgeAccessibility.current()
                 ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-            val root = org.json.JSONObject(svc.dumpScreenTree())
+            val arr = org.json.JSONArray(svc.dumpScreenTree())
             val sb = StringBuilder()
-            fun walk(node: org.json.JSONObject) {
+            for (i in 0 until arr.length()) {
+                val node = arr.optJSONObject(i) ?: continue
                 val t = node.optString("text", "")
                 val d = node.optString("desc", "")
                 if (t.isNotBlank()) sb.append(t).append("\n")
                 else if (d.isNotBlank()) sb.append(d).append("\n")
-                val children = node.optJSONArray("children") ?: return
-                for (i in 0 until children.length()) {
-                    val c = children.optJSONObject(i) ?: continue
-                    walk(c)
-                }
             }
-            walk(root)
             org.json.JSONObject().put("ok", true).put("text", sb.toString().trim()).toString()
         }.getOrElse { """{"ok":false,"error":"$it"}""" }
     }

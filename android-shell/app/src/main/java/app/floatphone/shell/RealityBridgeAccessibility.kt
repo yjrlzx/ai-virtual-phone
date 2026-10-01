@@ -157,7 +157,19 @@ class RealityBridgeAccessibility : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         loadLockedPackages(this)
+        // 兜底轮询：华为/鸿蒙 ROM 有时不发 WINDOW_STATE_CHANGED，每 1.5s 检查一次前台包名是否命中锁。
+        pollHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        pollRunnable = object : Runnable {
+            override fun run() {
+                runCatching { maybeEnforceGate(foregroundApp().ifBlank { null }) }
+                pollHandler?.postDelayed(this, 1500L)
+            }
+        }
+        pollHandler?.post(pollRunnable!!)
     }
+
+    private var pollHandler: android.os.Handler? = null
+    private var pollRunnable: Runnable? = null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return
@@ -182,7 +194,7 @@ class RealityBridgeAccessibility : AccessibilityService() {
         if (!focusing && !locked) return
         // 专注模式不锁壳自身（否则把现实桥网页也锁掉，无法退出）
         if (focusing && pkg == applicationContext.packageName) return
-        if (now - lastEnforced < 1500L) return
+        if (now - lastEnforced < 500L) return
         lastEnforced = now
         if (locked) {
             runCatching {

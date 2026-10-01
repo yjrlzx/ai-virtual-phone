@@ -451,13 +451,27 @@ class MainActivity : AppCompatActivity() {
         fun getStatus(): String = runCatching {
             val bm = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
             val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val charging = runCatching {
+                val sticky = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+                val status = sticky?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val plugged = sticky?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+                status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                        status == android.os.BatteryManager.BATTERY_STATUS_FULL || plugged > 0
+            }.getOrDefault(false)
+            val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+            val screenOn = pm.isInteractive
             val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
             val volume = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
             val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
             val net = cm.activeNetwork != null
+            val fg = RealityBridgeAccessibility.current()?.foregroundApp().orEmpty()
             org.json.JSONObject()
                 .put("ok", true)
                 .put("battery", level)
+                .put("batteryLevel", level)
+                .put("isCharging", charging)
+                .put("isScreenOn", screenOn)
+                .put("foregroundApp", fg)
                 .put("volume", volume)
                 .put("network", net)
                 .put("accessibility", RealityBridgeAccessibility.active())
@@ -567,19 +581,13 @@ class MainActivity : AppCompatActivity() {
         fun copyScreenText(): String = runCatching {
             val svc = RealityBridgeAccessibility.current()
                 ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-            val json = svc.dumpScreenTree()
-            val root = org.json.JSONObject(json)
+            val arr = org.json.JSONArray(svc.dumpScreenTree())
             val sb = StringBuilder()
-            fun walk(node: org.json.JSONObject) {
+            for (i in 0 until arr.length()) {
+                val node = arr.optJSONObject(i) ?: continue
                 val t = node.optString("text", "")
                 if (t.isNotBlank()) sb.append(t).append("\n")
-                val children = node.optJSONArray("children") ?: return
-                for (i in 0 until children.length()) {
-                    val c = children.optJSONObject(i) ?: continue
-                    walk(c)
-                }
             }
-            walk(root)
             val text = sb.toString().trim()
             if (text.isEmpty()) return """{"ok":false,"error":"屏幕上没有可复制的文字"}"""
             val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -603,21 +611,15 @@ class MainActivity : AppCompatActivity() {
         fun ocrFromScreen(): String = runCatching {
             val svc = RealityBridgeAccessibility.current()
                 ?: return """{"ok":false,"error":"无障碍服务未开启"}"""
-            val json = svc.dumpScreenTree()
-            val root = org.json.JSONObject(json)
+            val arr = org.json.JSONArray(svc.dumpScreenTree())
             val sb = StringBuilder()
-            fun walk(node: org.json.JSONObject) {
+            for (i in 0 until arr.length()) {
+                val node = arr.optJSONObject(i) ?: continue
                 val t = node.optString("text", "")
                 val d = node.optString("desc", "")
                 if (t.isNotBlank()) sb.append(t).append("\n")
                 else if (d.isNotBlank()) sb.append(d).append("\n")
-                val children = node.optJSONArray("children") ?: return
-                for (i in 0 until children.length()) {
-                    val c = children.optJSONObject(i) ?: continue
-                    walk(c)
-                }
             }
-            walk(root)
             org.json.JSONObject().put("ok", true).put("text", sb.toString().trim()).toString()
         }.getOrElse { errJson(it.message) }
 
