@@ -510,7 +510,21 @@ class MainActivity : AppCompatActivity() {
             }
             val fg = RealityBridgeAccessibility.current()?.foregroundApp().orEmpty()
             if (fg.isNotEmpty()) obj.put("foregroundApp", fg)
+            val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+            obj.put("isScreenOn", pm.isInteractive)
             obj.toString()
+        }.getOrElse { errJson(it.message) }
+
+        /** 唤醒屏幕（亮屏）。 */
+        @JavascriptInterface
+        fun wakeUp(): String = runCatching {
+            val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+            @Suppress("DEPRECATION")
+            pm.newWakeLock(
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "floatshell:wake",
+            ).acquire(10_000L)
+            org.json.JSONObject().put("ok", true).toString()
         }.getOrElse { errJson(it.message) }
 
         /** 开关悬浮球（悬浮球双击速聊）。 */

@@ -562,6 +562,40 @@ class FloatingChatWindowService : Service() {
             RealityBridgeAccessibility.unlockPackage(this@FloatingChatWindowService, packageName.trim())
             org.json.JSONObject().put("ok", true).toString()
         }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 今日应用使用时长 TOP20（需用量访问权限）。 */
+        @android.webkit.JavascriptInterface
+        fun getAppUsageTime(): String = runCatching {            val usm = getSystemService(USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+            val cal = java.util.Calendar.getInstance()
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            val stats = usm.queryUsageStats(
+                android.app.usage.UsageStatsManager.INTERVAL_BEST,
+                cal.timeInMillis,
+                System.currentTimeMillis(),
+            )
+            val agg = HashMap<String, Long>()
+            stats?.forEach { agg[it.packageName] = (agg[it.packageName] ?: 0L) + it.totalTimeInForeground }
+            val arr = org.json.JSONArray()
+            agg.entries.sortedByDescending { it.value }.take(20).forEach { (pkg, ms) ->
+                arr.put(org.json.JSONObject().put("pkg", pkg).put("totalTimeMs", ms))
+            }
+            org.json.JSONObject().put("ok", true).put("usages", arr).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 唤醒屏幕（亮屏）。 */
+        @android.webkit.JavascriptInterface
+        fun wakeUp(): String = runCatching {
+            val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+            @Suppress("DEPRECATION")
+            pm.newWakeLock(
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "floatshell:wake",
+            ).acquire(10_000L)
+            org.json.JSONObject().put("ok", true).toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
     }
 
     /** ✕：移除小窗并停掉本服务。 */

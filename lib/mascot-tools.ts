@@ -1548,6 +1548,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "登记目标App": return handleTargetApp(call.args);
             case "打开App": return handleOpenApp(call.args);
             case "读屏幕": return handleReadScreen();
+            case "查岗": return handleCheckIn();
             case "点文字": return handleClickNodeByText(call.args);
             case "点描述": return handleClickNodeByDescription(call.args);
             case "向上滚动": return handleScrollForward();
@@ -3197,9 +3198,31 @@ function handleOpenApp(args: Record<string, unknown>): ToolResult {
     } catch (e) { logTool("打开App", false, String(e)); return { name: "打开App", success: false, error: "打开 App 失败" }; }
 }
 
-/** 读屏幕：返回节点树（text/desc/class/clickable）。 */
-function handleReadScreen(): ToolResult {
+/** 查岗：返回当前手机状态快照（前台App/电量/充电/亮屏）。 */
+function handleCheckIn(): ToolResult {
     try {
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { getStatus?: () => string } | null)?.getStatus;
+        if (typeof fn !== "function") {
+            return { name: "查岗", success: false, error: "当前不在手机环境" };
+        }
+        const raw = fn();
+        let s: Record<string, unknown> = {};
+        try { s = JSON.parse(raw) as Record<string, unknown>; } catch { /* keep empty */ }
+        if (s.ok === false) return { name: "查岗", success: false, error: String(s.error || "查岗失败") };
+        const parts: string[] = [];
+        if (s.foregroundApp) parts.push(`前台 ${s.foregroundApp}`);
+        if (typeof s.batteryLevel === "number") parts.push(`电量 ${s.batteryLevel}%`);
+        if (s.isCharging) parts.push("充电中");
+        parts.push(s.isScreenOn ? "屏幕亮着" : "屏幕熄着");
+        return { name: "查岗", success: true, data: parts.join("，") || raw };
+    } catch {
+        return { name: "查岗", success: false, error: "查岗失败" };
+    }
+}
+
+/** 读屏幕：返回节点树（text/desc/class/clickable）。 */
+function handleReadScreen(): ToolResult {    try {
         const shell = getAndroidShell();
         const fn = (shell as unknown as { readScreenTree?: (n: number) => string } | null)?.readScreenTree;
         if (typeof fn !== "function") {
