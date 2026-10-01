@@ -245,7 +245,7 @@ class MainActivity : AppCompatActivity() {
             runCatching {
                 if (url.startsWith("blob:") || url.startsWith("data:")) {
                     // blob/data 由页面内 JS 触发的 a[download] 处理；提示用户等待
-                    Toast.makeText(this, "正在导出…", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "正在导出…", Toast.LENGTH_SHORT).show()
                     return@DownloadListener
                 }
                 val request = DownloadManager.Request(Uri.parse(url)).apply {
@@ -258,7 +258,7 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
                 (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-                Toast.makeText(this, "已开始下载到「下载」目录", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "已开始下载到「下载」目录", Toast.LENGTH_SHORT).show()
             }
         })
 
@@ -1448,7 +1448,7 @@ class MainActivity : AppCompatActivity() {
                 android.media.MediaScannerConnection.scanFile(this@MainActivity, arrayOf(f.absolutePath), null, null)
             }
             runOnUiThread {
-                Toast.makeText(this, "已保存到下载目录：$safe", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@MainActivity, "已保存到下载目录：$safe", Toast.LENGTH_LONG).show()
             }
             org.json.JSONObject()
                 .put("ok", true)
