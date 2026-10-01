@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.AlarmClock
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -634,11 +635,11 @@ class FloatingChatWindowService : Service() {
         fun setAlarm(hour: Int, minute: Int, message: String): String = runCatching {
             val h = hour.coerceIn(0, 23)
             val m = minute.coerceIn(0, 59)
-            val intent = android.content.Intent(android.app.AlarmClock.ACTION_SET_ALARM)
-                .putExtra(android.app.AlarmClock.EXTRA_HOUR, h)
-                .putExtra(android.app.AlarmClock.EXTRA_MINUTES, m)
-                .putExtra(android.app.AlarmClock.EXTRA_MESSAGE, message)
-                .putExtra(android.app.AlarmClock.EXTRA_SKIP_UI, true)
+            val intent = android.content.Intent(AlarmClock.ACTION_SET_ALARM)
+                .putExtra(AlarmClock.EXTRA_HOUR, h)
+                .putExtra(AlarmClock.EXTRA_MINUTES, m)
+                .putExtra(AlarmClock.EXTRA_MESSAGE, message)
+                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
             org.json.JSONObject().put("ok", true).put("at", "$h:${"%02d".format(m)}").toString()

@@ -1525,20 +1525,6 @@ class MainActivity : AppCompatActivity() {
 
         // ── 现实桥·补全 Operit 能力（点按 / Toast / 媒体键 / 蓝牙 / 文件 / 设置读写 / 用量 / 文件分享） ──
 
-        /** 无障碍点按（归一化 0..1000 坐标）。 */
-        @JavascriptInterface
-        fun tap(x: Int, y: Int): String =
-            try {
-                val r = RealityBridgeAccessibility.current()?.tapCoordinate(x, y)
-                if (r == null) {
-                    """{"ok":false,"error":"无障碍服务未开启"}"""
-                } else {
-                    org.json.JSONObject(r as Map<*, *>).toString()
-                }
-            } catch (t: Throwable) {
-                errJson(t.message)
-            }
-
         /** 弹一个短 Toast。 */
         @JavascriptInterface
         fun toast(text: String): String = runCatching {
