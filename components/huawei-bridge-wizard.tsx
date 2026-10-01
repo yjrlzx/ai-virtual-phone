@@ -268,6 +268,22 @@ function HomeDashboard({ shellAvailable, todayCount, ruleStats, accOk, shizukuRe
         ))}
       </div>
 
+      {/* 归电按钮 */}
+      <button
+        onClick={() => {
+          try {
+            window.dispatchEvent(new CustomEvent("mascot:call-character", { detail: { mode: "voice" } }));
+          } catch { /* ignore */ }
+        }}
+        style={{
+          width: "100%", padding: "14px", marginTop: 12, borderRadius: 14, border: "none",
+          background: "var(--c-icon-active, #4f8cff)", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer",
+          minHeight: 48,
+        }}
+      >
+        发起通话（归电）
+      </button>
+
       {/* 大卡片入口列表 */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
         {cards.map(c => (
