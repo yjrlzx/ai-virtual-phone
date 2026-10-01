@@ -257,33 +257,8 @@ export function TabControl({ onNotice }: BridgeTabProps) {
         </div>
       </div>
 
-      {/* 手势 */}
-      <SectionHeader title="手势" desc="用屏幕坐标做滑动 / 长按，坐标为屏幕像素（x 横向、y 纵向）" />
-      <div style={CARD}>
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, marginBottom: 6 }}>滑动</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <input style={NUM_INPUT} placeholder="x1" value={sx1} onChange={e => setSx1(e.target.value)} inputMode="numeric" />
-          <input style={NUM_INPUT} placeholder="y1" value={sy1} onChange={e => setSy1(e.target.value)} inputMode="numeric" />
-          <span style={{ color: FAINT }}>→</span>
-          <input style={NUM_INPUT} placeholder="x2" value={sx2} onChange={e => setSx2(e.target.value)} inputMode="numeric" />
-          <input style={NUM_INPUT} placeholder="y2" value={sy2} onChange={e => setSy2(e.target.value)} inputMode="numeric" />
-          <button type="button" style={BTN} onClick={doSwipe} disabled={!shellConnected}>滑动</button>
-        </div>
-
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, margin: "12px 0 6px" }}>点按</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <input style={NUM_INPUT} placeholder="x" value={tx} onChange={e => setTx(e.target.value)} inputMode="numeric" />
-          <input style={NUM_INPUT} placeholder="y" value={ty} onChange={e => setTy(e.target.value)} inputMode="numeric" />
-          <button type="button" style={BTN} onClick={doTap} disabled={!shellConnected}>点按</button>
-        </div>
-
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, margin: "12px 0 6px" }}>长按</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <input style={NUM_INPUT} placeholder="x" value={lx} onChange={e => setLx(e.target.value)} inputMode="numeric" />
-          <input style={NUM_INPUT} placeholder="y" value={ly} onChange={e => setLy(e.target.value)} inputMode="numeric" />
-          <button type="button" style={BTN} onClick={doLongPress} disabled={!shellConnected}>长按</button>
-        </div>
-      </div>
+      {/* 语义操作说明 */}
+      <SectionHeader title="语义操控" desc="陆知行通过读屏幕树后，按文字/描述直接点按，不需要手动填坐标。" />
 
       {/* 最近一次操作结果 */}
       {lastResult ? (

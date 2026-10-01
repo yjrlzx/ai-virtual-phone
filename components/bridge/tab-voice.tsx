@@ -357,11 +357,12 @@ export function TabVoice({ onNotice }: BridgeTabProps) {
           <Switch on={wakeOn} onChange={toggleWake} label="常驻唤醒服务" />
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-          <button type="button" style={BTN} onClick={doEnroll}>
-            {templateCount > 0 ? `已录 ${templateCount}/3 条` : "录制唤醒词模板"}
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexDirection: "column" }}>
+          <button type="button" style={{ ...BTN, minHeight: 48, fontSize: 14, fontWeight: 700 }} onClick={doEnroll}>
+            {templateCount > 0 ? `已录 ${templateCount}/3 条，再录一条` : "开始录制唤醒词"}
           </button>
-          <button type="button" style={BTN_GHOST} onClick={doClearTemplates}>清空模板</button>
+          <div style={{ fontSize: 11, color: FAINT }}>点按钮后立刻说"小智小智"，录满3条即可。不满意点下面清空重录。</div>
+          <button type="button" style={{ ...BTN_GHOST, alignSelf: "flex-start" }} onClick={doClearTemplates}>清空模板重录</button>
         </div>
       </div>
 

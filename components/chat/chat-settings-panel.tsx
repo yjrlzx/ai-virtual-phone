@@ -1226,36 +1226,46 @@ export function ChatSettingsPanel({
                     </label>
 
                     {/* 通话铃声 */}
-                    <div className="menu-item" onClick={() => {
-                        ringtonePreviewStopRef.current?.();
-                        const cur = callAppearance.ringtoneUrl;
-                        const idx = BUILT_IN_RINGTONES.findIndex(r => `builtin:${r.id}` === cur);
-                        const next = BUILT_IN_RINGTONES[(idx + 1) % BUILT_IN_RINGTONES.length];
-                        const updated = { ...callAppearance, ringtoneUrl: `builtin:${next.id}` };
-                        setCallAppearance(updated);
-                        saveCallAppearance(session.contactId, updated);
-                        ringtonePreviewStopRef.current = () => previewBuiltinRingtone(next.id).stop();
-                    }}>
-                        <ChatInfoIcon icon={Bell} color={BINDING_ACCENTS.voice} />
-                        <div className="menu-label-group">
-                            <span className="menu-label">通话铃声</span>
-                            <span className="menu-desc">
-                                {callAppearance.ringtoneUrl?.startsWith("builtin:")
-                                    ? BUILT_IN_RINGTONES.find(r => `builtin:${r.id}` === callAppearance.ringtoneUrl)?.name || "自定义"
-                                    : callAppearance.ringtoneUrl ? "本地音乐" : "跟随系统"}
-                            </span>
-                        </div>
-                        <div className="menu-right">
+                    <div className="menu-item" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <ChatInfoIcon icon={Bell} color={BINDING_ACCENTS.voice} />
+                            <div className="menu-label-group" style={{ flex: 1 }}>
+                                <span className="menu-label">通话铃声</span>
+                                <span className="menu-desc">
+                                    {callAppearance.ringtoneUrl?.startsWith("builtin:")
+                                        ? BUILT_IN_RINGTONES.find(r => `builtin:${r.id}` === callAppearance.ringtoneUrl)?.name || "自定义"
+                                        : callAppearance.ringtoneUrl ? "本地音乐" : "跟随系统"}
+                                </span>
+                            </div>
                             {callAppearance.ringtoneUrl && (
-                                <button className="menu-desc mr-1 text-[var(--c-danger)]" onClick={e => {
-                                    e.stopPropagation();
+                                <button className="menu-desc text-[var(--c-danger)]" onClick={() => {
                                     ringtonePreviewStopRef.current?.();
                                     const updated = { ...callAppearance, ringtoneUrl: null as string | null };
                                     setCallAppearance(updated);
                                     saveCallAppearance(session.contactId, updated);
                                 }}>清除</button>
                             )}
-                            <ChevronRight size={16} />
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10, paddingLeft: 34 }}>
+                            {[{ id: "", name: "跟随系统" }, ...BUILT_IN_RINGTONES].map(r => {
+                                const val = r.id ? `builtin:${r.id}` : null;
+                                const active = callAppearance.ringtoneUrl === val;
+                                return (
+                                    <button key={r.id || "none"} onClick={() => {
+                                        ringtonePreviewStopRef.current?.();
+                                        const updated = { ...callAppearance, ringtoneUrl: val as string | null };
+                                        setCallAppearance(updated);
+                                        saveCallAppearance(session.contactId, updated);
+                                        if (r.id) ringtonePreviewStopRef.current = () => previewBuiltinRingtone(r.id).stop();
+                                    }} style={{
+                                        padding: "6px 12px", borderRadius: 999, fontSize: 12, cursor: "pointer",
+                                        border: active ? "1.5px solid var(--c-icon-active, #4f8cff)" : "1px solid rgba(128,128,128,0.3)",
+                                        background: active ? "rgba(79,140,255,0.12)" : "transparent",
+                                        color: active ? "var(--c-icon-active, #4f8cff)" : "inherit",
+                                        minHeight: 32,
+                                    }}>{r.name}</button>
+                                );
+                            })}
                         </div>
                     </div>
                 </div>
