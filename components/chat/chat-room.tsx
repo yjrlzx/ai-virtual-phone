@@ -686,8 +686,10 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     const recordStartRef = useRef(0);
     const recordTickRef = useRef<number | null>(null);
     const slideUpRef = useRef(false);
+    const cancelledRef = useRef(false);
 
     const stopRecording = (shouldCancel: boolean) => {
+        cancelledRef.current = true;
         const rec = recorderRef.current;
         const stream = streamRef.current;
         if (recordTickRef.current) { window.clearInterval(recordTickRef.current); recordTickRef.current = null; }
@@ -696,13 +698,11 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         }
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch {} }); streamRef.current = null; }
         recorderRef.current = null;
+        chunksRef.current = [];
         setRecording(false);
         setRecordCancel(false);
         setRecordingSec(0);
-        slideUpRef.current = false;
-        if (!shouldCancel && rec) {
-            // onstop handler will fire and send
-        }
+        // 不重置 slideUpRef：onstop 异步回调里还要读它判断是否取消
     };
 
     const startRecording = async () => {
@@ -711,6 +711,10 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                 return;
             }
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (cancelledRef.current) {
+                stream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+                return;
+            }
             streamRef.current = stream;
             chunksRef.current = [];
             const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
@@ -741,6 +745,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         e.preventDefault();
         if (inputLocked) return;
         recordStartYRef.current = e.clientY;
+        cancelledRef.current = false;
         // 立刻显示录音状态条，不等 getUserMedia
         recordStartRef.current = Date.now();
         setRecording(true);
