@@ -1225,6 +1225,22 @@ export function ChatSettingsPanel({
                         <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setVoiceBackground, "voiceBackground")} className="hidden" />
                     </label>
 
+                    {/* 归电开关 */}
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Bell} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">允许陆知行归电</span>
+                            <span className="menu-desc">关掉后他打过来不会响</span>
+                        </div>
+                        <div className="menu-right">
+                            <input type="checkbox" checked={callAppearance.callEnabled} onChange={e => {
+                                const updated = { ...callAppearance, callEnabled: e.target.checked };
+                                setCallAppearance(updated);
+                                saveCallAppearance(session.contactId, updated);
+                            }} />
+                        </div>
+                    </div>
+
                     {/* 通话铃声 */}
                     <div className="menu-item" style={{ flexDirection: "column", alignItems: "stretch" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1267,6 +1283,22 @@ export function ChatSettingsPanel({
                                 );
                             })}
                         </div>
+                        <input ref={ringtoneFileRef} type="file" accept="audio/*" className="hidden" onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                const url = reader.result as string;
+                                const updated = { ...callAppearance, ringtoneUrl: url };
+                                setCallAppearance(updated);
+                                saveCallAppearance(session.contactId, updated);
+                            };
+                            reader.readAsDataURL(file);
+                        }} />
+                        <button className="menu-desc" style={{ marginTop: 8, cursor: "pointer", background: "none", border: "none", padding: 0, color: "var(--c-icon-active, #4f8cff)" }}
+                            onClick={() => ringtoneFileRef.current?.click()}>
+                            选择本地音乐
+                        </button>
                     </div>
                 </div>
 

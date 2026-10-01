@@ -38,20 +38,15 @@ export type CallApiConfig = {
 };
 
 export type CallAppearanceConfig = {
-    /** 来电铃声 URL；null=跟随全局/系统，""=静音，非空=播放 */
     ringtoneUrl: string | null;
-    /** 通话背景图片 URL/data URI；空=用渐变 */
     backgroundUrl: string;
-    /** 预设渐变色（当 backgroundUrl 为空时用） */
     backgroundGradient: string;
-    /** 自定义通话头像 data URI/URL；空=用 character.avatar */
     avatarOverride: string;
-    /** 角色形象来源：静态头像 / 图片生成 API / 视频生成 API */
     avatarSource: CallAvatarSource;
-    /** 图片生成 API 配置（avatarSource=image_api 时用） */
     imageApiConfig: CallApiConfig;
-    /** 视频生成 API 配置（avatarSource=video_api 时用） */
     videoApiConfig: CallApiConfig;
+    /** 是否允许角色主动发起通话（归电） */
+    callEnabled: boolean;
 };
 
 const DEFAULT_APPEARANCE: CallAppearanceConfig = {
@@ -62,6 +57,7 @@ const DEFAULT_APPEARANCE: CallAppearanceConfig = {
     avatarSource: "static",
     imageApiConfig: { baseUrl: "", apiKey: "", model: "" },
     videoApiConfig: { baseUrl: "", apiKey: "", model: "" },
+    callEnabled: true,
 };
 
 function appearanceKey(characterId: string): string {

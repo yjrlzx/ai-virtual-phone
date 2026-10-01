@@ -32,6 +32,7 @@ import { getAndroidShell } from "./huawei-shell/storage";
 import { loadCharacters } from "./character-storage";
 import { loadChatSessions } from "./chat-storage";
 import { readCompanionMeta, companionDayCount, readCallSettings } from "./huawei-shell/peek-store";
+import { loadCallAppearance } from "./call-settings";
 import { loadHuaweiCustomActions, saveHuaweiCustomActions, readLockedPackagesFromShell, pushLockedPackagesToShell, loadHuaweiTriggerRules, saveHuaweiTriggerRules, appendHuaweiBridgeEvent } from "./huawei-shell/storage";
 
 // ── 通用类型 ────────────────────────────────────────────
@@ -3059,6 +3060,11 @@ function handleInitiateCall(args: Record<string, unknown>): ToolResult {
             .sort((a, b) => Date.parse(String(b.updatedAt ?? 0)) - Date.parse(String(a.updatedAt ?? 0)))[0];
         if (!session || !companion) {
             return { name: "发起通话", success: false, error: "对方暂时无法接听" };
+        }
+        // 用户关闭了归电开关
+        const appearance = loadCallAppearance(companion.id);
+        if (!appearance.callEnabled) {
+            return { name: "发起通话", success: false, error: "用户关闭了归电，不要打给她" };
         }
         // 响铃+震动（受来电样式里的开关控制；与掌心窗读同一份配置）
         const callSettings = readCallSettings();
