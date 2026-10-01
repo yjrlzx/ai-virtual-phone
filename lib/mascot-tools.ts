@@ -1354,6 +1354,8 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "锁屏": "mascot_lock_screen",
     "亮屏": "mascot_wake_screen",
     "下拉通知栏": "mascot_notification_shade",
+    "下拉快捷设置": "mascot_quick_settings",
+    "发通知": "mascot_send_notification",
     "列出联动规则": "mascot_list_rules",
     "添加联动规则": "mascot_add_rule",
     "删除联动规则": "mascot_del_rule",
