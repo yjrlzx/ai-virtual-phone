@@ -628,6 +628,21 @@ class FloatingChatWindowService : Service() {
                 .put("accuracy", loc.accuracy)
                 .toString()
         }.getOrElse { """{"ok":false,"error":"$it"}""" }
+
+        /** 定闹钟：系统闹钟 App，跳过 UI。 */
+        @android.webkit.JavascriptInterface
+        fun setAlarm(hour: Int, minute: Int, message: String): String = runCatching {
+            val h = hour.coerceIn(0, 23)
+            val m = minute.coerceIn(0, 59)
+            val intent = android.content.Intent(android.app.AlarmClock.ACTION_SET_ALARM)
+                .putExtra(android.app.AlarmClock.EXTRA_HOUR, h)
+                .putExtra(android.app.AlarmClock.EXTRA_MINUTES, m)
+                .putExtra(android.app.AlarmClock.EXTRA_MESSAGE, message)
+                .putExtra(android.app.AlarmClock.EXTRA_SKIP_UI, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            org.json.JSONObject().put("ok", true).put("at", "$h:${"%02d".format(m)}").toString()
+        }.getOrElse { """{"ok":false,"error":"$it"}""" }
     }
 
     /** ✕：移除小窗并停掉本服务。 */

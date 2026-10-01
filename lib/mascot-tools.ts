@@ -1552,6 +1552,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "读通知": return handleReadNotifications();
             case "截屏": return handleScreenshot();
             case "定位": return handleLocation();
+            case "定闹钟": return handleSetAlarm(call.args);
             case "查天气": return handleWeather();
             case "点文字": return handleClickNodeByText(call.args);
             case "点描述": return handleClickNodeByDescription(call.args);
@@ -3216,9 +3217,29 @@ function handleScreenshot(): ToolResult {
     }
 }
 
-/** 定位：返回最近已知经纬度。 */
-function handleLocation(): ToolResult {
+/** 定闹钟：调系统闹钟 App。 */
+function handleSetAlarm(args: Record<string, unknown>): ToolResult {
     try {
+        const hour = Number(args.hour);
+        const minute = Number(args.minute);
+        const message = typeof args.message === "string" ? args.message : "";
+        if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+            return { name: "定闹钟", success: false, error: "需要 hour(0-23) 和 minute(0-59)" };
+        }
+        const shell = getAndroidShell();
+        const fn = (shell as unknown as { setAlarm?: (h: number, m: number, msg: string) => string } | null)?.setAlarm;
+        if (typeof fn !== "function") {
+            return { name: "定闹钟", success: false, error: "当前不在手机环境" };
+        }
+        fn(Math.round(hour), Math.round(minute), message);
+        return { name: "定闹钟", success: true, data: `已设 ${Math.round(hour)}:${String(Math.round(minute)).padStart(2, "0")}${message ? "（" + message + "）" : ""}` };
+    } catch {
+        return { name: "定闹钟", success: false, error: "定闹钟失败" };
+    }
+}
+
+/** 定位：返回最近已知经纬度。 */
+function handleLocation(): ToolResult {    try {
         const shell = getAndroidShell();
         const fn = (shell as unknown as { getLocation?: () => string } | null)?.getLocation;
         if (typeof fn !== "function") {
@@ -3272,24 +3293,44 @@ function handleReadNotifications(): ToolResult {    try {
     }
 }
 
-/** 查岗：返回当前手机状态快照（前台App/电量/充电/亮屏）。 */
+/** 查岗：一次返回前台App/电量/充电/亮屏 + 今日总时长 + TOP5 使用排行。 */
 function handleCheckIn(): ToolResult {
     try {
         const shell = getAndroidShell();
-        const fn = (shell as unknown as { getStatus?: () => string } | null)?.getStatus;
-        if (typeof fn !== "function") {
-            return { name: "查岗", success: false, error: "当前不在手机环境" };
+        if (!shell) return { name: "查岗", success: false, error: "当前不在手机环境" };
+        const statusFn = (shell as unknown as { getStatus?: () => string }).getStatus;
+        const usageFn = (shell as unknown as { getAppUsageTime?: () => string }).getAppUsageTime;
+        if (typeof statusFn !== "function") {
+            return { name: "查岗", success: false, error: "壳版本过低" };
         }
-        const raw = fn();
         let s: Record<string, unknown> = {};
-        try { s = JSON.parse(raw) as Record<string, unknown>; } catch { /* keep empty */ }
+        try { s = JSON.parse(statusFn()) as Record<string, unknown>; } catch { /* ignore */ }
         if (s.ok === false) return { name: "查岗", success: false, error: String(s.error || "查岗失败") };
         const parts: string[] = [];
-        if (s.foregroundApp) parts.push(`前台 ${s.foregroundApp}`);
-        if (typeof s.batteryLevel === "number") parts.push(`电量 ${s.batteryLevel}%`);
-        if (s.isCharging) parts.push("充电中");
+        if (s.foregroundApp) parts.push(`正在用 ${s.foregroundApp}`);
+        if (typeof s.batteryLevel === "number") {
+            parts.push(`电量 ${s.batteryLevel}%${s.isCharging ? "（充电中）" : ""}`);
+        }
         parts.push(s.isScreenOn ? "屏幕亮着" : "屏幕熄着");
-        return { name: "查岗", success: true, data: parts.join("，") || raw };
+        if (typeof usageFn === "function") {
+            try {
+                const u = JSON.parse(usageFn()) as { ok?: boolean; usages?: Array<{ pkg: string; totalTimeMs: number }> };
+                if (u.ok && Array.isArray(u.usages)) {
+                    const totalMs = u.usages.reduce((acc, it) => acc + (it.totalTimeMs || 0), 0);
+                    const mins = Math.round(totalMs / 60000);
+                    parts.push("今日总亮屏 " + mins + " 分钟");
+                    const topParts: string[] = [];
+                    for (let i = 0; i < Math.min(5, u.usages.length); i++) {
+                        const it = u.usages[i];
+                        const short = it.pkg.substring(it.pkg.lastIndexOf(".") + 1);
+                        topParts.push(short + " " + Math.round(it.totalTimeMs / 60000) + "分");
+                    }
+                    const top = topParts.join("、");
+                    if (top) parts.push("TOP5：" + top);
+                }
+            } catch { /* usage 失败不阻断主快照 */ }
+        }
+        return { name: "查岗", success: true, data: parts.join("；") };
     } catch {
         return { name: "查岗", success: false, error: "查岗失败" };
     }

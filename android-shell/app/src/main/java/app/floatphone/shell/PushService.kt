@@ -320,6 +320,8 @@ class PushService : Service() {
             .setAutoCancel(true)
             .setContentIntent(contentIntent())
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .build()
         getSystemService(NotificationManager::class.java).notify(notifId++, notification)
         if (notifId > 400) notifId = 100

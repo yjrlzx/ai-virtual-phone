@@ -554,6 +554,21 @@ class MainActivity : AppCompatActivity() {
                 .toString()
         }.getOrElse { errJson(it.message) }
 
+        /** 定闹钟：交给系统闹钟 App（AlarmClock.ACTION_SET_ALARM，跳过 UI 直接设好）。 */
+        @JavascriptInterface
+        fun setAlarm(hour: Int, minute: Int, message: String): String = runCatching {
+            val h = hour.coerceIn(0, 23)
+            val m = minute.coerceIn(0, 59)
+            val intent = android.content.Intent(android.app.AlarmClock.ACTION_SET_ALARM)
+                .putExtra(android.app.AlarmClock.EXTRA_HOUR, h)
+                .putExtra(android.app.AlarmClock.EXTRA_MINUTES, m)
+                .putExtra(android.app.AlarmClock.EXTRA_MESSAGE, message)
+                .putExtra(android.app.AlarmClock.EXTRA_SKIP_UI, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            org.json.JSONObject().put("ok", true).put("at", "$h:${"%02d".format(m)}").toString()
+        }.getOrElse { errJson(it.message) }
+
         /** 开关悬浮球（悬浮球双击速聊）。 */
         @JavascriptInterface
         fun setFloating(enabled: Boolean) {
