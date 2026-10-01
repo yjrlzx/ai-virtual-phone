@@ -76,7 +76,6 @@ const MDI_PATHS: Record<IconId, string> = {
   characters: mdiAccount,
   dwelling: mdiHome,
   huaweibridge: mdiCellphone,
-  huaweipeek: mdiEye,
   lifeline: mdiNotebookOutline,
 };
 
