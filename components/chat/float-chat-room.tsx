@@ -41,6 +41,12 @@ export function FloatChatRoom() {
         if (cancelled) return;
         sessionRef.current = session;
         setMessages(loadChatMessages(session.id, 60));
+        // 上报角色名给壳端标题栏
+        try {
+          const w = window as any;
+          if (w.FloatShell?.setTitle) w.FloatShell.setTitle("陆知行");
+          if (w.FloatShell?.setAvatar) w.FloatShell.setAvatar("/avatar-luzhixing.png");
+        } catch { /* ignore */ }
         setReady(true);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "初始化失败");

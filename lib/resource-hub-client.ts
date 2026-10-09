@@ -111,11 +111,13 @@ function buildMirrorUrls(source: ResourceHubSource, path: string): string[] {
     const { owner, repo } = source;
     const ref = effectiveRef(source);
     const clean = encodePath(path);
-    return [
+    const direct = [
         `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${clean}`,
         `https://fastly.jsdelivr.net/gh/${owner}/${repo}@${ref}/${clean}`,
         `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${clean}`,
     ];
+    // 手机 WebView 直接访问 GitHub 常被拦，先走服务器代理
+    return direct.map(u => `/api/resource-proxy?url=${encodeURIComponent(u)}`).concat(direct);
 }
 
 async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
