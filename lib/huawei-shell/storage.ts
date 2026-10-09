@@ -14,6 +14,12 @@ import { getInstalledCustomApp, readCustomAppCollection, writeCustomAppCollectio
 const HUAWEI_SHELL_SETTINGS_KEY = "ai_phone_huawei_shell_settings_v1";
 registerKvMigration(HUAWEI_SHELL_SETTINGS_KEY);
 
+/** 联动规则专用云端 key（/api/kv/* → 服务端 SQLite）。
+ *  从设置大 blob 里拆出来独立存，手机端与网页端共享同一份；
+ *  旧版规则内嵌在 settings.triggerRules 里，首次读取时自动并入此 key。 */
+const HUAWEI_TRIGGER_RULES_KEY = "huawei_bridge_rules_v1";
+registerKvMigration(HUAWEI_TRIGGER_RULES_KEY);
+
 /** 华为记账账本：自动记账（通知解析）写入「记账应用」同一存储（collection ledger / key records），
  *  查看记账也从这里读 —— 角色工具与记账应用共用一份数据，不存在两个记账入口。 */
 
@@ -587,8 +593,18 @@ export function saveHuaweiCustomActions(actions: HuaweiCustomAction[]): void {
 /* ---------- 自动联动规则（通知 / 定时触发动作） ---------- */
 
 const HUAWEI_TRIGGER_TYPES = new Set(["notification", "time"]);
-const HUAWEI_RULE_ACTIONS = new Set(["send_notification", "open_app", "custom_action"]);
+const HUAWEI_RULE_ACTIONS = new Set([
+    "send_notification", "open_app", "custom_action",
+    "chat", "memory", "timeline", "calendar", "card", "shortcut",
+]);
 const HUAWEI_WEEKDAYS = new Set(["sun", "mon", "tue", "wed", "thu", "fri", "sat"]);
+
+function normalizeChatRole(value: unknown): HuaweiTriggerRule["chatRole"] {
+    return value === "assistant" || value === "system" ? value : "user";
+}
+function normalizeChatHistoryRole(value: unknown, fallback: HuaweiTriggerRule["chatRole"]): HuaweiTriggerRule["chatRole"] | undefined {
+    return value === "user" || value === "assistant" || value === "system" ? value : fallback;
+}
 
 function normalizeTriggerRules(raw: unknown): HuaweiTriggerRule[] {
     if (!Array.isArray(raw)) return [];
@@ -603,6 +619,10 @@ function normalizeTriggerRules(raw: unknown): HuaweiTriggerRule[] {
         const days = Array.isArray(r.days)
             ? (r.days as unknown[]).filter((d): d is string => typeof d === "string" && HUAWEI_WEEKDAYS.has(d)).slice(0, 7)
             : [];
+        const action = typeof r.action === "string" && HUAWEI_RULE_ACTIONS.has(r.action) ? r.action as HuaweiTriggerRule["action"] : "send_notification";
+        const processMode: HuaweiTriggerRule["processMode"] =
+            r.processMode === "template" ? "template" : r.processMode === "ai" ? "ai" : undefined;
+        const chatRole = normalizeChatRole(r.chatRole);
         list.push({
             id: String(r.id ?? `rule_${Date.now().toString(36)}_${list.length}`),
             name,
@@ -612,16 +632,30 @@ function normalizeTriggerRules(raw: unknown): HuaweiTriggerRule[] {
             notifyKeyword: typeof r.notifyKeyword === "string" ? r.notifyKeyword.trim().slice(0, 100) : undefined,
             time: typeof r.time === "string" && /^\d{2}:\d{2}$/.test(r.time.trim()) ? r.time.trim() : undefined,
             days,
-            action: typeof r.action === "string" && HUAWEI_RULE_ACTIONS.has(r.action) ? r.action as HuaweiTriggerRule["action"] : "send_notification",
+            action,
             title: typeof r.title === "string" ? r.title.trim().slice(0, 100) : undefined,
             content: typeof r.content === "string" ? r.content.trim().slice(0, 500) : undefined,
             openApp: typeof r.openApp === "string" ? r.openApp.trim().slice(0, 200) : undefined,
             actionPackageName: typeof r.actionPackageName === "string" ? r.actionPackageName.trim().slice(0, 200) : undefined,
             actionName: typeof r.actionName === "string" ? r.actionName.trim().slice(0, 100) : undefined,
-            processMode: r.processMode === "template" ? "template" : undefined,
+            processMode,
             contentTemplate: typeof r.contentTemplate === "string" && r.contentTemplate.trim()
-                ? r.contentTemplate.trim().slice(0, 500)
+                ? r.contentTemplate.trim().slice(0, 1000)
                 : undefined,
+            aiPrompt: typeof r.aiPrompt === "string" && r.aiPrompt.trim() ? r.aiPrompt.trim().slice(0, 2000) : undefined,
+            chatCharacterId: typeof r.chatCharacterId === "string" ? r.chatCharacterId.trim().slice(0, 80) : undefined,
+            chatRole,
+            chatHistoryRole: normalizeChatHistoryRole(r.chatHistoryRole, chatRole),
+            chatRequestReply: r.chatRequestReply === true,
+            memoryCharacterId: typeof r.memoryCharacterId === "string" ? r.memoryCharacterId.trim().slice(0, 80) : undefined,
+            memoryScope: r.memoryScope === "core" ? "core" : "long_term",
+            timelineCharacterId: typeof r.timelineCharacterId === "string" ? r.timelineCharacterId.trim().slice(0, 80) : undefined,
+            calendarStartTime: typeof r.calendarStartTime === "string" && /^\d{2}:\d{2}$/.test(r.calendarStartTime.trim()) ? r.calendarStartTime.trim() : undefined,
+            calendarEndTime: typeof r.calendarEndTime === "string" && /^\d{2}:\d{2}$/.test(r.calendarEndTime.trim()) ? r.calendarEndTime.trim() : undefined,
+            calendarDirection: r.calendarDirection === "past" || r.calendarDirection === "future" ? r.calendarDirection : undefined,
+            calendarDurationMinutes: Number.isFinite(Number(r.calendarDurationMinutes)) ? clampInt(r.calendarDurationMinutes, 5, 720, 30) : undefined,
+            cardCharacterId: typeof r.cardCharacterId === "string" ? r.cardCharacterId.trim().slice(0, 80) : undefined,
+            shortcutActionId: typeof r.shortcutActionId === "string" ? r.shortcutActionId.trim().slice(0, 80) : undefined,
             lastTriggeredAt: Number(r.lastTriggeredAt) || undefined,
             lastSeenTs: Number(r.lastSeenTs) || undefined,
             triggerCount: Number(r.triggerCount) || undefined,
@@ -631,16 +665,29 @@ function normalizeTriggerRules(raw: unknown): HuaweiTriggerRule[] {
     return list;
 }
 
-/** 读自动联动规则。 */
+/** 读自动联动规则（云端 kv，手机/网页共享）。
+ *  首次从旧版 settings.triggerRules 并入专用 key，之后专用 key 为唯一真源。 */
 export function loadHuaweiTriggerRules(): HuaweiTriggerRule[] {
-    return loadHuaweiShellSettings().triggerRules;
+    try {
+        const raw = kvGet(HUAWEI_TRIGGER_RULES_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw) as unknown;
+            if (Array.isArray(parsed)) return normalizeTriggerRules(parsed);
+        }
+    } catch { /* 坏数据回落迁移 */ }
+    // 迁移：旧版规则嵌在设置大 blob 里
+    const legacy = loadHuaweiShellSettings().triggerRules;
+    if (legacy.length > 0) {
+        kvSet(HUAWEI_TRIGGER_RULES_KEY, JSON.stringify(legacy));
+        return legacy;
+    }
+    return [];
 }
 
-/** 保存自动联动规则（会保留其它设置字段）。 */
+/** 保存自动联动规则（写云端专用 key，保留其它设置字段）。 */
 export function saveHuaweiTriggerRules(rules: HuaweiTriggerRule[]): void {
-    const settings = loadHuaweiShellSettings();
-    settings.triggerRules = normalizeTriggerRules(rules);
-    saveHuaweiShellSettings(settings);
+    const normalized = normalizeTriggerRules(rules);
+    kvSet(HUAWEI_TRIGGER_RULES_KEY, JSON.stringify(normalized.slice(0, 30)));
 }
 
 /** 联动规则检查间隔（秒），供调度器读取。 */

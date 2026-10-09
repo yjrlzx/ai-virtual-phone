@@ -198,8 +198,17 @@ export type HuaweiBridgeEvent = {
 
 /** 自动联动规则触发方式 */
 export type HuaweiTriggerRuleTrigger = "notification" | "time";
-/** 联动规则执行的动作 */
-export type HuaweiTriggerRuleAction = "send_notification" | "open_app" | "custom_action";
+/** 联动规则执行的动作（与 iOS 现实桥 BridgeRuleActions 对齐的完整动作集） */
+export type HuaweiTriggerRuleAction =
+    | "send_notification" | "open_app" | "custom_action"
+    | "chat" | "memory" | "timeline" | "calendar" | "card" | "shortcut";
+
+/** chat 动作写进聊天时的显示身份（与 iOS 桥一致） */
+export type HuaweiChatRole = "user" | "assistant" | "system";
+/** memory 动作写入角色记忆的分区 */
+export type HuaweiMemoryScope = "long_term" | "core";
+/** calendar 动作铺时段方向（以触发时刻为锚点） */
+export type HuaweiCalendarDirection = "past" | "future";
 
 export type HuaweiTriggerRule = {
     id: string;
@@ -225,10 +234,40 @@ export type HuaweiTriggerRule = {
     actionPackageName?: string;
     /** custom_action 动作参数：用户登记的自定义动作名 */
     actionName?: string;
-    /** 通知命中后的内容加工方式：raw=按固定文案发送，template=把命中通知文本填进 {payload} 占位 */
-    processMode?: "raw" | "template";
+    /** 通知命中后的内容加工方式：raw=按固定文案/通知原文发送，template=把命中通知文本填进 {payload} 占位，ai=用提示词走 LLM 加工 */
+    processMode?: "raw" | "template" | "ai";
     /** template 模式下发送的正文模板，{payload}/{title}/{text} 会被替换成命中通知内容 */
     contentTemplate?: string;
+    /** ai 模式下的加工提示词，{payload}/{title}/{text} 占位先替换，再把结果连同数据一起交给 LLM */
+    aiPrompt?: string;
+
+    /* ---------- chat 动作：写进与某角色的聊天 ---------- */
+    chatCharacterId?: string;
+    chatRole?: HuaweiChatRole;
+    /** 记忆里算谁说的；缺省跟随 chatRole */
+    chatHistoryRole?: HuaweiChatRole;
+    /** 写进聊天后是否请求角色回应 */
+    chatRequestReply?: boolean;
+
+    /* ---------- memory 动作：写入角色记忆 ---------- */
+    memoryCharacterId?: string;
+    memoryScope?: HuaweiMemoryScope;
+
+    /* ---------- timeline 动作：写入角色时间线 ---------- */
+    timelineCharacterId?: string;
+
+    /* ---------- calendar 动作：写入用户日历（今天） ---------- */
+    calendarStartTime?: string;
+    calendarEndTime?: string;
+    calendarDirection?: HuaweiCalendarDirection;
+    calendarDurationMinutes?: number;
+
+    /* ---------- card 动作：以卡片发进聊天 ---------- */
+    cardCharacterId?: string;
+
+    /* ---------- shortcut 动作：执行已配置的现实桥快捷动作 ---------- */
+    shortcutActionId?: string;
+
     /** 上次触发时间（防抖） */
     lastTriggeredAt?: number;
     /** 通知类规则：已处理的最大通知时间戳 */

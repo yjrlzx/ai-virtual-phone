@@ -32,6 +32,9 @@ export type PushMessage = {
   type?: "shortcut_command";
   commandId?: string;
   ttl?: number;
+  // 聊天回复推送：安卓壳凭 sessionId/characterName 深链回对应会话
+  sessionId?: string;
+  characterName?: string;
 };
 
 export type PushSendResult = {
@@ -150,6 +153,8 @@ export async function sendPushToUser(
       title: message.title,
       body: message.body,
       url: navigate,
+      sessionId: message.sessionId,
+      characterName: message.characterName,
     });
     if (ok) result.sent += shellSubs.length;
     else result.errors.push("shell not connected");

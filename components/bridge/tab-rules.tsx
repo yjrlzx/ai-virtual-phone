@@ -15,15 +15,18 @@ import {
 import { ALIPAY_PACKAGE, WECHAT_PACKAGE } from "@/lib/huawei-shell/types";
 import type {
   HuaweiTriggerRule, HuaweiTriggerRuleAction, HuaweiTriggerRuleTrigger,
+  HuaweiChatRole, HuaweiMemoryScope, HuaweiCalendarDirection,
 } from "@/lib/huawei-shell/types";
+import { loadCharacters } from "@/lib/character-storage";
+import { loadBridgeShortcutActions } from "@/lib/reality-bridge/storage";
 
 /**
  * 自动联动 Tab：联动规则列表 + 6 步新建/编辑向导。
- * 规则数据全部来自 loadHuaweiTriggerRules()，运行时状态来自 window.AndroidShell，
- * 不写死演示数据；动作执行复用 rules.ts 的语义，这里只做增删改查 UI。
+ * 规则数据全部来自 loadHuaweiTriggerRules()（云端 kv，手机/网页共享），
+ * 动作集与 iOS 现实桥对齐：chat/memory/timeline/calendar/card/shortcut。
  */
 
-const WIZ_STEP_NAMES = ["接通管道", "创建快捷指令", "选择信号", "加工内容", "决定动作", "测试与保存"] as const;
+const WIZ_STEP_NAMES = ["接通管道", "选择动作", "选择信号", "加工内容", "动作参数", "测试与保存"] as const;
 
 const WEEKDAYS = [
   { key: "sun", label: "日" }, { key: "mon", label: "一" }, { key: "tue", label: "二" },
@@ -40,6 +43,19 @@ const QUICK_PKGS = [
   { pkg: ALIPAY_PACKAGE, label: "支付宝" },
   { pkg: "payment", label: "支付到账" },
 ] as const;
+
+/** 动作类型选项（与 HuaweiTriggerRuleAction 对齐） */
+const ACTION_OPTIONS: Array<{ v: HuaweiTriggerRuleAction; t: string; d: string }> = [
+  { v: "send_notification", t: "发通知", d: "在手机通知栏弹一条提醒" },
+  { v: "open_app", t: "打开应用", d: "自动跳到指定 App" },
+  { v: "custom_action", t: "自定义动作", d: "调用你登记过的动作" },
+  { v: "chat", t: "写进聊天", d: "把信号写进与某角色的对话，可选让 TA 回复" },
+  { v: "memory", t: "写入记忆", d: "存进角色长期/核心记忆" },
+  { v: "timeline", t: "写入时间线", d: "记到角色的时间线里" },
+  { v: "calendar", t: "写入日历", d: "在今天用户日历里加一条" },
+  { v: "card", t: "发送卡片", d: "以卡片形式发进聊天" },
+  { v: "shortcut", t: "快捷动作", d: "执行已配置的现实桥快捷指令" },
+];
 
 const chipBase: CSSProperties = {
   border: "none",
@@ -70,8 +86,27 @@ type Draft = {
   openApp: string;
   actionPackageName: string;
   actionName: string;
-  processMode: "raw" | "template";
+  processMode: "raw" | "template" | "ai";
   contentTemplate: string;
+  aiPrompt: string;
+  /* chat */
+  chatCharacterId: string;
+  chatRole: HuaweiChatRole;
+  chatRequestReply: boolean;
+  /* memory */
+  memoryCharacterId: string;
+  memoryScope: HuaweiMemoryScope;
+  /* timeline */
+  timelineCharacterId: string;
+  /* calendar */
+  calendarStartTime: string;
+  calendarEndTime: string;
+  calendarDirection: "" | HuaweiCalendarDirection;
+  calendarDurationMinutes: string;
+  /* card */
+  cardCharacterId: string;
+  /* shortcut */
+  shortcutActionId: string;
 };
 
 function blankDraft(): Draft {
@@ -92,6 +127,19 @@ function blankDraft(): Draft {
     actionName: "",
     processMode: "raw",
     contentTemplate: "",
+    aiPrompt: "",
+    chatCharacterId: "",
+    chatRole: "user",
+    chatRequestReply: false,
+    memoryCharacterId: "",
+    memoryScope: "long_term",
+    timelineCharacterId: "",
+    calendarStartTime: "09:00",
+    calendarEndTime: "10:00",
+    calendarDirection: "",
+    calendarDurationMinutes: "30",
+    cardCharacterId: "",
+    shortcutActionId: "",
   };
 }
 
@@ -111,27 +159,48 @@ function draftFromRule(r: HuaweiTriggerRule): Draft {
     openApp: r.openApp ?? "",
     actionPackageName: r.actionPackageName ?? "",
     actionName: r.actionName ?? "",
-    processMode: r.processMode === "template" ? "template" : "raw",
+    processMode: r.processMode === "template" ? "template" : r.processMode === "ai" ? "ai" : "raw",
     contentTemplate: r.contentTemplate ?? "",
+    aiPrompt: r.aiPrompt ?? "",
+    chatCharacterId: r.chatCharacterId ?? "",
+    chatRole: r.chatRole ?? "user",
+    chatRequestReply: r.chatRequestReply === true,
+    memoryCharacterId: r.memoryCharacterId ?? "",
+    memoryScope: r.memoryScope === "core" ? "core" : "long_term",
+    timelineCharacterId: r.timelineCharacterId ?? "",
+    calendarStartTime: r.calendarStartTime ?? "09:00",
+    calendarEndTime: r.calendarEndTime ?? "10:00",
+    calendarDirection: r.calendarDirection ?? "",
+    calendarDurationMinutes: String(r.calendarDurationMinutes ?? 30),
+    cardCharacterId: r.cardCharacterId ?? "",
+    shortcutActionId: r.shortcutActionId ?? "",
   };
 }
 
 function actionLabel(a: HuaweiTriggerRuleAction): string {
-  return a === "send_notification" ? "发通知" : a === "open_app" ? "打开应用" : "自定义动作";
+  return ACTION_OPTIONS.find(o => o.v === a)?.t ?? a;
 }
 
 /** 一行摘要：触发条件 → 动作 */
-function summarize(r: Pick<HuaweiTriggerRule, "trigger" | "notifyPkg" | "notifyKeyword" | "time" | "days" | "action" | "title" | "actionPackageName" | "actionName">): string {
+function summarize(r: HuaweiTriggerRule): string {
   const trig = r.trigger === "time"
     ? `定时 ${r.time || "--:--"}${r.days && r.days.length > 0
       ? `（${r.days.map(d => WEEKDAYS.find(w => w.key === d)?.label ?? d).join("/")}）`
       : "（每天）"}`
     : `通知来自 ${r.notifyPkg || "任意来源"}${r.notifyKeyword ? `，含「${r.notifyKeyword}」` : ""}`;
-  const act = r.action === "send_notification"
-    ? `发通知「${r.title || ""}」`
-    : r.action === "open_app"
-      ? `打开应用 ${r.actionPackageName || ""}`
-      : `调用自定义动作 ${r.actionName || ""}`;
+  let act: string;
+  switch (r.action) {
+    case "send_notification": act = `发通知「${r.title || ""}」`; break;
+    case "open_app": act = `打开应用 ${r.actionPackageName || ""}`; break;
+    case "custom_action": act = `调用自定义动作 ${r.actionName || ""}`; break;
+    case "chat": act = `写进聊天（${r.chatCharacterId || "?"}${r.chatRequestReply ? "，请求回复" : ""}）`; break;
+    case "memory": act = `写入记忆（${r.memoryCharacterId || "?"}/${r.memoryScope === "core" ? "核心" : "长期"}）`; break;
+    case "timeline": act = `写入时间线（${r.timelineCharacterId || "?"}）`; break;
+    case "calendar": act = `写入日历（${r.calendarDirection === "past" ? `过去${r.calendarDurationMinutes ?? 30}分` : r.calendarDirection === "future" ? `未来${r.calendarDurationMinutes ?? 30}分` : `${r.calendarStartTime ?? ""}-${r.calendarEndTime ?? ""}`}）`; break;
+    case "card": act = `发送卡片（${r.cardCharacterId || "?"}）`; break;
+    case "shortcut": act = `快捷动作 ${r.shortcutActionId || "?"}`; break;
+    default: act = r.action;
+  }
   return `${trig} → ${act}`;
 }
 
@@ -166,7 +235,21 @@ function readPipeStatus(): PipeStatus | null {
   }
 }
 
-/* ---------------- 向导主体（受控外壳，与 WizardShell 同视觉） ---------------- */
+/* ---------------- 角色选择器 ---------------- */
+
+function CharacterSelect({ value, onChange, placeholder }: { value: string; onChange: (id: string) => void; placeholder?: string }) {
+  const chars = loadCharacters();
+  return (
+    <select style={INPUT} value={value} onChange={e => onChange(e.target.value)}>
+      <option value="">{placeholder || "选择角色…"}</option>
+      {chars.map(c => (
+        <option key={c.id} value={c.id}>{c.name}</option>
+      ))}
+    </select>
+  );
+}
+
+/* ---------------- 向导主体 ---------------- */
 
 function RuleWizard({
   initial,
@@ -196,6 +279,9 @@ function RuleWizard({
   }, []);
 
   const customActions = loadHuaweiCustomActions();
+  const shortcutActions = loadBridgeShortcutActions();
+  /** 网页侧动作（写云端共享存储，不需要安卓壳） */
+  const isWebAction = ["chat", "memory", "timeline", "calendar", "card", "shortcut"].includes(draft.action);
 
   /* 各步必填校验；返回 null 表示可下一步 */
   function blocker(): string | null {
@@ -203,15 +289,22 @@ function RuleWizard({
     if (step === 3 && draft.trigger === "time" && !/^\d{2}:\d{2}$/.test(draft.time.trim())) {
       return "请设置正确的触发时间（HH:MM）";
     }
+    if (step === 4 && draft.processMode === "ai" && !draft.aiPrompt.trim()) {
+      return "ai 加工需要填写提示词";
+    }
     if (step === 5) {
       if (draft.action === "send_notification" && (!draft.title.trim() || !draft.content.trim())) {
         return "发通知需要填写标题和正文";
       }
-      if (draft.action === "open_app" && !draft.actionPackageName.trim()) {
-        return "请填写要打开的应用包名";
-      }
-      if (draft.action === "custom_action" && !draft.actionName.trim()) {
-        return "请选择一个已登记的自定义动作";
+      if (draft.action === "open_app" && !draft.actionPackageName.trim()) return "请填写要打开的应用包名";
+      if (draft.action === "custom_action" && !draft.actionName.trim()) return "请选择一个已登记的自定义动作";
+      if (draft.action === "chat" && !draft.chatCharacterId) return "请选择要写入的角色";
+      if (draft.action === "memory" && !draft.memoryCharacterId) return "请选择要写入记忆的角色";
+      if (draft.action === "timeline" && !draft.timelineCharacterId) return "请选择要写入时间线的角色";
+      if (draft.action === "card" && !draft.cardCharacterId) return "请选择要发送卡片的角色";
+      if (draft.action === "shortcut" && !draft.shortcutActionId) return "请选择一个已配置的快捷动作";
+      if (draft.action === "calendar" && !draft.calendarDirection && (!draft.calendarStartTime || !draft.calendarEndTime)) {
+        return "日历请选择铺时段方向或填写固定起止时间";
       }
     }
     return null;
@@ -232,6 +325,8 @@ function RuleWizard({
         s.sendNotification?.(`[测试] ${draft.title.trim() || "联动"}`, draft.content.trim() || "测试内容", draft.openApp.trim()));
     } else if (draft.action === "open_app") {
       res = runShellAction("测试打开应用", s => s.openApp?.(draft.actionPackageName.trim()));
+    } else if (isWebAction) {
+      res = { ok: true, detail: `保存后，触发时将执行「${actionLabel(draft.action)}」（网页侧动作，无需在手机上测试）` };
     } else {
       res = { ok: true, detail: `保存后将调用已登记动作「${draft.actionName.trim() || "未选择"}」` };
     }
@@ -271,7 +366,7 @@ function RuleWizard({
         <button type="button" onClick={onClose} style={{ ...BTN_GHOST, padding: "4px 12px" }}>关闭</button>
       </div>
 
-      {/* 步骤条（与 WizardShell 一致） */}
+      {/* 步骤条 */}
       <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
         {WIZ_STEP_NAMES.map((s, i) => (
           <div key={s} style={{ flex: 1, textAlign: "center" }}>
@@ -313,22 +408,18 @@ function RuleWizard({
             <button type="button" style={BTN_GHOST} onClick={refreshPipe}>刷新状态</button>
           </div>
           <div style={GUIDE_BOX}>
-            提示：通知类规则还需要「通知监听」权限；定时类规则无需 Shizuku 也能按点触发。
+            提示：通知类规则需要「通知监听」权限；定时类规则无需 Shizuku 也能按点触发。写聊天/记忆/日历等网页侧动作直接落云端，手机网页两端共享。
           </div>
         </div>
       ) : null}
 
-      {/* ---------- 第 2 步 创建快捷指令（定义动作类型） ---------- */}
+      {/* ---------- 第 2 步 选择动作 ---------- */}
       {step === 2 ? (
         <div>
           <p style={{ fontSize: 12, color: SUB, lineHeight: 1.7, margin: "0 0 8px" }}>
-            这条联动触发后要做什么？选一个动作类型，下一步再填它的参数。
+            这条联动触发后要做什么？选一个动作类型，下一步再填信号与参数。
           </p>
-          {([
-            { v: "send_notification", t: "发通知", d: "在通知栏弹一条提醒" },
-            { v: "open_app", t: "打开应用", d: "自动跳到指定 App" },
-            { v: "custom_action", t: "自定义动作", d: "调用你登记过的动作" },
-          ] as Array<{ v: HuaweiTriggerRuleAction; t: string; d: string }>).map(opt => {
+          {ACTION_OPTIONS.map(opt => {
             const on = draft.action === opt.v;
             return (
               <button key={opt.v} type="button" onClick={() => set({ action: opt.v })}
@@ -413,12 +504,13 @@ function RuleWizard({
       {step === 4 ? (
         <div>
           <p style={{ fontSize: 12, color: SUB, lineHeight: 1.7, margin: "0 0 8px" }}>
-            命中通知后，怎么组织要发出去的内容？
+            命中信号后，怎么组织要发出去/写出去的内容？
           </p>
           <div style={{ display: "flex", gap: 8 }}>
             {([
-              { v: "raw" as const, t: "原样固定文案" },
+              { v: "raw" as const, t: "原样/固定文案" },
               { v: "template" as const, t: "模板加工" },
+              { v: "ai" as const, t: "AI 加工" },
             ]).map(opt => {
               const on = draft.processMode === opt.v;
               return (
@@ -439,18 +531,33 @@ function RuleWizard({
                 onChange={e => set({ contentTemplate: e.target.value })}
               />
               <div style={GUIDE_BOX}>
-                {`{payload} 会替换成命中通知的标题与正文`}；{`{title}`} 仅标题、{`{text}`} 仅正文。定时触发没有通知内容，占位会替换为空。
+                {`{payload} 替换成命中通知的标题与正文`}；{`{title}`} 仅标题、{`{text}`} 仅正文。定时触发没有通知内容，占位替换为空。
               </div>
             </>
-          ) : (
+          ) : null}
+          {draft.processMode === "ai" ? (
+            <>
+              <label style={fieldLabel}>加工提示词（{`{payload}`}/{`{title}`}/{`{text}`} 占位先替换）</label>
+              <textarea
+                style={{ ...INPUT, minHeight: 96, resize: "vertical", fontFamily: "inherit" }}
+                placeholder="如 把下面的支付通知改写成一句关心我的话，口语化，不超过 30 字："
+                value={draft.aiPrompt}
+                onChange={e => set({ aiPrompt: e.target.value })}
+              />
+              <div style={GUIDE_BOX}>
+                用配置好的辅助 API（记忆总结同一通道）跑一次 LLM，只输出加工结果。通知原文会附在提示词后交给模型。
+              </div>
+            </>
+          ) : null}
+          {draft.processMode === "raw" ? (
             <div style={GUIDE_BOX}>
-              按下一步填好的固定标题与正文发送，不引用通知里的内容。定时触发走这种方式。
+              通知触发：直接把通知原文写出去/发出去；定时触发或原文为空时，用下一步填的固定文案。
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
 
-      {/* ---------- 第 5 步 决定动作（按动作类型填参数） ---------- */}
+      {/* ---------- 第 5 步 动作参数 ---------- */}
       {step === 5 ? (
         <div>
           {draft.action === "send_notification" ? (
@@ -459,15 +566,11 @@ function RuleWizard({
               <input style={INPUT} value={draft.title} onChange={e => set({ title: e.target.value })} placeholder="如 该喝水了" />
               <label style={fieldLabel}>通知正文{draft.processMode === "template" ? "（兜底固定文案，模板未命中占位时使用）" : ""}</label>
               <input style={INPUT} value={draft.content} onChange={e => set({ content: e.target.value })} placeholder="如 定时提醒" />
-              {draft.processMode === "template" ? (
-                <div style={{ ...GUIDE_BOX, marginTop: 8 }}>
-                  当前为模板加工：实际发送的正文来自第 4 步模板，这里的固定文案只作兜底。
-                </div>
-              ) : null}
               <label style={fieldLabel}>点击通知打开的包名（可空）</label>
               <input style={INPUT} value={draft.openApp} onChange={e => set({ openApp: e.target.value })} placeholder="如 com.tencent.mm" />
             </>
           ) : null}
+
           {draft.action === "open_app" ? (
             <>
               <label style={fieldLabel}>要打开的应用包名</label>
@@ -475,6 +578,7 @@ function RuleWizard({
                 placeholder="如 com.tencent.mm" />
             </>
           ) : null}
+
           {draft.action === "custom_action" ? (
             <>
               <label style={fieldLabel}>选择已登记的自定义动作</label>
@@ -490,6 +594,106 @@ function RuleWizard({
               )}
             </>
           ) : null}
+
+          {/* 网页侧动作共享：固定/兜底文案（shortcut/calendar 不需要） */}
+          {isWebAction && draft.action !== "shortcut" && draft.action !== "calendar" ? (
+            <>
+              <label style={fieldLabel}>固定文案（定时触发 / 通知原文为空时使用，可空）</label>
+              <input style={INPUT} value={draft.content} onChange={e => set({ content: e.target.value })}
+                placeholder="如 该睡觉了，放下手机吧" />
+            </>
+          ) : null}
+
+          {draft.action === "chat" ? (
+            <>
+              <label style={fieldLabel}>写入哪个角色的聊天</label>
+              <CharacterSelect value={draft.chatCharacterId} onChange={id => set({ chatCharacterId: id })} />
+              <label style={fieldLabel}>消息显示身份</label>
+              <select style={INPUT} value={draft.chatRole} onChange={e => set({ chatRole: e.target.value as HuaweiChatRole })}>
+                <option value="user">我（用户）说</option>
+                <option value="assistant">角色说</option>
+                <option value="system">旁白 / 系统</option>
+              </select>
+              <label style={{ ...fieldLabel, display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={draft.chatRequestReply}
+                  onChange={e => set({ chatRequestReply: e.target.checked })} />
+                写进聊天后请求角色回应（身份为「角色说」时不触发）
+              </label>
+            </>
+          ) : null}
+
+          {draft.action === "memory" ? (
+            <>
+              <label style={fieldLabel}>写入哪个角色的记忆</label>
+              <CharacterSelect value={draft.memoryCharacterId} onChange={id => set({ memoryCharacterId: id })} />
+              <label style={fieldLabel}>记忆分区</label>
+              <select style={INPUT} value={draft.memoryScope} onChange={e => set({ memoryScope: e.target.value as HuaweiMemoryScope })}>
+                <option value="long_term">长期记忆</option>
+                <option value="core">核心记忆</option>
+              </select>
+            </>
+          ) : null}
+
+          {draft.action === "timeline" ? (
+            <>
+              <label style={fieldLabel}>写入哪个角色的时间线</label>
+              <CharacterSelect value={draft.timelineCharacterId} onChange={id => set({ timelineCharacterId: id })} />
+            </>
+          ) : null}
+
+          {draft.action === "card" ? (
+            <>
+              <label style={fieldLabel}>以卡片发给哪个角色</label>
+              <CharacterSelect value={draft.cardCharacterId} onChange={id => set({ cardCharacterId: id })} />
+            </>
+          ) : null}
+
+          {draft.action === "calendar" ? (
+            <>
+              <label style={fieldLabel}>铺时段方式</label>
+              <select style={INPUT} value={draft.calendarDirection}
+                onChange={e => set({ calendarDirection: e.target.value as "" | HuaweiCalendarDirection })}>
+                <option value="">固定起止时间</option>
+                <option value="past">向前铺（记录刚过去的这段时间）</option>
+                <option value="future">向后铺（记录接下来的这段时间）</option>
+              </select>
+              {draft.calendarDirection ? (
+                <>
+                  <label style={fieldLabel}>时长（分钟）</label>
+                  <input style={{ ...INPUT, maxWidth: 160 }} value={draft.calendarDurationMinutes}
+                    onChange={e => set({ calendarDurationMinutes: e.target.value.replace(/[^\d]/g, "") })} placeholder="如 30" />
+                </>
+              ) : (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={fieldLabel}>开始时间</label>
+                    <input style={INPUT} value={draft.calendarStartTime} onChange={e => set({ calendarStartTime: e.target.value })} placeholder="HH:MM" />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={fieldLabel}>结束时间</label>
+                    <input style={INPUT} value={draft.calendarEndTime} onChange={e => set({ calendarEndTime: e.target.value })} placeholder="HH:MM" />
+                  </div>
+                </div>
+              )}
+              <div style={GUIDE_BOX}>日历条目写在今天，标题=加工后的内容。</div>
+            </>
+          ) : null}
+
+          {draft.action === "shortcut" ? (
+            <>
+              <label style={fieldLabel}>选择已配置的现实桥快捷动作</label>
+              {shortcutActions.length === 0 ? (
+                <div style={GUIDE_BOX}>还没有已配置的快捷动作，可先在现实桥「快捷动作」里登记一个。</div>
+              ) : (
+                <select style={INPUT} value={draft.shortcutActionId} onChange={e => set({ shortcutActionId: e.target.value })}>
+                  <option value="">请选择…</option>
+                  {shortcutActions.filter(a => a.enabled).map(a => (
+                    <option key={a.id} value={a.id}>{a.name}（{a.shortcutName}）</option>
+                  ))}
+                </select>
+              )}
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -498,7 +702,7 @@ function RuleWizard({
         <div>
           <div style={{ ...CARD, boxShadow: "none", background: "rgba(106,176,243,.08)", padding: "10px 12px" }}>
             <b style={{ fontSize: 13, color: INK }}>{draft.name.trim() || "未命名联动"}</b>
-            <div style={{ fontSize: 12, color: SUB, marginTop: 4, lineHeight: 1.6 }}>{summarize(draft)}</div>
+            <div style={{ fontSize: 12, color: SUB, marginTop: 4, lineHeight: 1.6 }}>{summarize(buildSummaryRule(draft))}</div>
           </div>
 
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -542,6 +746,26 @@ function RuleWizard({
       </div>
     </div>
   );
+}
+
+/** 把草稿拼成 summarize 需要的最小形状（避免手写一长串字段） */
+function buildSummaryRule(d: Draft): HuaweiTriggerRule {
+  return {
+    id: d.id, name: d.name, enabled: d.enabled, trigger: d.trigger,
+    notifyPkg: d.notifyPkg || undefined, notifyKeyword: d.notifyKeyword || undefined,
+    time: d.time || undefined, days: d.days, action: d.action,
+    title: d.title || undefined, content: d.content || undefined, openApp: d.openApp || undefined,
+    actionPackageName: d.actionPackageName || undefined, actionName: d.actionName || undefined,
+    processMode: d.processMode === "raw" ? undefined : d.processMode,
+    contentTemplate: d.contentTemplate || undefined, aiPrompt: d.aiPrompt || undefined,
+    chatCharacterId: d.chatCharacterId || undefined, chatRole: d.chatRole, chatRequestReply: d.chatRequestReply || undefined,
+    memoryCharacterId: d.memoryCharacterId || undefined, memoryScope: d.memoryScope,
+    timelineCharacterId: d.timelineCharacterId || undefined,
+    calendarStartTime: d.calendarStartTime || undefined, calendarEndTime: d.calendarEndTime || undefined,
+    calendarDirection: d.calendarDirection || undefined,
+    calendarDurationMinutes: Number(d.calendarDurationMinutes) || undefined,
+    cardCharacterId: d.cardCharacterId || undefined, shortcutActionId: d.shortcutActionId || undefined,
+  };
 }
 
 function PipeRow({ label, ok, okText, badText }: { label: string; ok: boolean; okText: string; badText: string }) {
@@ -600,12 +824,25 @@ export function TabRules({ onNotice }: BridgeTabProps) {
       days: d.trigger === "time" ? d.days : [],
       action: d.action,
       title: d.action === "send_notification" ? d.title.trim() || undefined : undefined,
-      content: d.action === "send_notification" ? d.content.trim() || undefined : undefined,
+      content: d.content.trim() || undefined,
       openApp: d.action === "send_notification" ? d.openApp.trim() || undefined : undefined,
       actionPackageName: d.action === "open_app" ? d.actionPackageName.trim() || undefined : undefined,
       actionName: d.action === "custom_action" ? d.actionName.trim() || undefined : undefined,
-      processMode: d.processMode === "template" ? "template" : undefined,
+      processMode: d.processMode === "raw" ? undefined : d.processMode,
       contentTemplate: d.processMode === "template" ? d.contentTemplate.trim() || undefined : undefined,
+      aiPrompt: d.processMode === "ai" ? d.aiPrompt.trim() || undefined : undefined,
+      chatCharacterId: d.action === "chat" ? d.chatCharacterId || undefined : undefined,
+      chatRole: d.action === "chat" ? d.chatRole : undefined,
+      chatRequestReply: d.action === "chat" ? d.chatRequestReply : undefined,
+      memoryCharacterId: d.action === "memory" ? d.memoryCharacterId || undefined : undefined,
+      memoryScope: d.action === "memory" ? d.memoryScope : undefined,
+      timelineCharacterId: d.action === "timeline" ? d.timelineCharacterId || undefined : undefined,
+      calendarStartTime: d.action === "calendar" && !d.calendarDirection ? d.calendarStartTime || undefined : undefined,
+      calendarEndTime: d.action === "calendar" && !d.calendarDirection ? d.calendarEndTime || undefined : undefined,
+      calendarDirection: d.action === "calendar" ? d.calendarDirection || undefined : undefined,
+      calendarDurationMinutes: d.action === "calendar" && d.calendarDirection ? Number(d.calendarDurationMinutes) || undefined : undefined,
+      cardCharacterId: d.action === "card" ? d.cardCharacterId || undefined : undefined,
+      shortcutActionId: d.action === "shortcut" ? d.shortcutActionId || undefined : undefined,
       lastTriggeredAt: orig?.lastTriggeredAt,
       lastSeenTs: orig?.lastSeenTs,
       triggerCount: orig?.triggerCount,
@@ -624,13 +861,13 @@ export function TabRules({ onNotice }: BridgeTabProps) {
   const seedDefaults = () => {
     const existing = loadHuaweiTriggerRules();
     const defaults: HuaweiTriggerRule[] = [
-      { id: `seed_sleep`, name: "22:00 催睡", enabled: true, trigger: "time", time: "22:00", days: [], action: "send_notification", title: "该睡了", content: "明天5:30起，现在放下手机睡觉。", processMode: "raw" },
-      { id: `seed_wake`, name: "5:30 起床", enabled: true, trigger: "time", time: "05:30", days: [], action: "send_notification", title: "起床了", content: "开始学习，今天也要加油。", processMode: "raw" },
-      { id: `seed_study1`, name: "10:00 学习提醒", enabled: true, trigger: "time", time: "10:00", days: [], action: "send_notification", title: "学习时间", content: "休息一下，喝口水继续。", processMode: "raw" },
-      { id: `seed_study2`, name: "14:00 学习提醒", enabled: true, trigger: "time", time: "14:00", days: [], action: "send_notification", title: "下午学习", content: "下午了，效率最高的时段。", processMode: "raw" },
-      { id: `seed_study3`, name: "20:00 学习提醒", enabled: true, trigger: "time", time: "20:00", days: [], action: "send_notification", title: "晚间学习", content: "晚上是你效率最高的时候，别浪费。", processMode: "raw" },
-      { id: `seed_xhs`, name: "小红书刷太久提醒", enabled: true, trigger: "notification", notifyPkg: "com.xingin.xhs", action: "send_notification", title: "刷太久了", content: "该回去学习了。", processMode: "raw" },
-      { id: `seed_battery`, name: "低电量提醒", enabled: true, trigger: "notification", notifyKeyword: "电量", action: "send_notification", title: "该充电了", content: "手机快没电了，去充电。", processMode: "raw" },
+      { id: `seed_sleep`, name: "22:00 催睡", enabled: true, trigger: "time", time: "22:00", days: [], action: "send_notification", title: "该睡了", content: "明天5:30起，现在放下手机睡觉。" },
+      { id: `seed_wake`, name: "5:30 起床", enabled: true, trigger: "time", time: "05:30", days: [], action: "send_notification", title: "起床了", content: "开始学习，今天也要加油。" },
+      { id: `seed_study1`, name: "10:00 学习提醒", enabled: true, trigger: "time", time: "10:00", days: [], action: "send_notification", title: "学习时间", content: "休息一下，喝口水继续。" },
+      { id: `seed_study2`, name: "14:00 学习提醒", enabled: true, trigger: "time", time: "14:00", days: [], action: "send_notification", title: "下午学习", content: "下午了，效率最高的时段。" },
+      { id: `seed_study3`, name: "20:00 学习提醒", enabled: true, trigger: "time", time: "20:00", days: [], action: "send_notification", title: "晚间学习", content: "晚上是你效率最高的时候，别浪费。" },
+      { id: `seed_xhs`, name: "小红书刷太久提醒", enabled: true, trigger: "notification", notifyPkg: "com.xingin.xhs", action: "send_notification", title: "刷太久了", content: "该回去学习了。" },
+      { id: `seed_battery`, name: "低电量提醒", enabled: true, trigger: "notification", notifyKeyword: "电量", action: "send_notification", title: "该充电了", content: "手机快没电了，去充电。" },
     ];
     const merged = [...existing];
     for (const d of defaults) {
@@ -649,7 +886,7 @@ export function TabRules({ onNotice }: BridgeTabProps) {
       {rules.length === 0 && !wizOpen ? (
         <EmptyState
           title="还没有联动规则"
-          desc="当收到指定通知或到点时，自动发通知 / 打开 App，把重复操作交给手机。"
+          desc="当收到指定通知或到点时，自动发通知 / 打开 App / 写角色聊天记忆，把重复操作交给手机。"
           actionLabel="新建联动"
           onAction={openNew}
         />
@@ -662,6 +899,7 @@ export function TabRules({ onNotice }: BridgeTabProps) {
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <b style={{ fontSize: 13.5, color: INK }}>{r.name}</b>
                     <Badge tone={r.trigger === "time" ? "gray" : "amber"} text={r.trigger === "time" ? "定时" : "通知"} />
+                    {r.processMode === "ai" ? <Badge tone="gray" text="AI" /> : null}
                     {r.enabled ? null : <Badge tone="gray" text="已停用" />}
                   </div>
                   <div style={{ fontSize: 11.5, color: SUB, marginTop: 4, lineHeight: 1.6 }}>{summarize(r)}</div>

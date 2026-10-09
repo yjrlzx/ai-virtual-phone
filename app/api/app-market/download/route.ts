@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
+import { findLocalPackageById } from "@/lib/server/local-market-packages";
 import { encodeSupabaseFilter, formatSupabaseRestError, getSupabaseServerConfig, supabaseRestFetch } from "@/lib/server/supabase-rest";
 
 // 应用包下载：登录 → 校验条目 → 限频留痕 → 换发短时签名 URL。
@@ -23,7 +24,16 @@ type PackageRow = {
 export async function POST(request: Request) {
   try {
     const config = getSupabaseServerConfig();
-    if (!config) return NextResponse.json({ ok: false, error: "服务端未配置 Supabase。" }, { status: 503 });
+    if (!config) {
+      // 自托管模式：无 Supabase，免登录，从本地包目录直出文件流。
+      // 前端契约不变：POST 返回 {url}，再 fetch(url) 读 blob；真正的文件字节由
+      // GET /api/app-market/local-package 流式下发。
+      const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+      const id = String(body.id ?? "").trim();
+      const found = id ? findLocalPackageById(id) : null;
+      if (!found) return NextResponse.json({ ok: false, error: "本地未找到该应用包。" }, { status: 404 });
+      return NextResponse.json({ ok: true, url: `/api/app-market/local-package?id=${encodeURIComponent(id)}`, local: true });
+    }
     const account = await getCurrentAccount(request);
     if (!account) return NextResponse.json({ ok: false, error: "请先登录账号再下载应用包。" }, { status: 401 });
     if (account.status === "disabled") return NextResponse.json({ ok: false, error: "当前账号已被停用。" }, { status: 403 });

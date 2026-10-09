@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
+import { saveLocalPackageFile } from "@/lib/server/local-market-packages";
 import { formatSupabaseRestError, getSupabaseServerConfig } from "@/lib/server/supabase-rest";
 import type { CustomAppPackageKind } from "@/lib/custom-app-market-types";
 
@@ -32,7 +33,33 @@ function contentTypeForKind(kind: CustomAppPackageKind): string {
 export async function POST(request: Request) {
   try {
     const config = getSupabaseServerConfig();
-    if (!config) return NextResponse.json({ ok: false, error: "missing_supabase_env" }, { status: 503 });
+    if (!config) {
+      // 自托管模式：无 Supabase，免登录，应用包落盘到本地目录，下载时由
+      // GET /api/app-market/local-package 直出。
+      const formData = await request.formData();
+      const file = formData.get("file");
+      if (!(file instanceof File)) {
+        return NextResponse.json({ ok: false, error: "missing_app_package_file" }, { status: 400 });
+      }
+      const kind = detectPackageKind(file);
+      if (!kind) {
+        return NextResponse.json({ ok: false, error: "只支持 .zip、.html 应用包；旧 .floatapp 包仍可兼容导入。" }, { status: 400 });
+      }
+      if (file.size > MAX_PACKAGE_BYTES) {
+        return NextResponse.json({ ok: false, error: "应用包过大，请控制在 5MB 以内。" }, { status: 400 });
+      }
+      const buf = Buffer.from(await file.arrayBuffer());
+      const hash = createHash("sha256").update(buf).digest("hex");
+      const saved = saveLocalPackageFile(buf, file.name);
+      return NextResponse.json({
+        ok: true,
+        url: `/api/app-market/local-package?path=${encodeURIComponent(saved.fileName)}`,
+        path: saved.fileName,
+        kind: saved.kind,
+        size: saved.size,
+        hash,
+      });
+    }
     const account = await getCurrentAccount(request);
     if (!account) return NextResponse.json({ ok: false, error: "请先登录账号。" }, { status: 401 });
 

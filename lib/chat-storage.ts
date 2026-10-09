@@ -3,9 +3,10 @@
 import {
     chatDb,
     initChatDb,
-    dbPutMessage, dbDeleteMessage, dbDeleteMessagesBySession, dbDeleteMessagesByIds,
+    dbPutMessage, dbDeleteMessage, dbDeleteMessagesByIds,
     dbPutMessages, dbPutSessions, dbPutContacts, dbDeleteSession,
     dbReplaceContacts, dbReplaceSessions,
+    fetchChatCloudState, uploadChatBatch, rememberKnownChatIds,
 } from "./chat-db";
 import { resolveUserIdentity } from "./settings-storage";
 import { loadCharacters } from "./character-storage";
@@ -950,21 +951,60 @@ function refreshSessionPreviewMetadata(sessions: ChatSession[]): NormalizedList<
 }
 
 /**
- * Hydrate in-memory caches from IndexedDB. Must be awaited once at app startup
- * before any chat data is accessed. Concurrent calls share the same promise;
- * a failed attempt allows the next call to retry.
+ * Hydrate in-memory caches from the cloud SQLite (source of truth), with the
+ * browser IndexedDB kept only as an offline fallback / first-run migration source.
+ * Must be awaited once at app startup before any chat data is accessed.
+ * Concurrent calls share the same promise; a failed attempt allows retry.
+ *
+ * 首次启用云端时：云端为空但本地 IndexedDB 有数据 → 自动把本地数据上传到云端，
+ * 之后所有设备以云端为准。
  */
 export function hydrateChatStorage(): Promise<void> {
     if (_hydrated || typeof window === "undefined") return Promise.resolve();
     if (_hydratePromise) return _hydratePromise;
-    _hydratePromise = initChatDb().then(data => {
-        const normalizedToolHistory = normalizeLegacyTextToolHistory(data.messages);
+    _hydratePromise = (async () => {
+        // 1) 本地 IndexedDB（同时完成 localStorage→IDB 迁移），作为离线 fallback 与首次迁移源。
+        const local = await initChatDb();
+
+        // 2) 云端全量状态（source of truth）。拉取失败时退回本地，不阻塞启动。
+        let cloud: { messages: ChatMessage[]; sessions: ChatSession[]; contacts: ChatContact[] } =
+            { messages: [], sessions: [], contacts: [] };
+        try {
+            cloud = await fetchChatCloudState();
+        } catch (err) {
+            console.warn("[ChatStorage] cloud state fetch failed, using local fallback:", err);
+        }
+
+        const cloudCount = cloud.messages.length + cloud.sessions.length + cloud.contacts.length;
+        const localCount = local.messages.length + local.sessions.length + local.contacts.length;
+
+        let source = cloud;
+        // 首次迁移：云端空、本地有数据 → 本地为准并上传到云端。
+        if (cloudCount === 0 && localCount > 0) {
+            source = local;
+            console.log(`[ChatStorage] empty cloud, migrating local → cloud: ${local.messages.length} messages, ${local.sessions.length} sessions, ${local.contacts.length} contacts`);
+            try {
+                await uploadChatBatch({
+                    messages: local.messages,
+                    sessions: local.sessions,
+                    contacts: local.contacts,
+                });
+            } catch (err) {
+                console.warn("[ChatStorage] local→cloud migration upload failed:", err);
+            }
+        }
+
+        // 登记已知 id，避免后续 dbReplace* 误删云端数据。
+        rememberKnownChatIds({ sessions: source.sessions, contacts: source.contacts });
+
+        // 沿用既有归一化流水线处理数据源。
+        const normalizedToolHistory = normalizeLegacyTextToolHistory(source.messages);
         _messagesCache = normalizedToolHistory.items;
         if (normalizedToolHistory.changedMessages.length > 0) {
             dbPutMessages(normalizedToolHistory.changedMessages);
         }
-        let normalizedContacts = normalizeChatContacts(data.contacts);
-        const normalizedSessions = normalizeChatSessions(data.sessions);
+        let normalizedContacts = normalizeChatContacts(source.contacts);
+        const normalizedSessions = normalizeChatSessions(source.sessions);
         const redirectedMessages = redirectMessagesToPreferredSessions(normalizedSessions.redirects);
         const refreshedSessions = refreshSessionPreviewMetadata(normalizedSessions.items);
         normalizedContacts = restoreContactsForPrivateSessions(normalizedContacts.items, normalizedSessions.items);
@@ -973,7 +1013,7 @@ export function hydrateChatStorage(): Promise<void> {
         if (normalizedContacts.changed) dbReplaceContacts(normalizedContacts.items);
         if (normalizedSessions.changed || redirectedMessages > 0 || refreshedSessions.changed) dbReplaceSessions(refreshedSessions.items);
         _hydrated = true;
-    }).catch(err => {
+    })().catch(err => {
         console.warn("[ChatStorage] hydration failed, will retry on next call:", err);
         _hydratePromise = null;
     });
@@ -1569,7 +1609,8 @@ export function retractChatMessage(messageId: string) {
 export function clearChatSessionMessages(sessionId: string) {
     const deletedMessages = _messagesCache.filter(m => m.sessionId === sessionId);
     _messagesCache = _messagesCache.filter(m => m.sessionId !== sessionId);
-    dbDeleteMessagesBySession(sessionId);
+    // 按 id 删除（云端 API 只支持按 id 删；本地 IndexedDB 一并 bulkDelete）。
+    dbDeleteMessagesByIds(deletedMessages.map(m => m.id));
 
     // Update session to remove last message preview
     const sessions = loadChatSessions();
@@ -1789,11 +1830,13 @@ export async function persistMessageVoiceAudio(
     try {
         const stored = await chatDb.messages.get(messageId);
         if (stored) {
-            await chatDb.messages.put({
+            const updated = {
                 ...stored,
                 mediaUrl,
                 mediaData: { ...stored.mediaData, synthesizedFromText },
-            });
+            };
+            // 走统一写入路径（IndexedDB + 云端），避免绕过云端导致另一台设备拿不到。
+            dbPutMessage(updated);
         }
     } catch (err) {
         console.warn("[ChatDB] persist voice audio failed:", err);

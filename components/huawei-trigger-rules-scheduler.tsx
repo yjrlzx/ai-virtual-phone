@@ -6,6 +6,7 @@
 import { useEffect } from "react";
 import { checkHuaweiTriggerRules } from "@/lib/huawei-shell/rules";
 import { getHuaweiRuleCheckIntervalSec } from "@/lib/huawei-shell/storage";
+import { refreshHuaweiWechatSnapshot } from "@/lib/huawei-shell/wechat-snapshot";
 
 const FIRST_CHECK_DELAY_MS = 15_000;
 
@@ -15,11 +16,17 @@ export function HuaweiTriggerRulesScheduler() {
         let disposed = false;
         const run = () => {
             if (disposed) return;
+            // 先刷新微信上下文快照（即使没配联动规则也要跑：这是 char 看到微信内容的入口）
             try {
-                checkHuaweiTriggerRules();
+                refreshHuaweiWechatSnapshot();
             } catch {
-                // 单次检查失败不影响后续周期
+                // 单次刷新失败不影响后续周期
             }
+            if (disposed) return;
+            // checkHuaweiTriggerRules 已为 async（新动作含 LLM/聊天写入），fire-and-forget
+            void checkHuaweiTriggerRules().catch(() => {
+                // 单次检查失败不影响后续周期
+            });
             if (disposed) return;
             if (timer !== undefined) window.clearInterval(timer);
             timer = window.setInterval(run, getHuaweiRuleCheckIntervalSec() * 1000);

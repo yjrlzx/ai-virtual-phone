@@ -4,6 +4,7 @@ import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle
 import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled } from "@/lib/chat-storage";
 import { cleanStreamText, splitStreamPreviewSegments, stripLiteralTexts, stripXmlTagBlocks } from "@/lib/stream-preview";
 import type { StateValue } from "@/lib/chat-storage";
+import { notifyChatReplyBackground } from "@/lib/notify-chat-reply-client";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse, type ParsedMessagePart } from "@/lib/rich-message-parser";
 import { isKnownStickerLabel } from "@/lib/sticker-data";
@@ -3758,6 +3759,13 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         const isCurrentGeneration = () => isGenerationRunActive(session.id, generationRunId);
         const generationGuard: GenerationRunGuard = { signal: generationRun.controller.signal, isActive: isCurrentGeneration };
         let shouldRunDeclineReply = false;
+        let pendingPushReply: { charName: string; text: string } | null = null;
+        const fireBackgroundChatPush = () => {
+            if (!pendingPushReply) return;
+            const isHidden = !mountedRef.current || !isChatRoomElementVisible(wrapperRef.current);
+            if (!isHidden) return;
+            notifyChatReplyBackground({ sessionId: session.id, charName: pendingPushReply.charName, replyText: pendingPushReply.text });
+        };
         isGeneratingRef.current = true;
         setIsGenerating(true);
         setPendingGenerate(false);
@@ -3804,6 +3812,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         if (!text.trim() || !senderInfo) return;
                         const cleanedEditableText = cleanEditableAssistantText(text);
                         if (!cleanedEditableText) return;
+                        pendingPushReply = { charName: senderInfo.characterName, text: cleanedEditableText };
                         const roundReasoning = pendingGroupReasoning;
                         pendingGroupReasoning = undefined;
                         const responseBatchId = options?.responseBatchId || createResponseBatchId();
@@ -3938,6 +3947,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     throwIfGenerationStopped(generationGuard);
                 }
                 await processGroupParts(results, setMessages, generationGuard, pendingGroupReasoning, { instantReveal: isSessionStreamingEnabled(session, true) });
+                fireBackgroundChatPush();
             } else {
                 let lastSendResult: Awaited<ReturnType<typeof splitAndSaveAIMessages>> | undefined;
                 // 每轮 LLM 调用的思维链，onReasoning 先于该轮 onTextPart 触发
@@ -3970,6 +3980,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         streamAccumRef.current = "";
                         setStreamPreview(null);
                         if (text.trim()) {
+                            pendingPushReply = { charName: character?.name || "对方", text };
                             const reasoningText = pendingReasoning;
                             pendingReasoning = undefined;
                             lastSendResult = await splitAndSaveAIMessages(text, { ...options, ...generationGuard, reasoningText, instantReveal: isSessionStreamingEnabled(session, true) });
@@ -4042,6 +4053,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         handleCallTrigger(lastSendResult.triggerCall);
                     }
                     shouldRunDeclineReply = Boolean(lastSendResult.hasDecline);
+                    fireBackgroundChatPush();
                 }
             }
         } catch (error: any) {

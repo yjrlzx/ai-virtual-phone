@@ -24,6 +24,91 @@ class ChatDatabase extends Dexie {
 
 export const chatDb = new ChatDatabase();
 
+// ── Cloud sync（云端 SQLite 为准，IndexedDB 仅作本地离线 fallback）─────────────
+// 所有写操作在落 IndexedDB 的同时 fire-and-forget 推到 /api/chat/*。
+// 消息写入频繁，用 300ms 防抖合并批量提交，避免每条消息一次请求。
+
+let _cloudMsgQueue: ChatMessage[] = [];
+let _cloudMsgTimer: ReturnType<typeof setTimeout> | null = null;
+const CLOUD_MSG_FLUSH_MS = 300;
+
+// 已知 id 集合：用于 replace（全量覆盖列表）时 diff 出被删掉的 id，同步删云端。
+const _knownSessionIds = new Set<string>();
+const _knownContactIds = new Set<string>();
+
+async function cloudPost(path: string, body: unknown): Promise<void> {
+    if (typeof window === "undefined") return;
+    const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`cloud ${path} failed: ${res.status}`);
+}
+
+function flushCloudMessages(): void {
+    if (_cloudMsgTimer) { clearTimeout(_cloudMsgTimer); _cloudMsgTimer = null; }
+    if (_cloudMsgQueue.length === 0) return;
+    const batch = _cloudMsgQueue;
+    _cloudMsgQueue = [];
+    void cloudPost("/api/chat/messages", batch).catch(err =>
+        console.warn("[ChatDB] cloud messages flush failed:", err));
+}
+
+function queueCloudMessages(msgs: ChatMessage[]): void {
+    if (typeof window === "undefined" || msgs.length === 0) return;
+    for (const m of msgs) _cloudMsgQueue.push(m);
+    if (_cloudMsgTimer) return;
+    _cloudMsgTimer = setTimeout(() => {
+        _cloudMsgTimer = null;
+        flushCloudMessages();
+    }, CLOUD_MSG_FLUSH_MS);
+}
+
+/** 客户端水合用：拉取云端全量聊天状态。云端为准。 */
+export async function fetchChatCloudState(): Promise<{
+    messages: ChatMessage[];
+    sessions: ChatSession[];
+    contacts: ChatContact[];
+}> {
+    if (typeof window === "undefined") return { messages: [], sessions: [], contacts: [] };
+    const res = await fetch("/api/chat/state", { cache: "no-store" });
+    if (!res.ok) throw new Error(`chat state failed: ${res.status}`);
+    const data = await res.json() as {
+        ok?: boolean;
+        messages?: ChatMessage[];
+        sessions?: ChatSession[];
+        contacts?: ChatContact[];
+    };
+    return {
+        messages: Array.isArray(data?.messages) ? data.messages : [],
+        sessions: Array.isArray(data?.sessions) ? data.sessions : [],
+        contacts: Array.isArray(data?.contacts) ? data.contacts : [],
+    };
+}
+
+/** 首次迁移用：本地 IndexedDB 全量上传到云端。 */
+export async function uploadChatBatch(batch: {
+    messages?: ChatMessage[];
+    sessions?: ChatSession[];
+    contacts?: ChatContact[];
+}): Promise<void> {
+    if (typeof window === "undefined") return;
+    await Promise.all([
+        batch.messages && batch.messages.length ? cloudPost("/api/chat/messages", batch.messages) : Promise.resolve(),
+        batch.sessions && batch.sessions.length ? cloudPost("/api/chat/sessions", batch.sessions) : Promise.resolve(),
+        batch.contacts && batch.contacts.length ? cloudPost("/api/chat/contacts", batch.contacts) : Promise.resolve(),
+    ]);
+}
+
+/** 水合后登记已知 id，避免首次 replace 把云端数据误删。 */
+export function rememberKnownChatIds(data: { sessions?: ChatSession[]; contacts?: ChatContact[] }): void {
+    _knownSessionIds.clear();
+    _knownContactIds.clear();
+    for (const s of data.sessions ?? []) if (s.id) _knownSessionIds.add(s.id);
+    for (const c of data.contacts ?? []) if (c.id) _knownContactIds.add(c.id);
+}
+
 // ── Initialization + Migration from localStorage ──
 
 const LS_MESSAGES_KEY = "ai_phone_chat_messages_v1";
@@ -144,31 +229,44 @@ function safeParse<T>(raw: string | null): T[] {
 
 export function dbPutMessage(msg: ChatMessage): void {
     chatDb.messages.put(msg).catch(err => console.warn("[ChatDB] put message failed:", err));
+    queueCloudMessages([msg]);
 }
 
 export function dbPutMessages(msgs: ChatMessage[]): void {
     chatDb.messages.bulkPut(msgs).catch(err => console.warn("[ChatDB] bulkPut messages failed:", err));
+    queueCloudMessages(msgs);
 }
 
 export function dbDeleteMessage(id: string): void {
     chatDb.messages.delete(id).catch(err => console.warn("[ChatDB] delete message failed:", err));
+    void cloudPost("/api/chat/delete", { messages: [id] }).catch(err =>
+        console.warn("[ChatDB] cloud delete message failed:", err));
 }
 
 export function dbDeleteMessagesBySession(sessionId: string): void {
     chatDb.messages.where("sessionId").equals(sessionId).delete()
         .catch(err => console.warn("[ChatDB] delete session messages failed:", err));
+    // 按 sessionId 的云端删除由调用方在拿到具体 id 后走 dbDeleteMessagesByIds。
 }
 
 export function dbDeleteMessagesByIds(ids: string[]): void {
     chatDb.messages.bulkDelete(ids).catch(err => console.warn("[ChatDB] bulkDelete messages failed:", err));
+    if (ids.length > 0) void cloudPost("/api/chat/delete", { messages: ids }).catch(err =>
+        console.warn("[ChatDB] cloud delete messages failed:", err));
 }
 
 export function dbPutSession(session: ChatSession): void {
     chatDb.sessions.put(session).catch(err => console.warn("[ChatDB] put session failed:", err));
+    _knownSessionIds.add(session.id);
+    void cloudPost("/api/chat/sessions", [session]).catch(err =>
+        console.warn("[ChatDB] cloud put session failed:", err));
 }
 
 export function dbPutSessions(sessions: ChatSession[]): void {
     chatDb.sessions.bulkPut(sessions).catch(err => console.warn("[ChatDB] bulkPut sessions failed:", err));
+    for (const s of sessions) _knownSessionIds.add(s.id);
+    if (sessions.length > 0) void cloudPost("/api/chat/sessions", sessions).catch(err =>
+        console.warn("[ChatDB] cloud put sessions failed:", err));
 }
 
 export function dbReplaceSessions(sessions: ChatSession[]): void {
@@ -176,18 +274,38 @@ export function dbReplaceSessions(sessions: ChatSession[]): void {
         await chatDb.sessions.clear();
         await chatDb.sessions.bulkPut(sessions);
     }).catch(err => console.warn("[ChatDB] replace sessions failed:", err));
+    // 云端是 upsert 语义：diff 出本次被移除的 session id，单独发删除。
+    const incoming = new Set(sessions.map(s => s.id));
+    const removed: string[] = [];
+    for (const id of _knownSessionIds) if (!incoming.has(id)) removed.push(id);
+    _knownSessionIds.clear();
+    for (const s of sessions) _knownSessionIds.add(s.id);
+    if (removed.length > 0) void cloudPost("/api/chat/delete", { sessions: removed }).catch(err =>
+        console.warn("[ChatDB] cloud delete sessions failed:", err));
+    if (sessions.length > 0) void cloudPost("/api/chat/sessions", sessions).catch(err =>
+        console.warn("[ChatDB] cloud put sessions failed:", err));
 }
 
 export function dbDeleteSession(id: string): void {
     chatDb.sessions.delete(id).catch(err => console.warn("[ChatDB] delete session failed:", err));
+    _knownSessionIds.delete(id);
+    void cloudPost("/api/chat/delete", { sessions: [id] }).catch(err =>
+        console.warn("[ChatDB] cloud delete session failed:", err));
 }
 
 export function dbPutContacts(contacts: ChatContact[]): void {
     chatDb.contacts.bulkPut(contacts).catch(err => console.warn("[ChatDB] bulkPut contacts failed:", err));
+    for (const c of contacts) _knownContactIds.add(c.id);
+    if (contacts.length > 0) void cloudPost("/api/chat/contacts", contacts).catch(err =>
+        console.warn("[ChatDB] cloud put contacts failed:", err));
 }
 
 export function dbClearContacts(): void {
     chatDb.contacts.clear().catch(err => console.warn("[ChatDB] clear contacts failed:", err));
+    const removed = [..._knownContactIds];
+    _knownContactIds.clear();
+    if (removed.length > 0) void cloudPost("/api/chat/delete", { contacts: removed }).catch(err =>
+        console.warn("[ChatDB] cloud clear contacts failed:", err));
 }
 
 export function dbReplaceContacts(contacts: ChatContact[]): void {
@@ -195,4 +313,13 @@ export function dbReplaceContacts(contacts: ChatContact[]): void {
         await chatDb.contacts.clear();
         await chatDb.contacts.bulkPut(contacts);
     }).catch(err => console.warn("[ChatDB] replaceContacts failed:", err));
+    const incoming = new Set(contacts.map(c => c.id));
+    const removed: string[] = [];
+    for (const id of _knownContactIds) if (!incoming.has(id)) removed.push(id);
+    _knownContactIds.clear();
+    for (const c of contacts) _knownContactIds.add(c.id);
+    if (removed.length > 0) void cloudPost("/api/chat/delete", { contacts: removed }).catch(err =>
+        console.warn("[ChatDB] cloud delete contacts failed:", err));
+    if (contacts.length > 0) void cloudPost("/api/chat/contacts", contacts).catch(err =>
+        console.warn("[ChatDB] cloud put contacts failed:", err));
 }

@@ -2,12 +2,37 @@
 
 /** 华为壳自动联动规则引擎：检查通知/定时触发条件并执行动作。
  *  由 HuaweiTriggerRulesScheduler（全局常驻组件）周期调用；
- *  规则、触发条件、动作与检查间隔全部在 设置 → 华为壳 界面可配，代码不写死。 */
+ *  规则、触发条件、动作与检查间隔全部在 设置 → 华为壳 界面可配，代码不写死。
+ *  动作集与 iOS 现实桥（lib/reality-bridge/engine.ts）对齐：chat/memory/timeline/
+ *  notify/calendar/card/shortcut，加工模式 raw/template/ai。 */
 
 import { getAndroidShell, invokeShellJson, loadHuaweiCustomActions, loadHuaweiTriggerRules, saveHuaweiTriggerRules, loadHuaweiShellSettings, appendHuaweiBridgeEvent, interpolateHuaweiTemplate } from "./storage";
 import { kvGet, kvSet, registerKvMigration } from "../kv-db";
 import { ALIPAY_PACKAGE, WECHAT_PACKAGE } from "./types";
 import type { HuaweiCustomAction, HuaweiTriggerRule, HuaweiCustomActionType, HuaweiStatusKey } from "./types";
+
+/* ---------- 复用现实桥/聊天/记忆/日历等既有写入通道（不改这些模块本身） ---------- */
+import { simpleLLMCall } from "../api-helpers";
+import { loadApiConfigs, resolveAuxiliaryApiConfig, resolveUserIdentity } from "../settings-storage";
+import { loadCharacters } from "../character-storage";
+import { MacroEngine } from "../macro-engine";
+import {
+    addChatContact,
+    CHAT_REQUEST_REPLY_EVENT,
+    createOrGetSession,
+    loadChatContacts,
+    pushChatMessage,
+    type ChatMessage,
+} from "../chat-storage";
+import { cancelFollowUp, requestBackgroundChatReply } from "../follow-up-service";
+import { saveMemoryEntry } from "../memory-storage";
+import { appendCustomAppTimelineEntry } from "../custom-app-storage";
+import { upsertCalendarScheduleItem } from "../calendar-storage";
+import { getWeekStartIso } from "../calendar-utils";
+import { createShortcutCommand } from "../shortcut-command-client";
+import { loadBridgeShortcutActions } from "../reality-bridge/storage";
+
+const HUAWEI_BRIDGE_SOURCE = { id: "huawei_bridge", name: "华为现实桥" };
 
 /** OCR 手动任务键：设置页/工具触发「识别屏幕交易」时登记，OCR 结果回传后按登记执行入账。 */
 const HUAWEI_OCR_TASK_KEY = "ai_phone_huawei_ocr_task_v1";
@@ -21,7 +46,7 @@ const TIME_RULE_COOLDOWN_MS = 12 * 60 * 60 * 1000;
  * 检查一次所有已启用的联动规则并执行命中的动作。
  * 返回本次实际触发条数；无规则 / 壳未连接时直接返回 0。
  */
-export function checkHuaweiTriggerRules(): { triggered: number } {
+export async function checkHuaweiTriggerRules(): Promise<{ triggered: number }> {
     const settings = loadHuaweiShellSettings();
     if (!settings.bridgeEnabled) return { triggered: 0 };
     const rules = loadHuaweiTriggerRules();
@@ -36,7 +61,7 @@ export function checkHuaweiTriggerRules(): { triggered: number } {
         const matched = rule.trigger === "time" ? null : notificationRuleShouldFire(rule);
         const shouldFire = rule.trigger === "time" ? timeRuleShouldFire(rule, now) : matched !== null;
         if (!shouldFire) continue;
-        const result = fireHuaweiRuleAction(rule, matched);
+        const result = await fireHuaweiRuleAction(rule, matched);
         appendHuaweiBridgeEvent({ kind: "rule", title: rule.name, detail: result.detail, ok: result.ok });
         if (!result.ok) continue;
         triggered++;
@@ -110,14 +135,110 @@ function notificationRuleShouldFire(rule: HuaweiTriggerRule): Record<string, unk
     return matched;
 }
 
-/** 执行规则动作：发本地通知提醒 / 打开应用 / 触发用户登记的自定义动作。参数缺省则跳过（不编造内容）。 */
-function fireHuaweiRuleAction(rule: HuaweiTriggerRule, matched: Record<string, unknown> | null): { ok: boolean; detail: string } {
-    const shell = getAndroidShell();
-    if (!shell) return { ok: false, detail: "安卓壳未连接" };
+/* ---------- 内容加工与动作执行辅助（对齐 iOS reality-bridge/engine.ts） ---------- */
+
+type MatchedSignal = { type: string; payload: string; title: string; text: string };
+
+function buildMatchedSignal(matched: Record<string, unknown> | null): MatchedSignal {
+    const title = String(matched?.title ?? "");
+    const text = String(matched?.text ?? "");
+    const pkg = String(matched?.pkg ?? "");
+    return { type: pkg || "notification", payload: `${title} ${text}`.trim(), title, text };
+}
+
+/** 展开 {{user}}/{{char}} 等宏（与 iOS 现实桥同款） */
+function expandHuaweiBridgeMacros(text: string, characterId?: string): string {
+    if (!text.includes("{{")) return text;
+    const charName = characterId
+        ? (loadCharacters().find(item => item.id === characterId)?.name ?? "")
+        : "";
+    const userName = resolveUserIdentity(characterId)?.name || "用户";
     try {
+        return new MacroEngine(charName, userName).expand(text);
+    } catch {
+        return text;
+    }
+}
+
+/** 加工命中信号：raw=原文/固定文案，template=占位替换，ai=提示词走 LLM。 */
+async function processHuaweiActionText(rule: HuaweiTriggerRule, signal: MatchedSignal): Promise<string> {
+    if (rule.processMode === "template") {
+        return interpolateHuaweiTemplate(rule.contentTemplate || rule.content || "", {
+            payload: signal.payload, title: signal.title, text: signal.text,
+        }).slice(0, 4000);
+    }
+    if (rule.processMode === "ai" && rule.aiPrompt) {
+        const config = resolveAuxiliaryApiConfig("memorySummaryApiConfigId") ?? loadApiConfigs()[0];
+        if (config) {
+            const prompt = interpolateHuaweiTemplate(rule.aiPrompt, {
+                payload: signal.payload, title: signal.title, text: signal.text,
+            });
+            const result = await simpleLLMCall(config, [
+                { role: "system", content: "你是「华为现实桥」的数据加工器。按用户指令处理数据，只输出处理结果本身，不要解释。" },
+                { role: "user", content: prompt + "\n\n数据内容：" + (signal.payload || rule.content || "") },
+            ], { temperature: 0.5 });
+            const out = (result.content ?? "").trim();
+            if (out) return out.slice(0, 4000);
+        }
+    }
+    // raw：通知触发转发通知原文；定时触发走固定文案
+    return (signal.payload || rule.content || "").slice(0, 4000);
+}
+
+/** 通知打开中的聊天室刷新（与 iOS 桥同一事件） */
+function notifyHuaweiChatUpdated(sessionId: string): void {
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("chat-messages-updated", { detail: { sessionId } }));
+    }
+}
+
+function huaweiEnsureSession(characterId: string) {
+    if (!loadChatContacts().some(contact => contact.characterId === characterId)) {
+        addChatContact(characterId);
+    }
+    return createOrGetSession(characterId);
+}
+
+/** chat 动作：写进聊天，可选请求角色回应（对齐 iOS runChatAction）。 */
+async function runHuaweiChatAction(rule: HuaweiTriggerRule, text: string): Promise<string> {
+    const characterId = rule.chatCharacterId!;
+    const session = huaweiEnsureSession(characterId);
+    const role = rule.chatRole || "user";
+    const historyRole = rule.chatHistoryRole && rule.chatHistoryRole !== role ? rule.chatHistoryRole : undefined;
+    const effectiveRole = rule.chatHistoryRole || role;
+    pushChatMessage({
+        sessionId: session.id,
+        role,
+        content: expandHuaweiBridgeMacros(text, characterId),
+        mediaData: historyRole ? ({ appHistoryRole: historyRole } as ChatMessage["mediaData"]) : undefined,
+    });
+    notifyHuaweiChatUpdated(session.id);
+    if (effectiveRole === "user") cancelFollowUp(session.id);
+    if (!rule.chatRequestReply || effectiveRole === "assistant") return "写入聊天";
+    if (typeof window !== "undefined") {
+        const detail = { source: "huawei_bridge", sessionId: session.id, characterId, handled: false, busy: false };
+        window.dispatchEvent(new CustomEvent(CHAT_REQUEST_REPLY_EVENT, { detail }));
+        if (detail.handled) return detail.busy ? "写入聊天（角色正在回复中）" : "写入聊天，已由聊天室生成回应";
+        detail.handled = true;
+    }
+    try {
+        const result = await requestBackgroundChatReply(session.id);
+        if (result.ok) return "写入聊天并生成回应";
+        if (result.skipped === "already_running") return "写入聊天（角色正在回复中）";
+    } catch (err) {
+        console.warn("[华为现实桥] 角色回应生成失败", err);
+    }
+    return "写入聊天（回应失败）";
+}
+
+/** 执行规则动作：发本地通知提醒 / 打开应用 / 触发用户登记的自定义动作。参数缺省则跳过（不编造内容）。 */
+async function fireHuaweiRuleAction(rule: HuaweiTriggerRule, matched: Record<string, unknown> | null): Promise<{ ok: boolean; detail: string }> {
+    try {
+        /* ---------- 手机侧动作（需安卓壳，逻辑保持原样） ---------- */
         if (rule.action === "send_notification") {
+            const shell = getAndroidShell();
             const title = rule.title && rule.title.trim() ? rule.title.trim() : "";
-            if (!title || typeof shell.sendNotification !== "function") return { ok: false, detail: "通知标题未填写" };
+            if (!title || !shell || typeof shell.sendNotification !== "function") return { ok: false, detail: "通知标题未填写或安卓壳未连接" };
             let content = rule.content && rule.content.trim() ? rule.content.trim() : "";
             // template 模式：把命中通知的标题/正文填进 {payload}/{title}/{text} 占位
             if (rule.processMode === "template") {
@@ -134,8 +255,9 @@ function fireHuaweiRuleAction(rule: HuaweiTriggerRule, matched: Record<string, u
             return { ok: true, detail: `发通知：${title}` };
         }
         if (rule.action === "open_app") {
+            const shell = getAndroidShell();
             const pkg = rule.actionPackageName && rule.actionPackageName.trim() ? rule.actionPackageName.trim() : "";
-            if (!pkg || typeof shell.openApp !== "function") return { ok: false, detail: "应用包名未填写" };
+            if (!pkg || !shell || typeof shell.openApp !== "function") return { ok: false, detail: "应用包名未填写或安卓壳未连接" };
             shell.openApp(pkg);
             return { ok: true, detail: `打开应用：${pkg}` };
         }
@@ -147,7 +269,113 @@ function fireHuaweiRuleAction(rule: HuaweiTriggerRule, matched: Record<string, u
             const r = executeHuaweiRuleActionByName(action);
             return { ok: r.ok, detail: r.text };
         }
-        return { ok: false, detail: "未知动作类型" };
+
+        /* ---------- 网页侧动作（写云端共享存储，无需安卓壳） ---------- */
+        const signal = buildMatchedSignal(matched);
+        const text = await processHuaweiActionText(rule, signal);
+        const done: string[] = [];
+
+        switch (rule.action) {
+            case "chat": {
+                if (!rule.chatCharacterId) { done.push("未选择聊天角色"); break; }
+                done.push(await runHuaweiChatAction(rule, text));
+                break;
+            }
+            case "memory": {
+                if (!rule.memoryCharacterId) { done.push("未选择记忆角色"); break; }
+                const now = new Date().toISOString();
+                await saveMemoryEntry({
+                    id: `hwbridge_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+                    characterId: rule.memoryCharacterId,
+                    sourceApp: "chat",
+                    type: rule.memoryScope === "core" ? "core" : "long_term",
+                    content: expandHuaweiBridgeMacros(text, rule.memoryCharacterId).slice(0, 1000),
+                    importance: 0.6,
+                    createdAt: now,
+                    updatedAt: now,
+                });
+                done.push(`写入记忆（${rule.memoryScope === "core" ? "核心" : "长期"}）`);
+                break;
+            }
+            case "timeline": {
+                if (!rule.timelineCharacterId) { done.push("未选择时间线角色"); break; }
+                appendCustomAppTimelineEntry(HUAWEI_BRIDGE_SOURCE, {
+                    characterId: rule.timelineCharacterId,
+                    summary: expandHuaweiBridgeMacros(text, rule.timelineCharacterId).slice(0, 200),
+                    detail: signal.payload.slice(0, 1000),
+                });
+                done.push("写入时间线");
+                break;
+            }
+            case "calendar": {
+                const now = new Date();
+                const pad = (n: number) => String(n).padStart(2, "0");
+                const iso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+                const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                let startTime: string;
+                let endTime: string;
+                const duration = Number(rule.calendarDurationMinutes);
+                if (Number.isFinite(duration) && duration > 0) {
+                    const span = Math.min(720, Math.max(5, duration)) * 60_000;
+                    const start = rule.calendarDirection === "past" ? new Date(now.getTime() - span) : now;
+                    const end = rule.calendarDirection === "past" ? now : new Date(now.getTime() + span);
+                    startTime = start.getDate() === now.getDate() ? hm(start) : "00:00";
+                    endTime = end.getDate() === now.getDate() ? hm(end) : "23:59";
+                } else {
+                    startTime = rule.calendarStartTime || "09:00";
+                    endTime = rule.calendarEndTime || "10:00";
+                }
+                upsertCalendarScheduleItem("user", "user", getWeekStartIso(now), {
+                    date: iso,
+                    startTime,
+                    endTime,
+                    location: "",
+                    title: expandHuaweiBridgeMacros(text).slice(0, 60),
+                    source: "manual",
+                });
+                done.push(`写入日历 ${startTime}-${endTime}`);
+                break;
+            }
+            case "card": {
+                if (!rule.cardCharacterId) { done.push("未选择卡片角色"); break; }
+                const session = huaweiEnsureSession(rule.cardCharacterId);
+                const cardText = expandHuaweiBridgeMacros(text, rule.cardCharacterId);
+                pushChatMessage({
+                    sessionId: session.id,
+                    role: "user",
+                    content: cardText.slice(0, 2000),
+                    mediaType: "app_card",
+                    mediaData: {
+                        appId: HUAWEI_BRIDGE_SOURCE.id,
+                        appName: HUAWEI_BRIDGE_SOURCE.name,
+                        appCardTitle: signal.type,
+                        appCardBody: cardText.slice(0, 2000),
+                        appCardSummary: cardText.slice(0, 200),
+                    } as ChatMessage["mediaData"],
+                });
+                notifyHuaweiChatUpdated(session.id);
+                done.push("发送卡片");
+                break;
+            }
+            case "shortcut": {
+                if (!rule.shortcutActionId) { done.push("未选择快捷动作"); break; }
+                const sc = loadBridgeShortcutActions().find(a => a.id === rule.shortcutActionId && a.enabled);
+                if (!sc) { done.push("快捷动作不存在或已停用"); break; }
+                try {
+                    const created = await createShortcutCommand(sc, {});
+                    done.push(created.delivered
+                        ? `发出快捷动作「${sc.name}」`
+                        : `快捷动作「${sc.name}」未能送达`);
+                } catch (err) {
+                    done.push(`快捷动作「${sc.name}」失败：${(err instanceof Error ? err.message : String(err)).slice(0, 80)}`);
+                }
+                break;
+            }
+            default:
+                return { ok: false, detail: "未知动作类型" };
+        }
+        const missing = done.some(d => d.startsWith("未"));
+        return { ok: !missing, detail: done.join("；") || "未执行任何动作" };
     } catch (e) {
         return { ok: false, detail: e instanceof Error ? e.message : String(e) };
     }
@@ -251,7 +479,7 @@ function executeHuaweiRuleActionByName(action: HuaweiCustomAction): { ok: boolea
 }
 
 /** 立即执行一次全部规则（含当前已关闭的）：用于设置页「测试触发」按钮，不改动规则的启用状态。 */
-export function runAllHuaweiTriggerRules(): { triggered: number } {
+export async function runAllHuaweiTriggerRules(): Promise<{ triggered: number }> {
     const rules = loadHuaweiTriggerRules();
     const saved = rules.map(rule => rule.enabled);
     const now = Date.now();
@@ -263,7 +491,7 @@ export function runAllHuaweiTriggerRules(): { triggered: number } {
         const matched = rule.trigger === "time" ? null : notificationRuleShouldFire(rule);
         const shouldFire = rule.trigger === "time" ? timeRuleShouldFire(rule, now) : matched !== null;
         if (!shouldFire) continue;
-        const result = fireHuaweiRuleAction(rule, matched);
+        const result = await fireHuaweiRuleAction(rule, matched);
         appendHuaweiBridgeEvent({ kind: "rule", title: rule.name, detail: result.detail, ok: result.ok });
         if (!result.ok) continue;
         triggered++;

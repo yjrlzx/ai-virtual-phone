@@ -53,6 +53,7 @@ import {
     type LlmToolDefinition,
 } from "./llm-provider-adapter";
 import { setDebugPromptSnapshot, type DebugPromptSnapshot } from "./debug-store";
+import { buildHuaweiWechatSnapshotPrompt } from "./huawei-shell/wechat-snapshot";
 import { extractFinishReason } from "./api-helpers";
 import { fetchLlmPayload } from "./llm-http";
 import { loadMemoryConfig, incrementEventCounter } from "./memory-storage";
@@ -1947,6 +1948,12 @@ export async function buildChatPromptMessages(
             role: "system",
             content: "本次自定义 APP AI 任务只输出严格 JSON。不要输出 Markdown 代码块、解释文字或聊天富媒体指令。",
         });
+    }
+    // 华为现实桥：用户手机上最新的微信动态（通知 + 微信前台时的屏幕文本）作为上下文注入；
+    // 无快照 / 已过期 / 非华为壳环境返回空串，直接跳过。不写聊天历史、不改推送逻辑。
+    const huaweiWechatContext = buildHuaweiWechatSnapshotPrompt();
+    if (huaweiWechatContext) {
+        llmMessages.push({ role: "system", content: huaweiWechatContext });
     }
     appendEmptyGenerateGuardMessage(llmMessages, config, historyForPrompt);
 

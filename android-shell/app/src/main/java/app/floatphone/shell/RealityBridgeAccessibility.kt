@@ -237,13 +237,32 @@ class RealityBridgeAccessibility : AccessibilityService() {
      *  成功时直接返回 JSON 数组（保持既有网页契约）。 */
     fun dumpScreenTree(limit: Int = 300): String {
         return try {
-            val root = rootInActiveWindow ?: return """{"ok":false,"error":"无障碍已开但取不到当前窗口"}"""
+            var root = rootInActiveWindow
+            if (root == null) {
+                // 兜底：部分 ROM / 分屏场景下 rootInActiveWindow 拿不到（微信前台也可能命中），
+                // 遍历所有窗口挑一个非本壳的应用窗口作读屏根，保证微信界面不被漏读。
+                root = pickReadableWindowRoot()
+            }
+            root ?: return """{"ok":false,"error":"无障碍已开但取不到当前窗口"}"""
             val arr = org.json.JSONArray()
             collectNodes(root, arr, limit)
             arr.toString()
         } catch (t: Throwable) {
             """{"ok":false,"error":${jsonStr(t.message)}}"""
         }
+    }
+
+    /** 从 getWindows() 里挑一个可作读屏根的窗口：优先应用窗口、排除本壳自己；都不行就退回任意有根窗口。 */
+    private fun pickReadableWindowRoot(): AccessibilityNodeInfo? {
+        val wins = try { windows } catch (t: Throwable) { null } ?: return null
+        if (wins.isEmpty()) return null
+        val selfPkg = packageName
+        val appType = AccessibilityWindowInfo.TYPE_APPLICATION
+        val preferred = wins.firstOrNull {
+            it.type == appType && it.root != null && it.root?.packageName != selfPkg
+        } ?: wins.firstOrNull { it.root != null && it.root?.packageName != selfPkg }
+            ?: wins.firstOrNull { it.root != null }
+        return preferred?.root
     }
 
     private fun collectNodes(node: AccessibilityNodeInfo, out: org.json.JSONArray, limit: Int) {
